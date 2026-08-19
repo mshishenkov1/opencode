@@ -299,27 +299,43 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       }
     })
 
-    /** Карточка каталога по alias — из свежего ответа Hub, иначе из кэша. */
+    /**
+     * Карточка каталога по alias — из свежего ответа Hub, иначе из кэша.
+     * Вместе с карточкой возвращается признак протухшего источника (S-V3), нужный правилу 2 S-V6.
+     */
     const serverFor = Effect.fnUntraced(function* (url: string, alias: string) {
       const key = yield* corpKey()
       if (key) {
         const hub = CorpHub.make({ hubUrl: url, key })
         const fresh = yield* Effect.promise(() => hub.catalog())
-        if (fresh.ok) return fresh.data.servers.find((server) => server.alias === alias)
+        if (fresh.ok) return { server: fresh.data.servers.find((server) => server.alias === alias), stale: false }
       }
       const cached = yield* Effect.promise(() => CorpCatalogCache.read(url))
-      return cached?.servers.find((server) => server.alias === alias)
+      if (!cached) return { server: undefined, stale: true }
+      return {
+        server: cached.servers.find((server) => server.alias === alias),
+        stale: CorpCatalogCache.isStale(cached, Date.now()),
+      }
     })
 
-    const cardFor = Effect.fnUntraced(function* (alias: string) {
+    /**
+     * Статус карточки после действия витрины (S-V1, S-V6).
+     *
+     * Считается тем же правилом и по тем же источникам, что и `toCards`: карточка каталога берётся
+     * заново (действие меняет состояние подключения в Hub), локальные данные — из `GET /mcp` и конфига.
+     * Без карточки каталога сработало бы правило 1 таблицы S-V6 и статус всегда был бы `unavailable`.
+     */
+    const cardFor = Effect.fnUntraced(function* (url: string, alias: string) {
+      const { server, stale } = yield* serverFor(url, alias)
       const { statuses, configured } = yield* localState()
       const local = statuses[alias]
       return CorpStatus.compute({
         alias,
+        ...(server === undefined ? {} : { server }),
         configured: configured.has(alias),
         ...(local === undefined ? {} : { local: local.status }),
-        stale: false,
-        server: undefined,
+        ...(local && "error" in local ? { localError: local.error } : {}),
+        stale,
       }).status
     })
 
@@ -331,7 +347,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
     }) {
       const url = yield* requireHub()
       const alias = ctx.params.alias
-      const server = yield* serverFor(url, alias)
+      const { server } = yield* serverFor(url, alias)
       if (!server) return { alias, status: "unavailable" as const, hub_error: "not_found" as const }
 
       const preset = ctx.payload.preset ?? CorpStatus.DEFAULT_PRESET
@@ -347,9 +363,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         .pipe(Effect.catch((error) => Effect.succeed({ status: "failed" as const, error: String(error) })))
       if (status.status === "failed" || status.status === "needs_client_registration") {
         // Шаг 4: запись mcp.<alias> остаётся, чтобы повтор был в один клик.
-        return { alias, status: yield* cardFor(alias), error: status.error }
+        return { alias, status: yield* cardFor(url, alias), error: status.error }
       }
-      return { alias, status: yield* cardFor(alias) }
+      return { alias, status: yield* cardFor(url, alias) }
     })
 
     const disconnect = Effect.fn("CorpHttpApi.disconnect")(function* (ctx: { params: { alias: string } }) {
@@ -381,12 +397,12 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
     }) {
       const url = yield* requireHub()
       const alias = ctx.params.alias
-      const server = yield* serverFor(url, alias)
+      const { server } = yield* serverFor(url, alias)
       const key = yield* corpKey()
       if (!key)
         return {
           alias,
-          status: yield* cardFor(alias),
+          status: yield* cardFor(url, alias),
           preset: ctx.payload.preset,
           reauth_required: false,
           hub_error: "unauthorized" as const,
@@ -397,7 +413,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       if (!updated.ok)
         return {
           alias,
-          status: yield* cardFor(alias),
+          status: yield* cardFor(url, alias),
           preset: ctx.payload.preset,
           reauth_required: false,
           hub_error: updated.code,
@@ -417,7 +433,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       }
       return {
         alias,
-        status: yield* cardFor(alias),
+        status: yield* cardFor(url, alias),
         preset: ctx.payload.preset,
         reauth_required: reauth,
       }

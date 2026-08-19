@@ -97,7 +97,7 @@ jobs:
             "$BIN" corp status | tee status.txt
           CODE=${PIPESTATUS[0]}
           set -e
-          grep -q "Ключ: нет" status.txt
+          grep -q "ключ: нет" status.txt
           test "$CODE" = "1"
 
       - name: Загрузка артефактов

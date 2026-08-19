@@ -9,6 +9,7 @@ import * as CorpHub from "@/corp/hub"
 import * as CorpLogin from "@/corp/login"
 import * as CorpSchema from "@/corp/schema"
 import * as CorpStatus from "@/corp/status"
+import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { CORP_PROVIDER_ID } from "@opencode-ai/core/corp/constants"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect } from "effect"
@@ -26,7 +27,14 @@ import { CorpDisabledError, CorpHubError } from "../groups/corp"
 /** Свежесть внутрипроцессного memo каталога (S-V3). */
 const CATALOG_MEMO_MS = 60_000
 
-let memo: { hubUrl: string; at: number; view: CorpSchema.CatalogView } | undefined
+/**
+ * Memo каталога на процесс сервера.
+ *
+ * Ключ — рабочий каталог инстанса, workspace и адрес Hub: карточки зависят от конфига и локальных
+ * статусов MCP конкретного инстанса (S-V5), а один процесс обслуживает несколько рабочих каталогов
+ * (InstanceContextMiddleware). Общий ключ отдал бы второму каталогу карточки, посчитанные для первого.
+ */
+const memo = new Map<string, { at: number; view: CorpSchema.CatalogView }>()
 
 export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handlers) =>
   Effect.gen(function* () {
@@ -46,6 +54,18 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
     const corpKey = Effect.fnUntraced(function* () {
       const record = yield* authSvc.get(CORP_PROVIDER_ID).pipe(Effect.orElseSucceed(() => undefined))
       return record?.type === "api" ? record.key : undefined
+    })
+
+    /** Ключ memo каталога: инстанс (рабочий каталог + workspace) и адрес Hub. */
+    const memoKey = Effect.fnUntraced(function* (url: string) {
+      const instance = yield* InstanceRef
+      const workspace = yield* WorkspaceRef
+      return [instance?.directory ?? "", workspace ?? "", url].join("\u0000")
+    })
+
+    /** Сбрасывает memo текущего инстанса после действий витрины (S-V7…S-V9). */
+    const dropMemo = Effect.fnUntraced(function* (url: string) {
+      memo.delete(yield* memoKey(url))
     })
 
     // --- Вход (S-A2…S-A5) ---
@@ -247,15 +267,17 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const url = yield* requireHub()
       const refresh = ctx.query.refresh === "true"
       const now = Date.now()
-      if (!refresh && memo && memo.hubUrl === url && now - memo.at < CATALOG_MEMO_MS) return memo.view
+      const key = yield* memoKey(url)
+      const cachedView = memo.get(key)
+      if (!refresh && cachedView && now - cachedView.at < CATALOG_MEMO_MS) return cachedView.view
 
-      const key = yield* corpKey()
-      if (!key) {
+      const corpApiKey = yield* corpKey()
+      if (!corpApiKey) {
         // S-V4: без ключа витрина показывает состояние «Требуется вход».
         return { version: "", source: "cache" as const, stale: true, servers: [], hub_error: "unauthorized" as const }
       }
 
-      const hub = CorpHub.make({ hubUrl: url, key })
+      const hub = CorpHub.make({ hubUrl: url, key: corpApiKey })
       const fresh = yield* Effect.promise(() => hub.catalog())
       if (fresh.ok) {
         yield* Effect.promise(() =>
@@ -273,7 +295,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           stale: false,
           servers: yield* toCards(url, fresh.data.servers, false),
         }
-        memo = { hubUrl: url, at: now, view }
+        // Записи других инстансов старше окна свежести больше не нужны — memo не растёт бесконечно.
+        for (const [entry, value] of memo) if (now - value.at >= CATALOG_MEMO_MS) memo.delete(entry)
+        memo.set(key, { at: now, view })
         return view
       }
 
@@ -355,7 +379,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // Шаг 1 (D-7): персист через updateGlobal, а не через runtime-only POST /mcp/:name/connect (F17).
       yield* configSvc.updateGlobal(patch)
       yield* mcpSvc.add(alias, patch.mcp[alias])
-      memo = undefined
+      yield* dropMemo(url)
 
       // Шаг 2: штатный MCP-OAuth сервера — браузер и ожидание callback 19876 (F15/F16).
       const status = yield* mcpSvc
@@ -374,7 +398,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       yield* mcpSvc.removeAuth(alias)
       yield* mcpSvc.disconnect(alias).pipe(Effect.catch(() => Effect.void))
       yield* configSvc.updateGlobal(CorpConnectors.disconnectPatch(alias))
-      memo = undefined
+      yield* dropMemo(url)
 
       const key = yield* corpKey()
       let hubError: CorpErrors.Code | undefined
@@ -426,7 +450,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         const patch = CorpConnectors.permissionsPatch(server, ctx.payload.preset)
         if (patch) yield* configSvc.updateGlobal(patch)
       }
-      memo = undefined
+      yield* dropMemo(url)
 
       if (reauth) {
         yield* mcpSvc.authenticate(alias).pipe(Effect.catch(() => Effect.void))

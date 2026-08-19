@@ -6,6 +6,9 @@ import { DialogSelect, type DialogSelectRef, type DialogSelectOption } from "../
 import { useTheme } from "../context/theme"
 import { TextAttributes } from "@opentui/core"
 import { useSDK } from "../context/sdk"
+// corp: подпись alias названием из каталога (S-V13)
+import { corpEnabled, hasTitles, rememberTitles, titleFor } from "../corp/state"
+import { onMount } from "solid-js"
 
 function Status(props: { enabled: boolean; loading: boolean }) {
   const { theme } = useTheme()
@@ -37,11 +40,26 @@ export function DialogMcp() {
       map(([name, status]) => ({
         value: name,
         title: name,
-        description: status.status === "failed" ? "failed" : status.status,
+        // corp: если alias есть в кэше каталога, показываем его название рядом (S-V13);
+        // без кэша строка совпадает с upstream.
+        description: [titleFor(name), status.status === "failed" ? "failed" : status.status]
+          .filter(Boolean)
+          .join(" · "),
         footer: <Status enabled={local.mcp.isEnabled(name)} loading={loadingMcp === name} />,
         category: undefined,
       })),
     )
+  })
+
+  onMount(() => {
+    // corp: тянем названия каталога один раз за процесс; корп-роут сам деградирует на дисковый кэш.
+    if (!corpEnabled() || hasTitles()) return
+    void sdk.client.corp
+      .catalog()
+      .then((result) => {
+        if (result.data) rememberTitles(result.data.servers)
+      })
+      .catch(() => undefined)
   })
 
   const actions = createMemo(() => [

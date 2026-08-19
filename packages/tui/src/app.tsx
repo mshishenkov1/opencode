@@ -39,6 +39,11 @@ import { LocalProvider, useLocal } from "./context/local"
 import { DialogModel } from "./component/dialog-model"
 import { useConnected } from "./component/use-connected"
 import { DialogMcp } from "./component/dialog-mcp"
+// corp: корпоративные экраны — вход по SSO и витрина коннекторов (S-T1…S-T3)
+import { DialogCorpLogin } from "./component/corp/dialog-corp-login"
+import { DialogConnectors } from "./component/corp/dialog-connectors"
+import { corpEnabled } from "./corp/state"
+import { t as corpText } from "./corp/i18n"
 import { DialogStatus } from "./component/dialog-status"
 import { DialogThemeList } from "./component/dialog-theme-list"
 import { DialogHelp } from "./ui/dialog-help"
@@ -106,6 +111,8 @@ const appBindingCommands = [
   "model.cycle_favorite_reverse",
   "agent.list",
   "mcp.list",
+  "corp.connectors",
+  "corp.login",
   "agent.cycle",
   "agent.cycle.reverse",
   "variant.cycle",
@@ -529,6 +536,21 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
       (isEmpty, wasEmpty) => {
         // only trigger when we transition into an empty-provider state
         if (!isEmpty || wasEmpty) return
+        // corp: при включённых корп-функциях и отсутствии ключа magnit_prod открываем корп-экран
+        // входа вместо upstream-списка провайдеров (S-T3, S-A7). Иначе — прежнее поведение.
+        if (corpEnabled()) {
+          void sdk.client.corp
+            .status()
+            .then((result) => {
+              if (result.data?.enabled && !result.data.authenticated) {
+                dialog.replace(() => <DialogCorpLogin />)
+                return
+              }
+              dialog.replace(() => <DialogProviderList />)
+            })
+            .catch(() => dialog.replace(() => <DialogProviderList />))
+          return
+        }
         dialog.replace(() => <DialogProviderList />)
       },
     ),
@@ -678,6 +700,32 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           dialog.replace(() => <DialogMcp />)
         },
       },
+      // corp: витрина коннекторов и вход по SSO — только при включённых корп-функциях (S-T1, S-T2, S-C5)
+      ...(corpEnabled()
+        ? [
+            {
+              name: "corp.connectors",
+              title: corpText("connectors.command"),
+              category: "Agent",
+              slashName: "connectors",
+              slashAliases: ["mcp-catalog"],
+              run: () => {
+                dialog.replace(() => <DialogConnectors />)
+              },
+            },
+            {
+              name: "corp.login",
+              title: corpText("connectors.loginCommand"),
+              category: "Provider",
+              slashName: "login",
+              slashAliases: ["sso"],
+              suggested: !connected(),
+              run: () => {
+                dialog.replace(() => <DialogCorpLogin />)
+              },
+            },
+          ]
+        : []),
       {
         name: "agent.cycle",
         title: "Agent cycle",

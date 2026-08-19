@@ -15,6 +15,9 @@ import { isConsoleManagedProvider } from "../util/provider-origin"
 import { useConnected } from "./use-connected"
 import { useBindings } from "../keymap"
 import { useClipboard } from "../context/clipboard"
+// corp: перехват корпоративного провайдера (S-T5)
+import { CORP_PROVIDER_ID } from "@opencode-ai/core/corp/constants"
+import { corpEnabled } from "../corp/state"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -144,6 +147,15 @@ export function createDialogProviderOptions() {
           gutter: connected && onboarded() ? () => <text fg={theme.success}>✓</text> : undefined,
           async onSelect() {
             if (consoleManaged) return
+
+            // corp: выбор корпоративного провайдера открывает корп-экран входа (S-T5).
+            // Динамический импорт — чтобы не заводить цикл с dialog-corp-login, который сам
+            // открывает этот список по кнопке «Другой провайдер».
+            if (corpEnabled() && providerID === CORP_PROVIDER_ID) {
+              const { DialogCorpLogin } = await import("./corp/dialog-corp-login")
+              dialog.replace(() => <DialogCorpLogin />)
+              return
+            }
 
             const methods = sync.data.provider_auth[providerID] ?? [
               {

@@ -95,8 +95,19 @@ export function DialogConnectors() {
     if (status?.data) sync.set("mcp", status.data)
   }
 
+  /**
+   * Доступно ли действие на карточке (S-V6): набор действий считает сервер, клавиши витрины
+   * повторяют его — как и кнопки в Desktop/web.
+   */
+  function allows(card: CorpCatalogCard | undefined, action: CorpCatalogCard["actions"][number]) {
+    if (!card) return false
+    if (action === "connect") return card.actions.includes("connect") || card.actions.includes("reconnect")
+    return card.actions.includes(action)
+  }
+
   async function act(card: CorpCatalogCard, action: "connect" | "disconnect") {
     if (busy()) return
+    if (!allows(card, action)) return
     if (card.blocked && action === "connect") {
       toast.show({ variant: "warning", message: t("connectors.stale") })
       return
@@ -123,6 +134,7 @@ export function DialogConnectors() {
   }
 
   async function openPermissions(card: CorpCatalogCard) {
+    if (!allows(card, "permissions")) return
     if (card.blocked) {
       toast.show({ variant: "warning", message: t("connectors.stale") })
       return
@@ -156,7 +168,7 @@ export function DialogConnectors() {
   }
 
   async function openHub(card: CorpCatalogCard) {
-    if (!card.hub_url) return
+    if (!allows(card, "open_hub") || !card.hub_url) return
     const open = await import("open").then((module) => module.default)
     await open(card.hub_url).catch(() => {
       toast.show({ variant: "warning", message: card.hub_url! })
@@ -229,22 +241,26 @@ export function DialogConnectors() {
         {
           command: "dialog.corp.connect",
           title: t("connectors.connect"),
+          disabled: (option) => !allows(option?.value, "connect"),
           onTrigger: (option) => void act(option.value, "connect"),
         },
         {
           command: "dialog.corp.disconnect",
           title: t("connectors.disconnect"),
+          disabled: (option) => !allows(option?.value, "disconnect"),
           onTrigger: (option) => void act(option.value, "disconnect"),
         },
         {
           command: "dialog.corp.permissions",
           title: t("connectors.permissions"),
+          disabled: (option) => !allows(option?.value, "permissions"),
           onTrigger: (option) => void openPermissions(option.value),
         },
         {
           command: "dialog.corp.open_hub",
           title: t("connectors.openHub"),
           side: "right",
+          disabled: (option) => !allows(option?.value, "open_hub") || !option?.value.hub_url,
           onTrigger: (option) => void openHub(option.value),
         },
         {

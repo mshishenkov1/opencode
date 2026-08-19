@@ -104,15 +104,18 @@ export function DialogCorpLogin() {
     })
   }
 
-  async function chooseTeam(loginID: string, teamID: string) {
+  async function chooseTeam(loginID: string, teams: CorpTeam[], teamID: string) {
     const sent = await sdk.client.corp.login.team({ loginID, team_id: teamID }).catch(() => undefined)
     const data = sent?.data
+    // AC-26: ошибка выбора команды не завершает вход — список остаётся, показываем текст ошибки.
     if (!data) {
-      setStep({ kind: "error", code: "hub_unavailable" })
+      toast.show({ variant: "error", message: errorText("hub_unavailable") })
+      setStep({ kind: "teams", loginID, teams })
       return
     }
     if (data.status === "error") {
-      setStep({ kind: "error", code: data.error })
+      toast.show({ variant: "error", message: errorText(data.error) })
+      setStep({ kind: "teams", loginID, teams })
       return
     }
     if (data.status === "ready") {
@@ -226,7 +229,7 @@ export function DialogCorpLogin() {
         <DialogSelect
           title={t("login.teamTitle")}
           options={teams.teams.map((team) => ({ title: team.team_alias, value: team.team_id }))}
-          onSelect={(option) => void chooseTeam(teams.loginID, option.value)}
+          onSelect={(option) => void chooseTeam(teams.loginID, teams.teams, option.value)}
         />
       )}
     </Show>

@@ -87,8 +87,8 @@ export const CorpStatusCommand = effectCmd({
 
     const hub = CorpHub.make({ hubUrl: url, ...(key === undefined ? {} : { key }) })
     const health = yield* Effect.promise(() => hub.health())
-    yield* println(`Доступность: ${health.ok ? "ok" : "недоступен"}`)
-    yield* println(`Ключ: ${key ? "есть" : "нет"}`)
+    yield* println(`Доступность Hub: ${health.ok ? "доступен (ok)" : "недоступен"}`)
+    yield* println(`Корпоративный ключ: ${key ? "есть" : "нет"}`)
 
     if (key) {
       const me = yield* Effect.promise(() => hub.me())
@@ -160,15 +160,18 @@ export const CorpLoginCommand = effectCmd({
       const result = yield* Effect.promise(() => hub.cliPoll(loginId, pollSecret))
 
       if (!result.ok) {
-        if (result.code === "hub_unavailable" || result.code === "litellm_unavailable") {
+        let code: string = result.code
+        if (code === "hub_unavailable" || code === "litellm_unavailable") {
           hubErrors += 1
           if (hubErrors < CorpLogin.MAX_CONSECUTIVE_HUB_ERRORS) {
             yield* Effect.sleep(CorpLogin.POLL_INTERVAL_MS)
             continue
           }
+          // S-A4: бюджет сетевых ошибок исчерпан — наружу всегда hub_unavailable.
+          code = "hub_unavailable"
         }
-        yield* spinner.stop(errorText(result.code), 1)
-        return yield* fail(errorText(result.code))
+        yield* spinner.stop(errorText(code), 1)
+        return yield* fail(errorText(code))
       }
       hubErrors = 0
 

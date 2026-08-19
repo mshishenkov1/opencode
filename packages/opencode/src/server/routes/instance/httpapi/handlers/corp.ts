@@ -76,15 +76,20 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       result: CorpHub.Result<CorpSchema.CliPoll>,
     ) {
       if (!result.ok) {
-        if (result.code === "hub_unavailable" || result.code === "litellm_unavailable") {
+        let code: CorpErrors.Code = result.code
+        if (code === "hub_unavailable" || code === "litellm_unavailable") {
           session.hubErrors += 1
+          // S-A4: сетевая ошибка и 502 не прекращают опрос — до пяти подряд.
           if (session.hubErrors < CorpLogin.MAX_CONSECUTIVE_HUB_ERRORS) return { status: "pending" as const }
+          // Бюджет исчерпан: наружу всегда hub_unavailable, независимо от последнего кода Hub.
+          code = "hub_unavailable"
+          CorpLogin.store.drop(session.loginId)
         }
-        if (result.code === "login_expired" || result.code === "forbidden") CorpLogin.store.drop(session.loginId)
+        if (code === "login_expired" || code === "forbidden") CorpLogin.store.drop(session.loginId)
         return {
           status: "error" as const,
-          error: result.code,
-          message: `hub responded with ${result.code}`,
+          error: code,
+          message: `hub responded with ${code}`,
           ...(result.retryAfter === undefined ? {} : { retry_after: result.retryAfter }),
         }
       }
@@ -227,9 +232,6 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         cards.push({
           alias,
           title: alias,
-          server_status: "deprecated",
-          mode: "native",
-          mcp_url: "",
           status: card.status,
           actions: card.actions,
           deprecated: false,

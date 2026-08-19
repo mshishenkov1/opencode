@@ -2261,9 +2261,9 @@ export type CorpCatalogCard = {
   owner?: string
   contact?: string
   docs_url?: string
-  server_status: "beta" | "ga" | "deprecated"
-  mode: "native" | "facade"
-  mcp_url: string
+  server_status?: "beta" | "ga" | "deprecated"
+  mode?: "native" | "facade"
+  mcp_url?: string
   permission_model?: CorpPermissionModel
   connection_status?: "not_connected" | "connected" | "needs_reauth"
   preset?: string

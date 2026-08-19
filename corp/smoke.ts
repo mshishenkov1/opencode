@@ -198,8 +198,8 @@ try {
     const result = await run(homeWithoutKey, ["corp", "status", "--hub", hub])
     check("corp status без ключа — код 1", result.code === 1, result.out)
     check("corp status без ключа — печатает адрес Hub", result.out.includes(hub), result.out)
-    check("corp status без ключа — «Ключ: нет»", result.out.includes("Ключ: нет"), result.out)
-    check("corp status без ключа — Hub доступен", result.out.includes("Доступность: ok"), result.out)
+    check("corp status без ключа — «ключ: нет»", result.out.includes("ключ: нет"), result.out)
+    check("corp status без ключа — «Hub: доступен»", result.out.includes("Hub: доступен"), result.out)
   }
 
   // 3. Вход: start → pending → выбор команды → ready, ключ сохраняется (S-A10, S-A3).
@@ -226,7 +226,7 @@ try {
   {
     const result = await run(home, ["corp", "status", "--hub", hub])
     check("corp status с ключом — код 0", result.code === 0, result.out)
-    check("corp status с ключом — «Ключ: есть»", result.out.includes("Ключ: есть"), result.out)
+    check("corp status с ключом — «ключ: есть»", result.out.includes("ключ: есть"), result.out)
     check("corp status с ключом — печатает email", result.out.includes(USER.email), result.out)
     check("corp status с ключом — ключ не печатается", !result.out.includes("sk-magnit-persistent"), result.out)
   }

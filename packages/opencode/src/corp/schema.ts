@@ -229,9 +229,10 @@ export const CatalogCard = Schema.Struct({
   owner: Schema.optional(Schema.String),
   contact: Schema.optional(Schema.String),
   docs_url: Schema.optional(Schema.String),
-  server_status: ServerStatus,
-  mode: ServerMode,
-  mcp_url: Schema.String,
+  // Для alias, пропавшего из каталога (S-V6, правило 1), данных Hub нет — поля отсутствуют.
+  server_status: Schema.optional(ServerStatus),
+  mode: Schema.optional(ServerMode),
+  mcp_url: Schema.optional(Schema.String),
   permission_model: Schema.optional(PermissionModel),
   connection_status: Schema.optional(ConnectionStatus),
   preset: Schema.optional(Schema.String),

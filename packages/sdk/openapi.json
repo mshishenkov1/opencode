@@ -22125,18 +22125,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "alias",
-          "title",
-          "server_status",
-          "mode",
-          "mcp_url",
-          "status",
-          "actions",
-          "deprecated",
-          "blocked",
-          "configured"
-        ],
+        "required": ["alias", "title", "status", "actions", "deprecated", "blocked", "configured"],
         "additionalProperties": false
       },
       "CorpCatalogView": {

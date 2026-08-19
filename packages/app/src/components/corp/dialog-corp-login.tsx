@@ -83,13 +83,18 @@ export const DialogCorpLogin: Component = () => {
     timer = setTimeout(() => void poll(data.login_id), POLL_INTERVAL_MS)
   }
 
-  async function chooseTeam(loginID: string, teamID: string) {
+  async function chooseTeam(loginID: string, teams: CorpTeam[], teamID: string) {
     const sent = await sdk()
       .client.corp.login.team({ loginID, team_id: teamID })
       .catch(() => undefined)
     const data = sent?.data
-    if (!data) return setStep({ kind: "error", code: "hub_unavailable" })
-    if (data.status === "error") return setStep({ kind: "error", code: data.error })
+    // AC-26: ошибка выбора команды не завершает вход — список команд остаётся на экране.
+    const stay = (code: string) => {
+      showToast({ variant: "error", title: language.t(corpErrorKey(code)) })
+      setStep({ kind: "teams", loginID, teams })
+    }
+    if (!data) return stay("hub_unavailable")
+    if (data.status === "error") return stay(data.error)
     if (data.status === "ready") return finish(data.user.email)
     setStep({ kind: "waiting", loginID, code: "", url: "" })
     timer = setTimeout(() => void poll(loginID), POLL_INTERVAL_MS)
@@ -128,7 +133,7 @@ export const DialogCorpLogin: Component = () => {
             filterKeys={["team_alias", "team_id"]}
             onSelect={(team) => {
               if (!team) return
-              void chooseTeam(value().loginID, team.team_id)
+              void chooseTeam(value().loginID, value().teams, team.team_id)
             }}
           >
             {(team) => (

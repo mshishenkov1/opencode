@@ -93,10 +93,14 @@ export const DialogCorpLogin: Component = () => {
     const started = await sdk()
       .client.corp.login.start()
       .catch(() => undefined)
-    if (stopped) return
     const data = started?.data
-    if (!data) return setStep({ kind: "error", code: "hub_unavailable" })
+    if (!data) {
+      if (stopped) return
+      return setStep({ kind: "error", code: "hub_unavailable" })
+    }
     pending = data.login_id
+    // Экран могли закрыть, пока Hub отвечал: сессию освобождаем сразу (S-A9).
+    if (stopped) return cancel()
     setStep({ kind: "waiting", loginID: data.login_id, code: data.user_code, url: data.browser_url })
     timer = setTimeout(() => void poll(data.login_id), POLL_INTERVAL_MS)
   }

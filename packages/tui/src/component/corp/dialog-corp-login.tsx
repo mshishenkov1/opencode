@@ -100,9 +100,9 @@ export function DialogCorpLogin() {
     const status = await sdk.client.corp.status().catch(() => undefined)
     setHub(status?.data?.hub_url)
     const started = await sdk.client.corp.login.start().catch(() => undefined)
-    if (stopped) return
     const data = started?.data
     if (!data) {
+      if (stopped) return
       const code = (started?.error as { error?: string } | undefined)?.error
       setStep({ kind: "error", code: code ?? "hub_unavailable" })
       return
@@ -110,6 +110,11 @@ export function DialogCorpLogin() {
     // Браузер открывает серверная часть при `POST /corp/login/start` (S-A6 шаг 2, S-D8, F15);
     // ссылка ниже остаётся на экране как запасной путь, если открыть не удалось.
     pending = data.login_id
+    // Экран могли закрыть, пока Hub отвечал: сессию освобождаем сразу (S-A9).
+    if (stopped) {
+      cancel()
+      return
+    }
     setStep({ kind: "waiting", loginID: data.login_id, code: data.user_code, url: data.browser_url })
     timer = setTimeout(() => void poll(data.login_id), POLL_INTERVAL_MS)
   }

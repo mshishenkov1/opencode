@@ -130,6 +130,13 @@ const allTargets: {
   },
 ]
 
+// corp: список целей корп-сборки (S-B2) — `bun run corp/build.ts --targets win32-x64` не должен
+// собирать остальные три цели на CI-раннере. Без CORP_TARGETS поведение upstream не меняется.
+const corpTargets = (process.env["CORP_TARGETS"] ?? "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean)
+
 const targets = singleFlag
   ? allTargets.filter((item) => {
       if (item.os !== process.platform || item.arch !== process.arch) {
@@ -149,7 +156,12 @@ const targets = singleFlag
 
       return true
     })
-  : allTargets
+  : corpTargets.length
+    ? // corp: как и при --single, берём по одному бинарнику на цель — без baseline и musl (S-B2).
+      allTargets.filter(
+        (item) => item.avx2 !== false && item.abi === undefined && corpTargets.includes(`${item.os}-${item.arch}`),
+      )
+    : allTargets
 
 await $`rm -rf dist`
 

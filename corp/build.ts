@@ -99,18 +99,17 @@ const artifacts: { name: string; file: string }[] = []
 if (!flag("skip-cli")) {
   const targets = parseTargets()
   console.log(`сборка CLI: ${targets.join(", ")}`)
-  // script/build.ts собирает все цели за один прогон. Если запрошена ровно текущая платформа,
-  // используем его флаг --single; иначе собираем полный список и упаковываем нужные каталоги.
-  const current = `${process.platform}-${process.arch}` as CliTarget
-  const single = targets.length === 1 && targets[0] === current
+  // script/build.ts по умолчанию собирает все свои цели; список нужных передаётся ему через
+  // CORP_TARGETS (S-B2), иначе сборка одной цели в CI занимает время всех четырёх.
   const scriptArgs = [
-    ...(single ? ["--single"] : []),
     // Прокидываем служебные флаги upstream-скрипта: пропуск установки платформенных пакетов
     // и пропуск встраивания веб-UI (нужны для быстрых локальных прогонов и офлайн-сборок).
     ...(flag("skip-install") ? ["--skip-install"] : []),
     ...(flag("skip-embed-web-ui") ? ["--skip-embed-web-ui"] : []),
   ]
-  await $`bun run ./script/build.ts ${scriptArgs}`.cwd(path.join(ROOT, "packages/opencode")).env(env)
+  await $`bun run ./script/build.ts ${scriptArgs}`
+    .cwd(path.join(ROOT, "packages/opencode"))
+    .env({ ...env, CORP_TARGETS: targets.join(",") })
 
   for (const target of targets) {
     const name = distName(target)

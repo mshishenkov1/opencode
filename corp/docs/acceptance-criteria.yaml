@@ -1,0 +1,1062 @@
+# Критерии приёмки I-4: корпоративный форк OpenCode
+# Спецификация: corp/docs/spec.md (ревизия 1)
+# Формат: id, rule (правила спецификации), type (unit|integration|manual|ci), given/when/then.
+# Все HTTP-обращения к Hub в автотестах — только к мокам, без сети.
+
+version: 1
+spec: corp/docs/spec.md
+criteria:
+
+  # ---------------------------------------------------------------- S-C*: умолчания и конфигурация
+  - id: AC-01
+    rule: [S-C1]
+    type: unit
+    given: репозиторий форка на ветке corp/i4-sso-connectors
+    when: перечислено содержимое каталога corp/
+    then: >
+      присутствуют corp/config/opencode.corp.json, corp/README.md, corp/patches.md,
+      corp/docs/spec.md, corp/docs/acceptance-criteria.yaml, corp/build.ts,
+      corp/upstream-sync.sh, corp/plugin/README.md
+
+  - id: AC-02
+    rule: [S-C1]
+    type: ci
+    given: чистая установка зависимостей
+    when: выполнен `bun run typecheck`
+    then: команда завершается кодом 0, каталог corp/ не даёт ошибок типизации
+
+  - id: AC-03
+    rule: [S-C2]
+    type: unit
+    given: сборка с CORP_HUB_URL=https://hub.test и файлом corp/config/opencode.corp.json
+    when: собран бинарник
+    then: >
+      в define переданы OPENCODE_CORP_HUB_URL="https://hub.test" и OPENCODE_CORP_CONFIG,
+      равный содержимому файла; модуль корп-констант возвращает эти значения
+
+  - id: AC-04
+    rule: [S-C2, S-C6]
+    type: unit
+    given: сборка без CORP_HUB_URL и без корп-конфига
+    when: прочитаны корп-константы в рантайме
+    then: обе константы не определены, модуль возвращает undefined, ошибок нет
+
+  - id: AC-05
+    rule: [S-C3]
+    type: unit
+    given: >
+      корп-слой задаёт model=magnit_prod/MagnitCopilot и autoupdate=false; well-known Hub задаёт
+      model=other/X; глобальный конфиг пользователя задаёт model=user/Y
+    when: конфиг собран через loadInstanceState
+    then: >
+      действует model=user/Y (глобальный выше well-known выше корп-слоя); autoupdate=false из
+      корп-слоя сохраняется, так как его никто не переопределил
+
+  - id: AC-06
+    rule: [S-C3]
+    type: unit
+    given: OPENCODE_CORP_CONFIG содержит синтаксически неверный JSON
+    when: собирается конфиг
+    then: загрузка конфига не падает, корп-слой пуст, в лог записано предупреждение
+    negative: true
+
+  - id: AC-07
+    rule: [S-C4]
+    type: unit
+    given: файл corp/config/opencode.corp.json
+    when: он провалидирован схемой конфига OpenCode
+    then: >
+      валиден; содержит autoupdate=false, share="disabled", enabled_providers=["magnit_prod"],
+      провайдера magnit_prod с моделью MagnitCopilot и apiKey="{env:MAGNIT_COPILOT_KEY}";
+      не содержит ни одного секрета (нет ключей, токенов, паролей)
+
+  - id: AC-08
+    rule: [S-C5]
+    type: unit
+    given: заданы build-константа OPENCODE_CORP_HUB_URL=https://build.test и переменная окружения OPENCODE_CORP_HUB_URL=https://env.test
+    when: вычислен действующий адрес Hub без флага --hub
+    then: используется https://env.test; при передаче --hub https://flag.test используется https://flag.test
+
+  - id: AC-09
+    rule: [S-C5]
+    type: integration
+    given: адрес Hub не задан ни константой, ни переменной окружения
+    when: вызван GET /corp/catalog
+    then: ответ 501 {"error":"corp_disabled"}; команда /connectors в палитре отсутствует
+    negative: true
+
+  - id: AC-10
+    rule: [S-C6]
+    type: integration
+    given: ванильная сборка (корп-константы отсутствуют), пустой auth-store
+    when: запущен TUI
+    then: >
+      автоматически открывается upstream DialogProviderList; корп-экран входа не появляется;
+      слэш-команд connectors и login нет
+
+  - id: AC-11
+    rule: [S-C7]
+    type: unit
+    given: корп-слой конфигурации активен
+    when: приложение проработало без действий витрины
+    then: файл глобального конфига пользователя не изменён (побайтово)
+
+  - id: AC-12
+    rule: [S-C7]
+    type: unit
+    given: витрина выполнила «Подключить» для alias gitlab
+    when: сравнён глобальный конфиг до и после
+    then: изменился только раздел mcp.gitlab; прочие ключи и комментарии (.jsonc) сохранены
+
+  - id: AC-13
+    rule: [S-C8, S-B6]
+    type: ci
+    given: PR с изменением файла upstream
+    when: проверен список коммитов и corp/patches.md
+    then: >
+      каждый коммит, меняющий upstream-файл, имеет заголовок с префиксом `corp: `,
+      и файл упомянут в corp/patches.md со ссылкой на правило спецификации
+
+  # ---------------------------------------------------------------- S-A*: вход по SSO
+  - id: AC-14
+    rule: [S-A1]
+    type: integration
+    given: корп-функции включены
+    when: запрошены корп-роуты входа
+    then: >
+      доступны POST /corp/login/start, GET /corp/login/poll/:id,
+      POST /corp/login/poll/:id/team, GET /corp/status с описанными в спецификации схемами ответов
+
+  - id: AC-15
+    rule: [S-A2]
+    type: unit
+    given: мок Hub возвращает POST /cli/start → {login_id, poll_secret, browser_url, user_code, expires_in}
+    when: вызван POST /corp/login/start
+    then: >
+      ответ содержит login_id, user_code, browser_url, expires_in и НЕ содержит poll_secret;
+      poll_secret отсутствует в логах и событиях
+
+  - id: AC-16
+    rule: [S-A2]
+    type: unit
+    given: сессия входа создана
+    when: вызван GET /corp/login/poll/:id
+    then: исходящий запрос к Hub содержит заголовок X-Hub-Poll-Secret с сохранённым значением
+
+  - id: AC-17
+    rule: [S-A3]
+    type: unit
+    given: мок Hub отдаёт {status:"ready", key:"sk-test", key_kind:"persistent", user:{user_id:"u1",email:"u@m.ru"}}
+    when: клиент дождался ready
+    then: >
+      Auth.set вызван для magnit_prod с {type:"api", key:"sk-test"} и metadata с hub/key_kind/user_id;
+      сессия входа удалена из памяти; повторный poll даёт ошибку login_expired
+
+  - id: AC-18
+    rule: [S-A3]
+    type: integration
+    given: вход завершён успешно
+    when: пользователь отправляет сообщение
+    then: провайдер magnit_prod активен без перезапуска приложения
+
+  - id: AC-19
+    rule: [S-A4]
+    type: unit
+    given: мок Hub на poll отвечает 502 litellm_unavailable четыре раза подряд, затем ready
+    when: выполняется опрос
+    then: опрос не прекращается, вход завершается успешно; интервал между запросами ≥ 2 с
+
+  - id: AC-20
+    rule: [S-A4]
+    type: unit
+    given: мок Hub на poll отвечает 502 пять раз подряд
+    when: выполняется опрос
+    then: опрос прекращается, наружу отдаётся ошибка hub_unavailable
+    negative: true
+
+  - id: AC-21
+    rule: [S-A4, S-A5]
+    type: unit
+    given: мок Hub отвечает 404 {"error":"login_expired"}
+    when: выполняется опрос
+    then: опрос прекращается немедленно, наружу код login_expired и русское сообщение
+    negative: true
+
+  - id: AC-22
+    rule: [S-A5]
+    type: unit
+    given: 'мок Hub отвечает 429 {"error":"rate_limited"} с Retry-After: 30'
+    when: вызван POST /corp/login/start
+    then: наружу код rate_limited с указанием времени ожидания; тело ответа Hub не пересылается дословно
+    negative: true
+
+  - id: AC-23
+    rule: [S-A5]
+    type: unit
+    given: мок Hub отвечает 502 {"error":"litellm_invalid_response"}
+    when: выполняется опрос
+    then: наружу код litellm_invalid_response и русское сообщение из словаря
+    negative: true
+
+  - id: AC-24
+    rule: [S-A6]
+    type: manual
+    given: корп-экран входа открыт
+    when: получен ответ /cli/start
+    then: >
+      на экране виден user_code, ссылка browser_url, состояние «Ожидание подтверждения…»;
+      браузер открыт автоматически; доступны «Скопировать код» и «Отмена»
+
+  - id: AC-25
+    rule: [S-A6]
+    type: integration
+    given: мок Hub отвечает {status:"team_selection_required", teams:[{team_id:"t1",team_alias:"A"},{team_id:"t2",team_alias:"B"}]}
+    when: экран получил ответ
+    then: >
+      показан список из двух команд с названиями A и B; выбор отправляет
+      POST /corp/login/poll/:id/team {team_id:"t2"}; экран возвращается к ожиданию
+
+  - id: AC-26
+    rule: [S-A6]
+    type: integration
+    given: выбрана команда, мок Hub отвечает 400 {"error":"invalid_team"}
+    when: получен ответ
+    then: показана ошибка invalid_team, список команд остаётся, вход не считается завершённым
+    negative: true
+
+  - id: AC-27
+    rule: [S-A7]
+    type: integration
+    given: корп-функции включены, auth-store пуст
+    when: TUI завершил синхронизацию и список провайдеров пуст
+    then: автоматически открыт корп-экран входа, а не DialogProviderList
+
+  - id: AC-28
+    rule: [S-A7]
+    type: integration
+    given: корп-функции включены, в auth-store есть запись magnit_prod
+    when: запущено приложение
+    then: корп-экран входа не открывается автоматически
+
+  - id: AC-29
+    rule: [S-A8]
+    type: integration
+    given: пользователь уже вошёл
+    when: выполнена слэш-команда /login
+    then: открыт корп-экран входа; после успеха запись magnit_prod в auth-store перезаписана новым ключом
+
+  - id: AC-30
+    rule: [S-A9]
+    type: integration
+    given: корп-экран входа в состоянии ожидания
+    when: нажат esc
+    then: >
+      экран закрыт, опрос прекращён, сессия входа удалена из памяти сервера,
+      auth-store не изменён
+    negative: true
+
+  - id: AC-31
+    rule: [S-A10]
+    type: integration
+    given: мок Hub с полным успешным флоу и одной командой
+    when: выполнено `opencode corp login --hub <мок>`
+    then: >
+      напечатаны адрес, код и ссылка; после ready напечатан email и key_kind;
+      ключ сохранён; код выхода 0
+
+  - id: AC-32
+    rule: [S-A10]
+    type: integration
+    given: мок Hub возвращает две команды, ввод неинтерактивен
+    when: выполнено `opencode corp login`
+    then: печатается ошибка с подсказкой указать --team <id>, код выхода 1
+    negative: true
+
+  - id: AC-33
+    rule: [S-A11]
+    type: integration
+    given: ключ magnit_prod отсутствует, мок Hub отвечает на /health
+    when: выполнено `opencode corp status --hub <мок>`
+    then: 'напечатаны адрес Hub, «Hub: доступен», «ключ: нет»; код выхода 1'
+    negative: true
+
+  - id: AC-34
+    rule: [S-A11]
+    type: integration
+    given: ключ есть, мок Hub отвечает на /api/me и /health
+    when: выполнено `opencode corp status`
+    then: >
+      напечатаны адрес, user_id/email, key_kind, версия каталога и время кэша;
+      сам ключ в выводе отсутствует; код выхода 0
+
+  - id: AC-35
+    rule: [S-A11]
+    type: integration
+    given: Hub недоступен (мок отвечает сетевой ошибкой)
+    when: выполнено `opencode corp status`
+    then: 'напечатано «Hub: недоступен», остальные строки заполнены из локальных данных; код выхода 1'
+    negative: true
+
+  - id: AC-36
+    rule: [S-A12]
+    type: integration
+    given: собранный бинарник
+    when: выполнено `opencode corp`
+    then: напечатана справка с подкомандами login и status; без подкоманды команда не выполняет действий
+
+  - id: AC-37
+    rule: [S-A12, S-C5]
+    type: integration
+    given: корп-функции выключены
+    when: выполнено `opencode corp login`
+    then: напечатано «Корпоративный режим не настроен», код выхода 1
+    negative: true
+
+  # ---------------------------------------------------------------- S-V*: витрина (логика)
+  - id: AC-38
+    rule: [S-V1]
+    type: integration
+    given: корп-функции включены и ключ есть
+    when: запрошены корп-роуты витрины
+    then: >
+      доступны GET /corp/catalog, POST /corp/connectors/:alias/connect,
+      POST /corp/connectors/:alias/disconnect, PUT /corp/connectors/:alias/permissions
+
+  - id: AC-39
+    rule: [S-V2]
+    type: unit
+    given: мок Hub GET /api/catalog отвечает 200 корректным телом
+    when: вызван клиент Hub
+    then: >
+      запрос содержит Authorization: Bearer <ключ> и X-Request-ID;
+      таймаут запроса 5 с; карточки разобраны в модель
+
+  - id: AC-40
+    rule: [S-V2]
+    type: unit
+    given: мок Hub GET /api/catalog отвечает 200 телом без обязательного поля alias
+    when: вызван клиент Hub
+    then: ответ отброшен целиком, возвращена ошибка hub_invalid_response, кэш не перезаписан
+    negative: true
+
+  - id: AC-41
+    rule: [S-V2]
+    type: unit
+    given: мок Hub не отвечает дольше 5 с
+    when: вызван клиент Hub
+    then: запрос прерван по таймауту, возвращена ошибка hub_unavailable
+    negative: true
+
+  - id: AC-42
+    rule: [S-V3]
+    type: unit
+    given: успешный ответ каталога
+    when: выполнен GET /corp/catalog
+    then: >
+      source="hub"; файл кэша создан по пути Global.Path.data/corp/catalog-<hash>.json
+      с правами 0o600 и содержит hub_url, fetched_at, version, servers
+
+  - id: AC-43
+    rule: [S-V3]
+    type: unit
+    given: кэш возрастом 1 ч, Hub отвечает сетевой ошибкой
+    when: выполнен GET /corp/catalog
+    then: source="cache", stale=false, карточки из кэша, поле hub_error заполнено
+    negative: true
+
+  - id: AC-44
+    rule: [S-V3]
+    type: unit
+    given: кэш возрастом 25 ч (подменяемые часы), Hub недоступен
+    when: выполнен GET /corp/catalog
+    then: source="cache", stale=true; карточки отдаются; действия «Подключить» и «Права» помечены недоступными
+    negative: true
+
+  - id: AC-45
+    rule: [S-V3]
+    type: unit
+    given: кэша нет, Hub недоступен
+    when: выполнен GET /corp/catalog
+    then: servers=[], stale=true, hub_error заполнен
+    negative: true
+
+  - id: AC-46
+    rule: [S-V3]
+    type: unit
+    given: файл кэша повреждён (не JSON)
+    when: выполнен GET /corp/catalog при недоступном Hub
+    then: кэш трактуется как отсутствующий, ошибки чтения не выбрасываются наружу
+    negative: true
+
+  - id: AC-47
+    rule: [S-V3]
+    type: unit
+    given: два разных адреса Hub
+    when: каталоги обоих закэшированы
+    then: файлы кэша различны, данные не смешиваются
+
+  - id: AC-48
+    rule: [S-V4]
+    type: integration
+    given: ключ magnit_prod отсутствует
+    when: выполнен GET /corp/catalog
+    then: servers=[], hub_error="unauthorized"; витрина показывает «Требуется вход» с действием «Войти»
+    negative: true
+
+  - id: AC-49
+    rule: [S-V5]
+    type: unit
+    given: карточка каталога, запись mcp.<alias> в конфиге и локальный статус MCP
+    when: вычислена модель карточки
+    then: модель содержит title, description, owner, docs_url, mode, пресет, статус витрины и признак deprecated
+
+  - id: AC-50
+    rule: [S-V6]
+    type: unit
+    given: alias есть в конфиге, но отсутствует в ответе каталога
+    when: вычислен статус
+    then: статус unavailable; доступны только «Отключить» и «Открыть в Hub»
+    negative: true
+
+  - id: AC-51
+    rule: [S-V6]
+    type: unit
+    given: локальный статус MCP = failed с текстом ошибки
+    when: вычислен статус
+    then: статус unavailable, подпись содержит текст ошибки, доступны «Переподключить» и «Отключить»
+    negative: true
+
+  - id: AC-52
+    rule: [S-V6]
+    type: unit
+    given: локальный статус needs_auth (и отдельно needs_client_registration, и отдельно connection.status=needs_reauth)
+    when: вычислен статус
+    then: во всех трёх случаях статус needs_auth с действием повторной авторизации
+
+  - id: AC-53
+    rule: [S-V6]
+    type: unit
+    given: локальный статус connected
+    when: вычислен статус
+    then: статус connected; доступны «Права», «Отключить», «Открыть в Hub»
+
+  - id: AC-54
+    rule: [S-V6]
+    type: unit
+    given: mcp.<alias> есть в конфиге, локальный статус disabled
+    when: вычислен статус
+    then: статус not_connected с действием «Подключить»
+
+  - id: AC-55
+    rule: [S-V6]
+    type: unit
+    given: alias есть в каталоге, отсутствует в конфиге
+    when: вычислен статус
+    then: статус not_connected с действиями «Подключить» и «Открыть в Hub»
+
+  - id: AC-56
+    rule: [S-V6]
+    type: unit
+    given: карточка со status=deprecated, alias отсутствует в конфиге
+    when: вычислена модель карточки
+    then: показан бейдж «устаревший», действие «Подключить» недоступно
+    negative: true
+
+  - id: AC-57
+    rule: [S-V7]
+    type: unit
+    given: карточка gitlab, mode=facade, mcp_url=https://hub.test/mcp/gitlab, пресет readonly
+    when: выполнено «Подключить»
+    then: >
+      Config.updateGlobal получил патч
+      mcp.gitlab={type:"remote", url:"https://hub.test/mcp/gitlab", enabled:true, oauth:{scope:"gitlab:readonly"}};
+      затем вызван POST /mcp/gitlab/auth/authenticate
+
+  - id: AC-58
+    rule: [S-V7, D-5]
+    type: unit
+    given: карточка tag, mode=native, permission_model.kind=consent
+    when: выполнено «Подключить»
+    then: патч конфига не содержит ключа oauth; далее вызван POST /mcp/tag/auth/authenticate
+
+  - id: AC-59
+    rule: [S-V7]
+    type: integration
+    given: OAuth завершился отказом пользователя на стороне Hub
+    when: authenticate вернул ошибку
+    then: >
+      запись mcp.<alias> остаётся в конфиге, статус карточки needs_auth,
+      показано сообщение об ошибке, повтор доступен одним действием
+    negative: true
+
+  - id: AC-60
+    rule: [S-V7]
+    type: integration
+    given: браузер открыть не удалось (событие BrowserOpenFailed)
+    when: выполнено «Подключить»
+    then: показан URL авторизации текстом с предложением открыть вручную; ожидание callback продолжается
+    negative: true
+
+  - id: AC-61
+    rule: [S-V7]
+    type: integration
+    given: пресет не выбран явно
+    when: выполнено «Подключить» для facade-сервера
+    then: использован пресет readonly
+
+  - id: AC-62
+    rule: [S-V8]
+    type: unit
+    given: подключённый сервер gitlab
+    when: выполнено «Отключить»
+    then: >
+      вызваны по порядку DELETE /mcp/gitlab/auth, POST /mcp/gitlab/disconnect,
+      Config.updateGlobal с mcp.gitlab.enabled=false, DELETE {hub}/api/me/connections/gitlab;
+      запись mcp.gitlab из конфига не удалена
+
+  - id: AC-63
+    rule: [S-V8]
+    type: unit
+    given: Hub отвечает 502 на DELETE /api/me/connections/gitlab
+    when: выполнено «Отключить»
+    then: локальные три шага выполнены, статус карточки not_connected, показано предупреждение
+    negative: true
+
+  - id: AC-64
+    rule: [S-V9]
+    type: unit
+    given: подключённый facade-сервер с пресетом readonly
+    when: выбран пресет readwrite и подтверждён
+    then: >
+      вызван PUT {hub}/api/me/connections/gitlab/permissions {preset:"readwrite"};
+      Config.updateGlobal записал oauth.scope="gitlab:readwrite";
+      при reauth_required=true запущена повторная авторизация
+
+  - id: AC-65
+    rule: [S-V9]
+    type: unit
+    given: подключённый native-сервер tag
+    when: выбран другой пресет
+    then: >
+      локальный oauth.scope не появляется и не меняется; вызван PUT прав в Hub;
+      повторная авторизация проходит через экран согласия сервера
+
+  - id: AC-66
+    rule: [S-V9]
+    type: integration
+    given: открыт экран выбора прав
+    when: пользователь нажал «Отмена»
+    then: конфиг не изменён, запрос к Hub не отправлен, пресет карточки прежний
+    negative: true
+
+  - id: AC-67
+    rule: [S-V9]
+    type: unit
+    given: карточка с permission_model.kind=header_groups
+    when: открыт экран прав
+    then: показаны пресеты readonly/readwrite и состав групп (title + preset) вместе с always
+
+  - id: AC-68
+    rule: [S-V10]
+    type: integration
+    given: карточка alias=gitlab и hub_url=https://hub.test
+    when: выполнено «Открыть в Hub»
+    then: открыт https://hub.test/ui/servers/gitlab; при неудаче открытия URL показан текстом
+
+  - id: AC-69
+    rule: [S-V11]
+    type: unit
+    given: каталог из пяти карточек двух владельцев
+    when: введён поисковый запрос в другом регистре, совпадающий с частью description
+    then: отфильтрованы только совпавшие карточки; порядок и группировка по owner соответствуют порядку каталога
+
+  - id: AC-70
+    rule: [S-V12]
+    type: integration
+    given: Hub ответил 200 с servers=[]
+    when: открыта витрина
+    then: показано состояние «Каталог пуст» с действием «Обновить» (не путается с «Hub недоступен»)
+    negative: true
+
+  - id: AC-71
+    rule: [S-V13]
+    type: integration
+    given: в кэше каталога есть карточка gitlab с title "GitLab (coderepo...)"
+    when: открыт upstream-диалог /mcps
+    then: рядом с alias gitlab показан человеческий title; поведение тумблера не изменилось
+
+  - id: AC-72
+    rule: [S-V13]
+    type: integration
+    given: кэш каталога отсутствует
+    when: открыт /mcps
+    then: список выглядит и работает как в upstream
+
+  # ---------------------------------------------------------------- S-T*: TUI
+  - id: AC-73
+    rule: [S-T1]
+    type: integration
+    given: корп-функции включены
+    when: в TUI введено /connectors (и отдельно открыта палитра команд)
+    then: открывается витрина; команда присутствует в палитре с русским названием
+
+  - id: AC-74
+    rule: [S-T2]
+    type: integration
+    given: ключ magnit_prod отсутствует
+    when: открыта палитра команд
+    then: команда входа присутствует и помечена как предлагаемая (suggested)
+
+  - id: AC-75
+    rule: [S-T3]
+    type: integration
+    given: корп-функции включены, провайдеров нет
+    when: сработал first-run эффект
+    then: открыт DialogCorpLogin; при выключенных корп-функциях в том же сценарии — DialogProviderList
+
+  - id: AC-76
+    rule: [S-T4]
+    type: integration
+    given: открыт корп-экран входа
+    when: выбрано «Другой провайдер»
+    then: открыт upstream DialogProviderList без изменений в его поведении
+
+  - id: AC-77
+    rule: [S-T5]
+    type: integration
+    given: открыт upstream-список провайдеров, корп-функции включены
+    when: выбран провайдер magnit_prod
+    then: открыт корп-экран входа, а не ввод API-ключа; выбор любого другого провайдера работает как в upstream
+
+  - id: AC-78
+    rule: [S-T6]
+    type: integration
+    given: витрина TUI открыта с четырьмя карточками разных статусов
+    when: отрисован список
+    then: >
+      статусы отображены цветами темы (connected — success, needs_auth — warning,
+      not_connected — textMuted, unavailable — error); доступен штатный поиск
+
+  - id: AC-79
+    rule: [S-T6]
+    type: integration
+    given: каталог отдан из кэша с hub_error
+    when: витрина открыта
+    then: над списком показан баннер «Hub недоступен, данные от <дата>»
+    negative: true
+
+  - id: AC-80
+    rule: [S-T7]
+    type: integration
+    given: витрина TUI, карточка not_connected
+    when: нажат enter
+    then: >
+      запущен MCP-OAuth (браузер открыт), карточка показывает «Авторизация в браузере»,
+      после callback статус обновляется на connected
+
+  - id: AC-81
+    rule: [S-T7]
+    type: integration
+    given: одно подключение уже выполняется
+    when: пользователь запускает второе
+    then: второе действие игнорируется до завершения первого
+    negative: true
+
+  - id: AC-82
+    rule: [S-T8]
+    type: integration
+    given: корп-экран входа TUI в состоянии ожидания
+    when: нажата клавиша c
+    then: user_code скопирован в буфер обмена, показано подтверждение
+
+  - id: AC-83
+    rule: [S-T9]
+    type: integration
+    given: корп-сборка
+    when: выполнены /mcps, /connect, /status, /models, /agents
+    then: все команды работают как в upstream, их слэш-имена не изменились
+
+  # ---------------------------------------------------------------- S-D*: Desktop и web
+  - id: AC-84
+    rule: [S-D1]
+    type: integration
+    given: Desktop-сборка с включёнными корп-функциями
+    when: в палитре команд введено connectors
+    then: команда найдена и открывает витрину; при выключенных корп-функциях команда отсутствует
+
+  - id: AC-85
+    rule: [S-D2]
+    type: unit
+    given: роутер приложения
+    when: проверен список маршрутов
+    then: маршрут /connectors не добавлен; порядок upstream-маршрутов не изменён
+
+  - id: AC-86
+    rule: [S-D3]
+    type: integration
+    given: Desktop, ключ отсутствует
+    when: выполнена команда входа
+    then: открыт корп-экран входа с кодом, ссылкой и выбором команды
+
+  - id: AC-87
+    rule: [S-D4]
+    type: integration
+    given: providers.paid() пуст, корп-функции включены, ключа нет
+    when: показан блок Getting Started
+    then: >
+      первичная кнопка — «Войти через корпоративный SSO», вторичная — «Подключить провайдера»;
+      условие видимости блока не изменилось
+
+  - id: AC-88
+    rule: [S-D5]
+    type: integration
+    given: открыт диалог выбора провайдера в Desktop
+    when: выбран magnit_prod
+    then: открыт корп-экран входа вместо ввода API-ключа
+
+  - id: AC-89
+    rule: [S-D6]
+    type: integration
+    given: витрина Desktop с карточками двух владельцев
+    when: открыт экран
+    then: >
+      карточки сгруппированы по владельцу, у каждой title, description, owner, бейдж статуса,
+      подпись пресета и кнопки действий; работает поиск
+
+  - id: AC-90
+    rule: [S-D7]
+    type: integration
+    given: витрина Desktop, выполнено «Подключить»
+    when: действие завершилось
+    then: данные GET /mcp и GET /corp/catalog перезапрошены, карточка обновилась без перезагрузки окна
+
+  - id: AC-91
+    rule: [S-D8]
+    type: manual
+    given: Desktop (Electron)
+    when: запущен OAuth или открыт browser_url
+    then: ссылка открыта во внешнем браузере, а не внутри окна приложения
+
+  - id: AC-92
+    rule: [S-D9]
+    type: integration
+    given: запущен `opencode web`
+    when: открыта витрина в браузере
+    then: витрина и вход работают через те же корп-роуты; прямых обращений браузера к Hub нет
+
+  # ---------------------------------------------------------------- S-I*: локализация
+  - id: AC-93
+    rule: [S-I1, S-I3]
+    type: unit
+    given: словари packages/app/src/i18n/en.ts и ru.ts
+    when: сопоставлены ключи с префиксом corp.
+    then: множества ключей совпадают; ни одно значение в ru.ts не равно значению en.ts
+
+  - id: AC-94
+    rule: [S-I2]
+    type: unit
+    given: корп-функции включены, сохранённой локали нет, navigator.languages=["fr-FR"]
+    when: вычислена локаль
+    then: выбрана ru; при выключенных корп-функциях в том же сценарии — en
+
+  - id: AC-95
+    rule: [S-I2]
+    type: unit
+    given: пользователь ранее выбрал en (сохранено в localStorage)
+    when: вычислена локаль при включённых корп-функциях
+    then: выбрана en (явный выбор приоритетнее корп-умолчания)
+
+  - id: AC-96
+    rule: [S-I3]
+    type: ci
+    given: изменённые словари
+    when: выполнен packages/app/src/i18n/parity.test.ts
+    then: тест проходит
+
+  - id: AC-97
+    rule: [S-I4]
+    type: unit
+    given: словарь packages/tui/src/corp/i18n.ts
+    when: сопоставлены ключи ru и en
+    then: множества ключей совпадают; t() возвращает ru по умолчанию и en при OPENCODE_CORP_LANG=en
+
+  - id: AC-98
+    rule: [S-I5]
+    type: unit
+    given: исходники корп-экранов TUI и app
+    when: выполнен поиск строковых литералов с кириллицей вне файлов словарей
+    then: совпадений нет
+
+  - id: AC-99
+    rule: [S-I5, S-A5]
+    type: unit
+    given: перечень кодов ошибок корп-роутов (S-A5)
+    when: проверены словари
+    then: для каждого кода есть русский и английский текст
+
+  # ---------------------------------------------------------------- S-B*: сборка, CI, upstream-sync
+  - id: AC-100
+    rule: [S-B1]
+    type: ci
+    given: версия upstream 1.17.9 и CORP_BUILD=2
+    when: собран CLI
+    then: '`opencode --version` печатает 1.17.9-magnit.2'
+
+  - id: AC-101
+    rule: [S-B2]
+    type: ci
+    given: настроенный CORP_HUB_URL
+    when: выполнено `bun run corp/build.ts`
+    then: >
+      созданы бинарники для darwin-arm64, darwin-x64, linux-x64, win32-x64,
+      zip-архивы и напечатаны sha256 каждого артефакта
+
+  - id: AC-102
+    rule: [S-B2, S-C6]
+    type: ci
+    given: CORP_HUB_URL не задан
+    when: выполнено `bun run corp/build.ts`
+    then: печатается предупреждение о ванильной сборке, сборка завершается успешно
+    negative: true
+
+  - id: AC-103
+    rule: [S-B3]
+    type: ci
+    given: macOS-раннер
+    when: выполнено `bun run corp/build.ts --desktop`
+    then: >
+      собран Desktop mac-arm64 с версией S-B1; попытка собрать win-x64 на macOS завершается
+      понятной ошибкой, а не пропуском
+    negative: true
+
+  - id: AC-104
+    rule: [S-B4]
+    type: manual
+    given: собранные артефакты и тег v1.17.9-magnit.2
+    when: выполнен `corp/build.ts --publish`
+    then: >
+      в GitHub Releases приватного форка создан релиз с артефактами и их sha256;
+      без флага --publish публикация не происходит
+
+  - id: AC-105
+    rule: [S-B5]
+    type: integration
+    given: локальный upstream-remote с новым тегом, чистое рабочее дерево
+    when: выполнен corp/upstream-sync.sh
+    then: >
+      выполнены fetch, rebase, bun install, typecheck и тесты пакетов opencode и tui;
+      напечатан отчёт с изменёнными upstream-файлами из corp/patches.md; код выхода 0
+
+  - id: AC-106
+    rule: [S-B5]
+    type: integration
+    given: rebase приводит к конфликту
+    when: выполнен corp/upstream-sync.sh
+    then: напечатан список конфликтующих файлов, код выхода ненулевой, ничего не запушено
+    negative: true
+
+  - id: AC-107
+    rule: [S-B5]
+    type: integration
+    given: рабочее дерево грязное
+    when: выполнен corp/upstream-sync.sh
+    then: скрипт отказывается работать с понятным сообщением, изменений в репозитории нет
+    negative: true
+
+  - id: AC-108
+    rule: [S-B6]
+    type: unit
+    given: corp/patches.md
+    when: прочитана таблица
+    then: каждая строка содержит путь к файлу upstream, правило спецификации, причину и хеш коммита
+
+  - id: AC-109
+    rule: [S-B7]
+    type: ci
+    given: PR в main
+    when: выполнен workflow
+    then: >
+      прошли typecheck, тесты пакетов opencode/tui/app, сборка CLI для darwin-arm64,
+      linux-x64, win32-x64 и smoke `--version`
+
+  - id: AC-110
+    rule: [S-B7]
+    type: ci
+    given: PR, в котором сломан typecheck
+    when: выполнен workflow
+    then: workflow падает, PR не может быть смержен
+    negative: true
+
+  - id: AC-111
+    rule: [S-B8]
+    type: ci
+    given: тег v1.17.9-magnit.2
+    when: выполнен workflow по тегу
+    then: собраны Desktop mac-arm64 и win-x64, создан черновик GitHub Release с артефактами
+
+  - id: AC-112
+    rule: [S-B9]
+    type: unit
+    given: packages/desktop/electron-builder.config.ts
+    when: сравнён с upstream-версией
+    then: файл не изменён; подпись остаётся upstream-логикой
+
+  # ---------------------------------------------------------------- S-Q*: тесты
+  - id: AC-113
+    rule: [S-Q1]
+    type: ci
+    given: репозиторий
+    when: выполнены `bun --cwd packages/opencode test` и `bun --cwd packages/tui test`
+    then: наши тесты найдены рядом с модулями и проходят; корневой `bun test` не используется
+
+  - id: AC-114
+    rule: [S-Q2]
+    type: unit
+    given: моки HTTP Hub
+    when: выполнен hub.test.ts
+    then: >
+      покрыты успешные ответы всех вызовов §3.1–3.2, ветки pending/team_selection_required/ready
+      и коды 400/401/403/404/409/429/502, невалидное тело, таймаут и сетевая ошибка
+
+  - id: AC-115
+    rule: [S-Q3]
+    type: unit
+    given: мок Hub с полным сценарием входа
+    when: выполнен login.test.ts
+    then: >
+      покрыты путь с выбором команды, путь с одной командой, login_expired, forbidden и отмена;
+      проверено, что ключ и poll_secret не попадают в лог
+
+  - id: AC-116
+    rule: [S-Q4]
+    type: unit
+    given: набор входных состояний
+    when: выполнен connectors.test.ts
+    then: покрыта каждая строка таблицы S-V6 и все три действия витрины (connect/disconnect/permissions)
+
+  - id: AC-117
+    rule: [S-Q5]
+    type: unit
+    given: подменяемые часы и временный каталог данных
+    when: выполнен catalog-cache.test.ts
+    then: покрыты свежий кэш, протухший, отсутствующий, повреждённый, права 0o600 и изоляция по hub_url
+
+  - id: AC-118
+    rule: [S-Q6]
+    type: unit
+    given: тесты корп-слоя конфигурации
+    when: они выполнены
+    then: покрыты приоритет слоёв, отсутствие констант и невалидный JSON
+
+  - id: AC-119
+    rule: [S-Q7]
+    type: ci
+    given: изменён upstream-файл без записи в corp/patches.md
+    when: выполнен тест реестра правок
+    then: тест падает с указанием отсутствующего файла
+    negative: true
+
+  - id: AC-120
+    rule: [S-Q8]
+    type: ci
+    given: собранный бинарник и мок Hub
+    when: выполнены `opencode --version` и `opencode corp status --hub <мок>`
+    then: >
+      версия соответствует S-B1; при пустом auth-store печатается «ключ: нет» и код выхода 1,
+      с подложенным auth-store — «ключ: есть» и код выхода 0
+
+  - id: AC-121
+    rule: [S-Q9]
+    type: unit
+    given: чистый модуль вычисления статуса карточки (packages/opencode/src/corp/status.ts)
+    when: выполнены его тесты и тесты словарей
+    then: модуль покрыт всеми статусами витрины; тесты словарей S-I3/S-I4 проходят
+
+# ---------------------------------------------------------------- карта покрытия правил
+coverage:
+  S-C1: [AC-01, AC-02]
+  S-C2: [AC-03, AC-04]
+  S-C3: [AC-05, AC-06]
+  S-C4: [AC-07]
+  S-C5: [AC-08, AC-09, AC-37]
+  S-C6: [AC-04, AC-10, AC-102]
+  S-C7: [AC-11, AC-12]
+  S-C8: [AC-13]
+  S-A1: [AC-14]
+  S-A2: [AC-15, AC-16]
+  S-A3: [AC-17, AC-18]
+  S-A4: [AC-19, AC-20, AC-21]
+  S-A5: [AC-21, AC-22, AC-23, AC-99]
+  S-A6: [AC-24, AC-25, AC-26]
+  S-A7: [AC-27, AC-28]
+  S-A8: [AC-29]
+  S-A9: [AC-30]
+  S-A10: [AC-31, AC-32]
+  S-A11: [AC-33, AC-34, AC-35]
+  S-A12: [AC-36, AC-37]
+  S-V1: [AC-38]
+  S-V2: [AC-39, AC-40, AC-41]
+  S-V3: [AC-42, AC-43, AC-44, AC-45, AC-46, AC-47]
+  S-V4: [AC-48]
+  S-V5: [AC-49]
+  S-V6: [AC-50, AC-51, AC-52, AC-53, AC-54, AC-55, AC-56]
+  S-V7: [AC-57, AC-58, AC-59, AC-60, AC-61]
+  S-V8: [AC-62, AC-63]
+  S-V9: [AC-64, AC-65, AC-66, AC-67]
+  S-V10: [AC-68]
+  S-V11: [AC-69]
+  S-V12: [AC-45, AC-48, AC-70]
+  S-V13: [AC-71, AC-72]
+  S-T1: [AC-73]
+  S-T2: [AC-74]
+  S-T3: [AC-75]
+  S-T4: [AC-76]
+  S-T5: [AC-77]
+  S-T6: [AC-78, AC-79]
+  S-T7: [AC-80, AC-81]
+  S-T8: [AC-82]
+  S-T9: [AC-83]
+  S-D1: [AC-84]
+  S-D2: [AC-85]
+  S-D3: [AC-86]
+  S-D4: [AC-87]
+  S-D5: [AC-88]
+  S-D6: [AC-89]
+  S-D7: [AC-90]
+  S-D8: [AC-91]
+  S-D9: [AC-92]
+  S-I1: [AC-93]
+  S-I2: [AC-94, AC-95]
+  S-I3: [AC-93, AC-96]
+  S-I4: [AC-97]
+  S-I5: [AC-98, AC-99]
+  S-B1: [AC-100]
+  S-B2: [AC-101, AC-102]
+  S-B3: [AC-103]
+  S-B4: [AC-104]
+  S-B5: [AC-105, AC-106, AC-107]
+  S-B6: [AC-13, AC-108]
+  S-B7: [AC-109, AC-110]
+  S-B8: [AC-111]
+  S-B9: [AC-112]
+  S-Q1: [AC-113]
+  S-Q2: [AC-114]
+  S-Q3: [AC-115]
+  S-Q4: [AC-116]
+  S-Q5: [AC-117]
+  S-Q6: [AC-118]
+  S-Q7: [AC-119]
+  S-Q8: [AC-120]
+  S-Q9: [AC-121]
+
+negative_scenarios:
+  hub_unavailable: [AC-20, AC-35, AC-41, AC-43, AC-44, AC-45, AC-63, AC-79]
+  key_missing: [AC-33, AC-37, AC-48, AC-120]
+  oauth_rejected: [AC-59, AC-60]
+  permissions_cancelled: [AC-66]
+  cache_expired: [AC-44, AC-46]
+  invalid_hub_response: [AC-23, AC-40]
+  login_session_errors: [AC-21, AC-22, AC-26, AC-30, AC-32]
+  vanilla_mode: [AC-04, AC-09, AC-10, AC-102]
+  build_and_ci_failures: [AC-103, AC-106, AC-107, AC-110, AC-119]
+  catalog_edge_cases: [AC-50, AC-51, AC-56, AC-70]

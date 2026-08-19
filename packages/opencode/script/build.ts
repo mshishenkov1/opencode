@@ -50,6 +50,21 @@ const createEmbeddedWebUIBundle = async () => {
 
 const embeddedFileMap = skipEmbedWebUi ? null : await createEmbeddedWebUIBundle()
 
+// corp: корпоративный слой — build-константы OPENCODE_CORP_HUB_URL / OPENCODE_CORP_CONFIG (S-C2).
+// Без CORP_HUB_URL и без corp/config/opencode.corp.json константы не определяются и сборка ванильная (S-C6).
+const corpDefine: Record<string, string> = {}
+{
+  const hubUrl = process.env["CORP_HUB_URL"]?.trim().replace(/\/+$/, "")
+  if (hubUrl) corpDefine["OPENCODE_CORP_HUB_URL"] = JSON.stringify(hubUrl)
+  const corpConfigPath = path.resolve(dir, "../../corp/config/opencode.corp.json")
+  if (fs.existsSync(corpConfigPath)) {
+    const text = fs.readFileSync(corpConfigPath, "utf8").trim()
+    if (text) corpDefine["OPENCODE_CORP_CONFIG"] = JSON.stringify(text)
+  }
+  if (Object.keys(corpDefine).length === 0) console.log("corp: build-константы не заданы, собирается ванильная сборка")
+  else console.log(`corp: build-константы ${Object.keys(corpDefine).join(", ")}`)
+}
+
 const allTargets: {
   os: string
   arch: "arm64" | "x64"
@@ -194,6 +209,8 @@ for (const item of targets) {
       OPENCODE_WORKER_PATH: workerPath,
       OPENCODE_CHANNEL: `'${Script.channel}'`,
       OPENCODE_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "",
+      // corp: S-C2
+      ...corpDefine,
       ...(item.os === "linux" ? { "process.env.OPENTUI_LIBC": JSON.stringify(item.abi ?? "glibc") } : {}),
     },
   })

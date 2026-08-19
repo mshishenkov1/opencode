@@ -18,7 +18,7 @@ import { isRecord } from "@/util/record"
 import type { ConsoleState } from "@opencode-ai/core/v1/config/console-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
-import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
+import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { containsPath, type InstanceContext } from "../project/instance-context"
@@ -35,6 +35,8 @@ import { ConfigPlugin } from "./plugin"
 import { ConfigVariable } from "./variable"
 import { Npm } from "@opencode-ai/core/npm"
 import { withTransientReadRetry } from "@/util/effect-http-client"
+// corp: корпоративный слой умолчаний (S-C3)
+import * as Corp from "@/corp/config"
 
 // Custom merge function that concatenates array fields instead of replacing them
 // Keep remeda's deep conditional merge type out of hot config-loading paths; TS profiling showed it dominates here.
@@ -350,6 +352,24 @@ export const layer = Layer.effect(
         const merge = (source: string, next: Info, kind?: ConfigPlugin.Scope) => {
           result = mergeConfigConcatArrays(result, next)
           return mergePluginOrigins(source, next.plugin, kind)
+        }
+
+        // corp: корпоративный слой умолчаний из build-константы OPENCODE_CORP_CONFIG (S-C3).
+        // Мержится до цикла well-known, поэтому имеет наименьший приоритет; ошибка разбора не роняет загрузку.
+        const corpText = Corp.configText()
+        if (corpText) {
+          const corp = yield* loadConfig(
+            corpText,
+            { dir: Global.Path.config, source: Corp.CONFIG_SOURCE },
+            authEnv,
+          ).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("failed to load corp config layer", { cause: Cause.pretty(cause) }).pipe(
+                Effect.as({} as Info),
+              ),
+            ),
+          )
+          yield* merge(Corp.CONFIG_SOURCE, corp, "global")
         }
 
         for (const [key, value] of Object.entries(auth)) {

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "share": "disabled",
+  "enabled_providers": ["magnit_prod"],
+  "model": "magnit_prod/MagnitCopilot",
+  "provider": {
+    "magnit_prod": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Magnit Copilot",
+      "options": {
+        "baseURL": "https://copilot.magnit.ru/v1",
+        "apiKey": "{env:MAGNIT_COPILOT_KEY}"
+      },
+      "models": {
+        "MagnitCopilot": {
+          "name": "Magnit Copilot",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        }
+      }
+    }
+  }
+}

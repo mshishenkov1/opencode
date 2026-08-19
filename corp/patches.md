@@ -8,9 +8,9 @@
 
 | Файл upstream | Правило | Причина | Коммит |
 |---|---|---|---|
-| `bun.lock` | — | Пересчёт lock-файла после `bun install` (github-зависимость `ghostty-web` сдвинула коммит) | `ff6671cf10` |
+| `bun.lock` | — | Пересчёт lock-файла после `bun install`: github-зависимость `ghostty-web` сдвинула коммит (`20bd361` → `83c0a07`). Вернуть строку upstream нельзя — с исходным пином `bun install --frozen-lockfile` падает («lockfile had changes»), а обычный `bun install` пересчитывает её обратно: ссылка на ветку в upstream-репозитории уехала, старый коммит больше не воспроизводится | `ff6671cf10` |
 | `packages/opencode/src/config/config.ts` | S-C3 | Мерж корпоративного слоя умолчаний до цикла `wellknown`, чтобы у слоя был наименьший приоритет | `06f3cada4e` |
-| `packages/opencode/script/build.ts` | S-C2, S-I2 | Build-константы `OPENCODE_CORP_HUB_URL` и `OPENCODE_CORP_CONFIG` в блоке `define`; `VITE_OPENCODE_CORP_HUB_URL` для сборки встроенного веб-UI | `06f3cada4e`, `5adcde570d` |
+| `packages/opencode/script/build.ts` | S-C2, S-I2, S-B2 | Build-константы `OPENCODE_CORP_HUB_URL` и `OPENCODE_CORP_CONFIG` в блоке `define`; `VITE_OPENCODE_CORP_HUB_URL` для сборки встроенного веб-UI; отбор целей по `CORP_TARGETS`, чтобы сборка одной цели не тянула остальные | `06f3cada4e`, `5adcde570d`, `cdf62dc441` |
 | `packages/opencode/src/server/routes/instance/httpapi/api.ts` | S-A1 | Регистрация группы корп-роутов `CorpApi` в `InstanceHttpApi` | `84e93ef0fe` |
 | `packages/opencode/src/server/routes/instance/httpapi/server.ts` | S-A1 | Подключение `corpHandlers` к серверу | `84e93ef0fe` |
 | `packages/sdk/openapi.json` | S-A1 | Перегенерация OpenAPI-схемы после добавления корп-роутов | `84e93ef0fe` |

@@ -2144,6 +2144,201 @@ export type Provider = {
   }
 }
 
+export type CorpLoginStart = {
+  login_id: string
+  user_code: string
+  browser_url: string
+  expires_in: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type CorpDisabledError = {
+  error: "corp_disabled"
+}
+
+export type CorpHubError = {
+  error:
+    | "corp_disabled"
+    | "hub_unavailable"
+    | "hub_invalid_response"
+    | "login_expired"
+    | "forbidden"
+    | "invalid_team"
+    | "team_selection_not_required"
+    | "rate_limited"
+    | "litellm_unavailable"
+    | "litellm_invalid_response"
+    | "unauthorized"
+    | "not_found"
+    | "invalid_request"
+  retry_after?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type CorpLoginPending = {
+  status: "pending"
+}
+
+export type CorpTeam = {
+  team_id: string
+  team_alias: string
+}
+
+export type CorpLoginTeamSelection = {
+  status: "team_selection_required"
+  teams: Array<CorpTeam>
+}
+
+export type CorpHubUser = {
+  user_id: string
+  email: string
+}
+
+export type CorpLoginReady = {
+  status: "ready"
+  user: CorpHubUser
+  key_kind: "persistent" | "jwt"
+}
+
+export type CorpLoginError = {
+  status: "error"
+  error: string
+  message: string
+  retry_after?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type CorpLoginPoll = CorpLoginPending | CorpLoginTeamSelection | CorpLoginReady | CorpLoginError
+
+export type CorpStatus = {
+  hub_url?: string
+  enabled: boolean
+  authenticated: boolean
+  user?: CorpHubUser
+  key_kind?: "persistent" | "jwt"
+  hub_reachable?: boolean
+  catalog_version?: string
+  catalog_cached_at?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  catalog_stale?: boolean
+  hub_error?:
+    | "corp_disabled"
+    | "hub_unavailable"
+    | "hub_invalid_response"
+    | "login_expired"
+    | "forbidden"
+    | "invalid_team"
+    | "team_selection_not_required"
+    | "rate_limited"
+    | "litellm_unavailable"
+    | "litellm_invalid_response"
+    | "unauthorized"
+    | "not_found"
+    | "invalid_request"
+}
+
+export type CorpPermissionGroup = {
+  id: string
+  title: string
+  preset?: string
+}
+
+export type CorpPermissionHeaderGroups = {
+  kind: "header_groups"
+  groups: Array<CorpPermissionGroup>
+  always?: Array<string>
+}
+
+export type CorpPermissionPresets = {
+  kind: "consent" | "tool_filter"
+  presets: {
+    [key: string]: string
+  }
+}
+
+export type CorpPermissionModel = CorpPermissionHeaderGroups | CorpPermissionPresets
+
+export type CorpCatalogCard = {
+  alias: string
+  title: string
+  description?: string
+  owner?: string
+  contact?: string
+  docs_url?: string
+  server_status: "beta" | "ga" | "deprecated"
+  mode: "native" | "facade"
+  mcp_url: string
+  permission_model?: CorpPermissionModel
+  connection_status?: "not_connected" | "connected" | "needs_reauth"
+  preset?: string
+  status: "connected" | "needs_auth" | "not_connected" | "unavailable"
+  actions: Array<"connect" | "reconnect" | "disconnect" | "permissions" | "open_hub">
+  deprecated: boolean
+  blocked: boolean
+  configured: boolean
+  error?: string
+  hub_url?: string
+}
+
+export type CorpCatalogView = {
+  version: string
+  source: "hub" | "cache"
+  cached_at?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  stale: boolean
+  servers: Array<CorpCatalogCard>
+  hub_error?:
+    | "corp_disabled"
+    | "hub_unavailable"
+    | "hub_invalid_response"
+    | "login_expired"
+    | "forbidden"
+    | "invalid_team"
+    | "team_selection_not_required"
+    | "rate_limited"
+    | "litellm_unavailable"
+    | "litellm_invalid_response"
+    | "unauthorized"
+    | "not_found"
+    | "invalid_request"
+}
+
+export type CorpConnectorResult = {
+  alias: string
+  status: "connected" | "needs_auth" | "not_connected" | "unavailable"
+  error?: string
+  hub_error?:
+    | "corp_disabled"
+    | "hub_unavailable"
+    | "hub_invalid_response"
+    | "login_expired"
+    | "forbidden"
+    | "invalid_team"
+    | "team_selection_not_required"
+    | "rate_limited"
+    | "litellm_unavailable"
+    | "litellm_invalid_response"
+    | "unauthorized"
+    | "not_found"
+    | "invalid_request"
+}
+
+export type CorpPermissionsResult = {
+  alias: string
+  status: "connected" | "needs_auth" | "not_connected" | "unavailable"
+  preset: string
+  reauth_required: boolean
+  hub_error?:
+    | "corp_disabled"
+    | "hub_unavailable"
+    | "hub_invalid_response"
+    | "login_expired"
+    | "forbidden"
+    | "invalid_team"
+    | "team_selection_not_required"
+    | "rate_limited"
+    | "litellm_unavailable"
+    | "litellm_invalid_response"
+    | "unauthorized"
+    | "not_found"
+    | "invalid_request"
+}
+
 export type ExperimentalCapabilities = {
   backgroundSubagents: boolean
 }
@@ -5552,6 +5747,280 @@ export type ConfigProvidersResponses = {
 }
 
 export type ConfigProvidersResponse = ConfigProvidersResponses[keyof ConfigProvidersResponses]
+
+export type CorpLoginStartData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/login/start"
+}
+
+export type CorpLoginStartErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+  /**
+   * CorpHubError
+   */
+  502: CorpHubError
+}
+
+export type CorpLoginStartError = CorpLoginStartErrors[keyof CorpLoginStartErrors]
+
+export type CorpLoginStartResponses = {
+  /**
+   * Корпоративный вход начат
+   */
+  200: CorpLoginStart
+}
+
+export type CorpLoginStartResponse = CorpLoginStartResponses[keyof CorpLoginStartResponses]
+
+export type CorpLoginPollData = {
+  body?: never
+  path: {
+    loginID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/login/poll/{loginID}"
+}
+
+export type CorpLoginPollErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpLoginPollError = CorpLoginPollErrors[keyof CorpLoginPollErrors]
+
+export type CorpLoginPollResponses = {
+  /**
+   * Состояние входа
+   */
+  200: CorpLoginPoll
+}
+
+export type CorpLoginPollResponse = CorpLoginPollResponses[keyof CorpLoginPollResponses]
+
+export type CorpLoginTeamData = {
+  body?: {
+    team_id: string
+  }
+  path: {
+    loginID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/login/poll/{loginID}/team"
+}
+
+export type CorpLoginTeamErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpLoginTeamError = CorpLoginTeamErrors[keyof CorpLoginTeamErrors]
+
+export type CorpLoginTeamResponses = {
+  /**
+   * Команда выбрана
+   */
+  200: CorpLoginPoll
+}
+
+export type CorpLoginTeamResponse = CorpLoginTeamResponses[keyof CorpLoginTeamResponses]
+
+export type CorpStatusData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/status"
+}
+
+export type CorpStatusErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type CorpStatusError = CorpStatusErrors[keyof CorpStatusErrors]
+
+export type CorpStatusResponses = {
+  /**
+   * Состояние корпоративного режима
+   */
+  200: CorpStatus
+}
+
+export type CorpStatusResponse = CorpStatusResponses[keyof CorpStatusResponses]
+
+export type CorpCatalogData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+    refresh?: string
+  }
+  url: "/corp/catalog"
+}
+
+export type CorpCatalogErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpCatalogError = CorpCatalogErrors[keyof CorpCatalogErrors]
+
+export type CorpCatalogResponses = {
+  /**
+   * Каталог коннекторов
+   */
+  200: CorpCatalogView
+}
+
+export type CorpCatalogResponse = CorpCatalogResponses[keyof CorpCatalogResponses]
+
+export type CorpConnectData = {
+  body?: {
+    preset?: string
+  }
+  path: {
+    alias: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/connectors/{alias}/connect"
+}
+
+export type CorpConnectErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpConnectError = CorpConnectErrors[keyof CorpConnectErrors]
+
+export type CorpConnectResponses = {
+  /**
+   * Коннектор подключён
+   */
+  200: CorpConnectorResult
+}
+
+export type CorpConnectResponse = CorpConnectResponses[keyof CorpConnectResponses]
+
+export type CorpDisconnectData = {
+  body?: never
+  path: {
+    alias: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/connectors/{alias}/disconnect"
+}
+
+export type CorpDisconnectErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpDisconnectError = CorpDisconnectErrors[keyof CorpDisconnectErrors]
+
+export type CorpDisconnectResponses = {
+  /**
+   * Коннектор отключён
+   */
+  200: CorpConnectorResult
+}
+
+export type CorpDisconnectResponse = CorpDisconnectResponses[keyof CorpDisconnectResponses]
+
+export type CorpPermissionsData = {
+  body?: {
+    preset: string
+    groups?: Array<string>
+  }
+  path: {
+    alias: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/connectors/{alias}/permissions"
+}
+
+export type CorpPermissionsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpPermissionsError = CorpPermissionsErrors[keyof CorpPermissionsErrors]
+
+export type CorpPermissionsResponses = {
+  /**
+   * Права обновлены
+   */
+  200: CorpPermissionsResult
+}
+
+export type CorpPermissionsResponse = CorpPermissionsResponses[keyof CorpPermissionsResponses]
 
 export type ExperimentalCapabilitiesGetData = {
   body?: never

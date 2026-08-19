@@ -810,6 +810,619 @@
         ]
       }
     },
+    "/corp/login/start": {
+      "post": {
+        "tags": ["corp"],
+        "operationId": "corp.login.start",
+        "parameters": [
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Корпоративный вход начат",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpLoginStart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "CorpHubError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpHubError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Начинает вход через корпоративный SSO: возвращает код и адрес для браузера.",
+        "summary": "Start corporate SSO login",
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.login.start({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/corp/login/poll/{loginID}": {
+      "get": {
+        "tags": ["corp"],
+        "operationId": "corp.login.poll",
+        "parameters": [
+          {
+            "name": "loginID",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Состояние входа",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpLoginPoll"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Опрашивает Hub о состоянии входа; poll_secret наружу не отдаётся.",
+        "summary": "Poll corporate SSO login",
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.login.poll({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/corp/login/poll/{loginID}/team": {
+      "post": {
+        "tags": ["corp"],
+        "operationId": "corp.login.team",
+        "parameters": [
+          {
+            "name": "loginID",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Команда выбрана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpLoginPoll"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Отправляет выбранную команду в Hub и возвращает состояние входа.",
+        "summary": "Select team for corporate SSO login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "team_id": {
+                    "type": "string"
+                  }
+                },
+                "required": ["team_id"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.login.team({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/corp/status": {
+      "get": {
+        "tags": ["corp"],
+        "operationId": "corp.status",
+        "parameters": [
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Состояние корпоративного режима",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Адрес Hub, наличие ключа, версия и свежесть кэша каталога.",
+        "summary": "Corporate mode status",
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.status({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/corp/catalog": {
+      "get": {
+        "tags": ["corp"],
+        "operationId": "corp.catalog",
+        "parameters": [
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Каталог коннекторов",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpCatalogView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Каталог корпоративных MCP-серверов с состоянием карточек и деградацией на кэш.",
+        "summary": "Connector catalog",
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.catalog({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/corp/connectors/{alias}/connect": {
+      "post": {
+        "tags": ["corp"],
+        "operationId": "corp.connect",
+        "parameters": [
+          {
+            "name": "alias",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Коннектор подключён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpConnectorResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Пишет mcp.<alias> в глобальный конфиг и запускает штатный MCP-OAuth.",
+        "summary": "Connect connector",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "preset": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.connect({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/corp/connectors/{alias}/disconnect": {
+      "post": {
+        "tags": ["corp"],
+        "operationId": "corp.disconnect",
+        "parameters": [
+          {
+            "name": "alias",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Коннектор отключён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpConnectorResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Снимает OAuth-токены, гасит MCP и снимает подключение в Hub.",
+        "summary": "Disconnect connector",
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.disconnect({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/corp/connectors/{alias}/permissions": {
+      "put": {
+        "tags": ["corp"],
+        "operationId": "corp.permissions",
+        "parameters": [
+          {
+            "name": "alias",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Права обновлены",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpPermissionsResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Обновляет пресет прав в Hub и, для mode:facade, oauth.scope в конфиге.",
+        "summary": "Update connector permissions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "preset": {
+                    "type": "string"
+                  },
+                  "groups": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": ["preset"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.permissions({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/experimental/capabilities": {
       "get": {
         "tags": ["experimental"],
@@ -21078,6 +21691,591 @@
         "required": ["id", "name", "source", "env", "options", "models"],
         "additionalProperties": false
       },
+      "CorpLoginStart": {
+        "type": "object",
+        "properties": {
+          "login_id": {
+            "type": "string"
+          },
+          "user_code": {
+            "type": "string"
+          },
+          "browser_url": {
+            "type": "string"
+          },
+          "expires_in": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["NaN"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["-Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          }
+        },
+        "required": ["login_id", "user_code", "browser_url", "expires_in"],
+        "additionalProperties": false
+      },
+      "CorpDisabledError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["corp_disabled"]
+          }
+        },
+        "required": ["error"],
+        "additionalProperties": false
+      },
+      "CorpHubError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "corp_disabled",
+              "hub_unavailable",
+              "hub_invalid_response",
+              "login_expired",
+              "forbidden",
+              "invalid_team",
+              "team_selection_not_required",
+              "rate_limited",
+              "litellm_unavailable",
+              "litellm_invalid_response",
+              "unauthorized",
+              "not_found",
+              "invalid_request"
+            ]
+          },
+          "retry_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["NaN"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["-Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          }
+        },
+        "required": ["error"],
+        "additionalProperties": false
+      },
+      "CorpLoginPending": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["pending"]
+          }
+        },
+        "required": ["status"],
+        "additionalProperties": false
+      },
+      "CorpTeam": {
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string"
+          },
+          "team_alias": {
+            "type": "string"
+          }
+        },
+        "required": ["team_id", "team_alias"],
+        "additionalProperties": false
+      },
+      "CorpLoginTeamSelection": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["team_selection_required"]
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorpTeam"
+            }
+          }
+        },
+        "required": ["status", "teams"],
+        "additionalProperties": false
+      },
+      "CorpHubUser": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          }
+        },
+        "required": ["user_id", "email"],
+        "additionalProperties": false
+      },
+      "CorpLoginReady": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ready"]
+          },
+          "user": {
+            "$ref": "#/components/schemas/CorpHubUser"
+          },
+          "key_kind": {
+            "type": "string",
+            "enum": ["persistent", "jwt"]
+          }
+        },
+        "required": ["status", "user", "key_kind"],
+        "additionalProperties": false
+      },
+      "CorpLoginError": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["error"]
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "retry_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["NaN"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["-Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          }
+        },
+        "required": ["status", "error", "message"],
+        "additionalProperties": false
+      },
+      "CorpLoginPoll": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/CorpLoginPending"
+          },
+          {
+            "$ref": "#/components/schemas/CorpLoginTeamSelection"
+          },
+          {
+            "$ref": "#/components/schemas/CorpLoginReady"
+          },
+          {
+            "$ref": "#/components/schemas/CorpLoginError"
+          }
+        ]
+      },
+      "CorpStatus": {
+        "type": "object",
+        "properties": {
+          "hub_url": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "authenticated": {
+            "type": "boolean"
+          },
+          "user": {
+            "$ref": "#/components/schemas/CorpHubUser"
+          },
+          "key_kind": {
+            "type": "string",
+            "enum": ["persistent", "jwt"]
+          },
+          "hub_reachable": {
+            "type": "boolean"
+          },
+          "catalog_version": {
+            "type": "string"
+          },
+          "catalog_cached_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["NaN"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["-Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "catalog_stale": {
+            "type": "boolean"
+          },
+          "hub_error": {
+            "type": "string",
+            "enum": [
+              "corp_disabled",
+              "hub_unavailable",
+              "hub_invalid_response",
+              "login_expired",
+              "forbidden",
+              "invalid_team",
+              "team_selection_not_required",
+              "rate_limited",
+              "litellm_unavailable",
+              "litellm_invalid_response",
+              "unauthorized",
+              "not_found",
+              "invalid_request"
+            ]
+          }
+        },
+        "required": ["enabled", "authenticated"],
+        "additionalProperties": false
+      },
+      "CorpPermissionGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "preset": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "title"],
+        "additionalProperties": false
+      },
+      "CorpPermissionHeaderGroups": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["header_groups"]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorpPermissionGroup"
+            }
+          },
+          "always": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["kind", "groups"],
+        "additionalProperties": false
+      },
+      "CorpPermissionPresets": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["consent", "tool_filter"]
+          },
+          "presets": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["kind", "presets"],
+        "additionalProperties": false
+      },
+      "CorpPermissionModel": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/CorpPermissionHeaderGroups"
+          },
+          {
+            "$ref": "#/components/schemas/CorpPermissionPresets"
+          }
+        ]
+      },
+      "CorpCatalogCard": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "contact": {
+            "type": "string"
+          },
+          "docs_url": {
+            "type": "string"
+          },
+          "server_status": {
+            "type": "string",
+            "enum": ["beta", "ga", "deprecated"]
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["native", "facade"]
+          },
+          "mcp_url": {
+            "type": "string"
+          },
+          "permission_model": {
+            "$ref": "#/components/schemas/CorpPermissionModel"
+          },
+          "connection_status": {
+            "type": "string",
+            "enum": ["not_connected", "connected", "needs_reauth"]
+          },
+          "preset": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["connected", "needs_auth", "not_connected", "unavailable"]
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["connect", "reconnect", "disconnect", "permissions", "open_hub"]
+            }
+          },
+          "deprecated": {
+            "type": "boolean"
+          },
+          "blocked": {
+            "type": "boolean"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "hub_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias",
+          "title",
+          "server_status",
+          "mode",
+          "mcp_url",
+          "status",
+          "actions",
+          "deprecated",
+          "blocked",
+          "configured"
+        ],
+        "additionalProperties": false
+      },
+      "CorpCatalogView": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": ["hub", "cache"]
+          },
+          "cached_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["NaN"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["-Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorpCatalogCard"
+            }
+          },
+          "hub_error": {
+            "type": "string",
+            "enum": [
+              "corp_disabled",
+              "hub_unavailable",
+              "hub_invalid_response",
+              "login_expired",
+              "forbidden",
+              "invalid_team",
+              "team_selection_not_required",
+              "rate_limited",
+              "litellm_unavailable",
+              "litellm_invalid_response",
+              "unauthorized",
+              "not_found",
+              "invalid_request"
+            ]
+          }
+        },
+        "required": ["version", "source", "stale", "servers"],
+        "additionalProperties": false
+      },
+      "CorpConnectorResult": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["connected", "needs_auth", "not_connected", "unavailable"]
+          },
+          "error": {
+            "type": "string"
+          },
+          "hub_error": {
+            "type": "string",
+            "enum": [
+              "corp_disabled",
+              "hub_unavailable",
+              "hub_invalid_response",
+              "login_expired",
+              "forbidden",
+              "invalid_team",
+              "team_selection_not_required",
+              "rate_limited",
+              "litellm_unavailable",
+              "litellm_invalid_response",
+              "unauthorized",
+              "not_found",
+              "invalid_request"
+            ]
+          }
+        },
+        "required": ["alias", "status"],
+        "additionalProperties": false
+      },
+      "CorpPermissionsResult": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["connected", "needs_auth", "not_connected", "unavailable"]
+          },
+          "preset": {
+            "type": "string"
+          },
+          "reauth_required": {
+            "type": "boolean"
+          },
+          "hub_error": {
+            "type": "string",
+            "enum": [
+              "corp_disabled",
+              "hub_unavailable",
+              "hub_invalid_response",
+              "login_expired",
+              "forbidden",
+              "invalid_team",
+              "team_selection_not_required",
+              "rate_limited",
+              "litellm_unavailable",
+              "litellm_invalid_response",
+              "unauthorized",
+              "not_found",
+              "invalid_request"
+            ]
+          }
+        },
+        "required": ["alias", "status", "preset", "reauth_required"],
+        "additionalProperties": false
+      },
       "ExperimentalCapabilities": {
         "type": "object",
         "properties": {
@@ -30560,6 +31758,10 @@
     {
       "name": "config",
       "description": "Experimental HttpApi config routes."
+    },
+    {
+      "name": "corp",
+      "description": "Корпоративные роуты: вход по SSO и витрина коннекторов."
     },
     {
       "name": "experimental",

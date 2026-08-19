@@ -24,6 +24,22 @@ import type {
   ConfigProvidersResponses,
   ConfigUpdateErrors,
   ConfigUpdateResponses,
+  CorpCatalogErrors,
+  CorpCatalogResponses,
+  CorpConnectErrors,
+  CorpConnectResponses,
+  CorpDisconnectErrors,
+  CorpDisconnectResponses,
+  CorpLoginPollErrors,
+  CorpLoginPollResponses,
+  CorpLoginStartErrors,
+  CorpLoginStartResponses,
+  CorpLoginTeamErrors,
+  CorpLoginTeamResponses,
+  CorpPermissionsErrors,
+  CorpPermissionsResponses,
+  CorpStatusErrors,
+  CorpStatusResponses,
   EventSubscribeResponses,
   EventTuiCommandExecute,
   EventTuiPromptAppend,
@@ -1482,6 +1498,290 @@ export class Config2 extends HeyApiClient {
       ...options,
       ...params,
     })
+  }
+}
+
+export class Login extends HeyApiClient {
+  /**
+   * Start corporate SSO login
+   *
+   * Начинает вход через корпоративный SSO: возвращает код и адрес для браузера.
+   */
+  public start<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<CorpLoginStartResponses, CorpLoginStartErrors, ThrowOnError>({
+      url: "/corp/login/start",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Poll corporate SSO login
+   *
+   * Опрашивает Hub о состоянии входа; poll_secret наружу не отдаётся.
+   */
+  public poll<ThrowOnError extends boolean = false>(
+    parameters: {
+      loginID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "loginID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<CorpLoginPollResponses, CorpLoginPollErrors, ThrowOnError>({
+      url: "/corp/login/poll/{loginID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Select team for corporate SSO login
+   *
+   * Отправляет выбранную команду в Hub и возвращает состояние входа.
+   */
+  public team<ThrowOnError extends boolean = false>(
+    parameters: {
+      loginID: string
+      directory?: string
+      workspace?: string
+      team_id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "loginID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "team_id" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<CorpLoginTeamResponses, CorpLoginTeamErrors, ThrowOnError>({
+      url: "/corp/login/poll/{loginID}/team",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Corp extends HeyApiClient {
+  /**
+   * Corporate mode status
+   *
+   * Адрес Hub, наличие ключа, версия и свежесть кэша каталога.
+   */
+  public status<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<CorpStatusResponses, CorpStatusErrors, ThrowOnError>({
+      url: "/corp/status",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Connector catalog
+   *
+   * Каталог корпоративных MCP-серверов с состоянием карточек и деградацией на кэш.
+   */
+  public catalog<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      refresh?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "refresh" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<CorpCatalogResponses, CorpCatalogErrors, ThrowOnError>({
+      url: "/corp/catalog",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Connect connector
+   *
+   * Пишет mcp.<alias> в глобальный конфиг и запускает штатный MCP-OAuth.
+   */
+  public connect<ThrowOnError extends boolean = false>(
+    parameters: {
+      alias: string
+      directory?: string
+      workspace?: string
+      preset?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "alias" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "preset" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<CorpConnectResponses, CorpConnectErrors, ThrowOnError>({
+      url: "/corp/connectors/{alias}/connect",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Disconnect connector
+   *
+   * Снимает OAuth-токены, гасит MCP и снимает подключение в Hub.
+   */
+  public disconnect<ThrowOnError extends boolean = false>(
+    parameters: {
+      alias: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "alias" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<CorpDisconnectResponses, CorpDisconnectErrors, ThrowOnError>({
+      url: "/corp/connectors/{alias}/disconnect",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Update connector permissions
+   *
+   * Обновляет пресет прав в Hub и, для mode:facade, oauth.scope в конфиге.
+   */
+  public permissions<ThrowOnError extends boolean = false>(
+    parameters: {
+      alias: string
+      directory?: string
+      workspace?: string
+      preset?: string
+      groups?: Array<string>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "alias" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "preset" },
+            { in: "body", key: "groups" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).put<CorpPermissionsResponses, CorpPermissionsErrors, ThrowOnError>({
+      url: "/corp/connectors/{alias}/permissions",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  private _login?: Login
+  get login(): Login {
+    return (this._login ??= new Login({ client: this.client }))
   }
 }
 
@@ -6727,6 +7027,11 @@ export class OpencodeClient extends HeyApiClient {
   private _config?: Config2
   get config(): Config2 {
     return (this._config ??= new Config2({ client: this.client }))
+  }
+
+  private _corp?: Corp
+  get corp(): Corp {
+    return (this._corp ??= new Corp({ client: this.client }))
   }
 
   private _tool?: Tool

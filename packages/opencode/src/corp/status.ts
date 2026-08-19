@@ -30,7 +30,7 @@ export interface Card {
   actions: CorpSchema.CardAction[]
   /** Бейдж «устаревший» — независимо от статуса (S-V6). */
   deprecated: boolean
-  /** Действия «Подключить»/«Права» заблокированы, потому что каталог протух (S-V6, правило 2). */
+  /** Действия «Подключить»/«Переподключить»/«Права» заблокированы: каталог протух (S-V6, правило 2). */
   blocked: boolean
   /** Подпись карточки: текст ошибки локального статуса. */
   error?: string
@@ -77,7 +77,11 @@ export function compute(input: Input): Card {
   // Карточка `deprecated`: «Подключить» доступно только как переподключение уже настроенного alias.
   if (deprecated && !input.configured) actions = actions.filter((action) => action !== "connect")
 
-  if (blocked) actions = actions.filter((action) => action !== "connect" && action !== "permissions")
+  // Правило 2 S-V6: на протухшем каталоге остаётся только «Открыть в Hub» и «Отключить».
+  // «Переподключить» — тот же путь S-V7 (запись конфига + authenticate) на данных протухшего кэша,
+  // поэтому блокируется вместе с «Подключить» и «Права».
+  if (blocked)
+    actions = actions.filter((action) => action !== "connect" && action !== "permissions" && action !== "reconnect")
 
   return error === undefined
     ? { alias: input.alias, status, actions, deprecated, blocked }

@@ -147,6 +147,33 @@ describe("corp/status — таблица S-V6 (AC-50…AC-56, AC-121)", () => {
     expect(connected.actions).toContain("disconnect")
   })
 
+  test("AC-44: строка 2 — на протухшем каталоге блокируется и «Переподключить»", () => {
+    // «Переподключить» идёт тем же путём S-V7 (запись конфига + authenticate) на данных протухшего
+    // кэша, поэтому в строке 2 таблицы S-V6 остаются только «Отключить» и «Открыть в Hub».
+    const fresh = CorpStatus.compute({
+      alias: "gitlab",
+      server: catalogServer(),
+      configured: true,
+      local: "failed",
+      localError: "connection refused",
+      stale: false,
+    })
+    expect(fresh.actions).toContain("reconnect")
+
+    const stale = CorpStatus.compute({
+      alias: "gitlab",
+      server: catalogServer(),
+      configured: true,
+      local: "failed",
+      localError: "connection refused",
+      stale: true,
+    })
+    expect(stale.status).toBe("unavailable")
+    expect(stale.blocked).toBe(true)
+    expect(stale.actions).not.toContain("reconnect")
+    expect(stale.actions).toEqual(["disconnect"])
+  })
+
   test("AC-121: каждый статус витрины достижим", () => {
     const statuses = new Set([
       CorpStatus.compute({ alias: "a", configured: true, stale: false }).status,

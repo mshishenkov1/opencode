@@ -163,6 +163,38 @@ async function readAuth(home: string) {
   return JSON.parse(await fs.readFile(path.join(home, "data", "opencode", "auth.json"), "utf8"))
 }
 
+/**
+ * Построчный контракт вывода `opencode corp status` (S-A11a, ревизия 1.1).
+ *
+ * Единственный источник ожидаемых подстрок для AC-33, AC-35, AC-122 и дымовой проверки
+ * `corp-ci.yml` (AC-120): формулировки строк — часть контракта, расхождение между таблицей S-A11a,
+ * тестом и `grep` в CI считается дефектом (BUG-I4-001).
+ */
+const STATUS_LINES = {
+  hub: (url: string) => `Hub: ${url}`,
+  hubUp: "Доступность Hub: доступен (ok)",
+  hubDown: "Доступность Hub: недоступен",
+  keyPresent: "Корпоративный ключ: есть",
+  keyMissing: "Корпоративный ключ: нет",
+  catalog: "Каталог: ",
+  catalogMissing: "Каталог: кэша нет",
+  keyHint: "Ключ не найден: выполните opencode corp login",
+} as const
+
+/** Все строки контракта S-A11a одним списком — для проверки совпадения с `grep` дымовой проверки. */
+const CONTRACT = [
+  "Hub: ",
+  STATUS_LINES.hubUp,
+  STATUS_LINES.hubDown,
+  STATUS_LINES.keyPresent,
+  STATUS_LINES.keyMissing,
+  STATUS_LINES.catalog,
+  STATUS_LINES.catalogMissing,
+  STATUS_LINES.keyHint,
+  "Пользователь: ",
+  "Тип ключа: ",
+]
+
 const hubs: { stop: () => void }[] = []
 afterEach(() => {
   while (hubs.length) hubs.pop()!.stop()
@@ -174,14 +206,16 @@ const hub = (script: Script) => {
 }
 
 describe("opencode corp status (AC-33, AC-34, AC-35, AC-120)", () => {
-  test("AC-33: без ключа печатает адрес, доступность Hub и «ключ: нет», код выхода 1", async () => {
+  test("AC-33: без ключа печатает строки контракта S-A11a и завершается кодом 1", async () => {
     const server = hub({ polls: [PENDING] })
     const home = await makeHome()
     const result = await run(home, ["corp", "status", "--hub", server.url])
 
-    expect(result.out).toContain(server.url)
-    expect(result.out).toContain("Hub: доступен")
-    expect(result.out.toLowerCase()).toContain("ключ: нет")
+    expect(result.out).toContain(STATUS_LINES.hub(server.url))
+    expect(result.out).toContain(STATUS_LINES.hubUp)
+    expect(result.out).toContain(STATUS_LINES.keyMissing)
+    expect(result.out).toContain(STATUS_LINES.catalog)
+    expect(result.out).toContain(STATUS_LINES.keyHint)
     expect(result.code).toBe(1)
   })
 
@@ -219,15 +253,31 @@ describe("opencode corp status (AC-33, AC-34, AC-35, AC-120)", () => {
     expect(result.code).toBe(0)
   })
 
-  test("AC-35: Hub недоступен — печатается «недоступен», код выхода 1 при отсутствии ключа", async () => {
+  test("AC-35: ключ есть и Hub недоступен — код выхода 0, доступность Hub на него не влияет", async () => {
+    const server = hub({ polls: [PENDING] })
+    const url = server.url
+    server.stop()
+    const home = await makeHome()
+    await writeKey(home)
+
+    const result = await run(home, ["corp", "status", "--hub", url])
+    expect(result.out).toContain(STATUS_LINES.hubDown)
+    expect(result.out).toContain(STATUS_LINES.keyPresent)
+    expect(result.out).toContain(STATUS_LINES.catalog)
+    expect(result.out).not.toContain(KEY)
+    expect(result.code).toBe(0)
+  }, 60_000)
+
+  test("AC-122: ключа нет и Hub недоступен — код выхода 1", async () => {
     const server = hub({ polls: [PENDING] })
     const url = server.url
     server.stop()
     const home = await makeHome()
 
     const result = await run(home, ["corp", "status", "--hub", url])
-    expect(result.out).toContain("недоступен")
-    expect(result.out.toLowerCase()).toContain("ключ: нет")
+    expect(result.out).toContain(STATUS_LINES.hubDown)
+    expect(result.out).toContain(STATUS_LINES.keyMissing)
+    expect(result.out).toContain(STATUS_LINES.keyHint)
     expect(result.code).toBe(1)
   }, 60_000)
 
@@ -236,6 +286,9 @@ describe("opencode corp status (AC-33, AC-34, AC-35, AC-120)", () => {
     const workflow = await fs.readFile(path.join(ROOT, ".github/workflows/corp-ci.yml"), "utf8")
     const patterns = [...workflow.matchAll(/grep -q "([^"]+)" status\.txt/g)].map((match) => match[1]!)
     expect(patterns.length).toBeGreaterThan(0)
+    // S-A11a: подстрока дымовой проверки берётся из контракта, а не набирается независимо.
+    for (const pattern of patterns)
+      expect(CONTRACT.some((line) => line.includes(pattern)), `${pattern} нет в контракте S-A11a`).toBe(true)
 
     const server = hub({ polls: [PENDING] })
     const home = await makeHome()

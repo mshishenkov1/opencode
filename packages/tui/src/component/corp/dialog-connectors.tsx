@@ -1,6 +1,7 @@
 import { TextAttributes } from "@opentui/core"
 import type { CorpCatalogCard, CorpCatalogView, CorpPermissionModel } from "@opencode-ai/sdk/v2"
-import { createMemo, createSignal, onMount, Show } from "solid-js"
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { useEvent } from "../../context/event"
 import { useSDK } from "../../context/sdk"
 import { useSync } from "../../context/sync"
 import { useTheme } from "../../context/theme"
@@ -66,6 +67,8 @@ export function DialogConnectors() {
   const sync = useSync()
   const dialog = useDialog()
   const toast = useToast()
+
+  const event = useEvent()
 
   const [view, setView] = createSignal<CorpCatalogView>()
   const [loading, setLoading] = createSignal(true)
@@ -196,6 +199,14 @@ export function DialogConnectors() {
     dialog.setSize("large")
     void load()
   })
+
+  // S-V7 шаг 3 / AC-60: браузер открыть не удалось — показываем URL авторизации текстом,
+  // ожидание callback при этом продолжается.
+  onCleanup(
+    event.on("mcp.browser.open.failed", (failed) => {
+      toast.show({ variant: "warning", message: `${t("connectors.authorizing")}: ${failed.properties.url}` })
+    }),
+  )
 
   return (
     <DialogSelect

@@ -1,4 +1,4 @@
-import { Component, createMemo, Show } from "solid-js"
+import { Component, createMemo, onCleanup, Show } from "solid-js"
 import type { CorpCatalogCard, CorpPermissionModel } from "@opencode-ai/sdk/v2"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -7,6 +7,8 @@ import { List } from "@opencode-ai/ui/list"
 import { Tag } from "@opencode-ai/ui/tag"
 import { corpErrorKey, useConnectorAction, useCorpCatalog, useCorpInvalidate } from "@/context/corp"
 import { useLanguage } from "@/context/language"
+import { useSDK } from "@/context/sdk"
+import { showToast } from "@/utils/toast"
 
 /**
  * Витрина коннекторов для Desktop/web (S-D2, S-D6, S-D7, S-V6, S-V11, S-V12).
@@ -95,6 +97,19 @@ export const DialogConnectors: Component = () => {
   const invalidate = useCorpInvalidate()
   const action = useConnectorAction()
   const catalog = useCorpCatalog(() => true)
+  const sdk = useSDK()
+
+  // S-V7 шаг 3 / AC-60: браузер открыть не удалось — показываем URL авторизации текстом,
+  // ожидание callback при этом продолжается.
+  onCleanup(
+    sdk().event.on("mcp.browser.open.failed", (failed) => {
+      showToast({
+        variant: "default",
+        title: language.t("corp.connectors.authorizing"),
+        description: failed.properties.url,
+      })
+    }),
+  )
 
   const cards = createMemo<CorpCatalogCard[]>(() => catalog.data?.servers ?? [])
   const connected = createMemo(() => cards().filter((card) => card.status === "connected").length)

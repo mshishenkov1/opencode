@@ -1062,7 +1062,6 @@ export const dict = {
   "corp.login.otherProvider": "Other provider",
   "corp.login.teamTitle": "Select a team",
   "corp.login.success": "Signed in as {{email}}",
-  "corp.login.browserFailed": "Could not open the browser — open the address above manually",
 
   "corp.connectors.title": "Connectors",
   "corp.connectors.description": "{{connected}} of {{total}} connected",

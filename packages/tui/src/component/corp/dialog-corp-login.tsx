@@ -92,16 +92,10 @@ export function DialogCorpLogin() {
       setStep({ kind: "error", code: code ?? "hub_unavailable" })
       return
     }
+    // Браузер открывает серверная часть при `POST /corp/login/start` (S-A6 шаг 2, S-D8, F15);
+    // ссылка ниже остаётся на экране как запасной путь, если открыть не удалось.
     setStep({ kind: "waiting", loginID: data.login_id, code: data.user_code, url: data.browser_url })
-    void openBrowser(data.browser_url)
     timer = setTimeout(() => void poll(data.login_id), POLL_INTERVAL_MS)
-  }
-
-  async function openBrowser(url: string) {
-    const open = await import("open").then((module) => module.default)
-    await open(url).catch(() => {
-      toast.show({ variant: "warning", message: t("login.browserFailed") })
-    })
   }
 
   async function chooseTeam(loginID: string, teams: CorpTeam[], teamID: string) {

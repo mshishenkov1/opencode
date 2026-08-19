@@ -19,7 +19,6 @@ const ru = {
   "login.teamTitle": "Выберите команду",
   "login.success": "Вход выполнен",
   "login.cancelled": "Вход отменён",
-  "login.browserFailed": "Не удалось открыть браузер — перейдите по адресу выше вручную",
 
   "connectors.title": "Коннекторы",
   "connectors.command": "Витрина коннекторов",
@@ -80,7 +79,6 @@ const en: Record<Key, string> = {
   "login.teamTitle": "Select a team",
   "login.success": "Signed in",
   "login.cancelled": "Sign-in cancelled",
-  "login.browserFailed": "Could not open the browser — open the address above manually",
 
   "connectors.title": "Connectors",
   "connectors.command": "Connector catalog",

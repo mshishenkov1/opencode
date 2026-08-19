@@ -14,6 +14,7 @@ import { CORP_PROVIDER_ID } from "@opencode-ai/core/corp/constants"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
+import open from "open"
 import { InstanceHttpApi } from "../api"
 import { CorpDisabledError, CorpHubError } from "../groups/corp"
 
@@ -87,6 +88,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         hubUrl: url,
         expiresIn: started.data.expires_in,
       })
+      // S-A6 шаг 2, S-D8: браузер открывает серверная часть — тем же механизмом, что MCP-OAuth (F15).
+      // Экран входа всё равно показывает `browser_url` и код: если открыть не удалось, вход
+      // продолжается вручную по ссылке.
+      yield* Effect.promise(() =>
+        open(started.data.browser_url)
+          .then(() => undefined)
+          .catch(() => undefined),
+      )
       return CorpLogin.publicView(session, started.data.user_code, started.data.browser_url)
     })
 

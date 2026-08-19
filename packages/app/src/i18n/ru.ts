@@ -960,7 +960,6 @@ export const dict = {
   "corp.login.otherProvider": "Другой провайдер",
   "corp.login.teamTitle": "Выберите команду",
   "corp.login.success": "Вход выполнен: {{email}}",
-  "corp.login.browserFailed": "Не удалось открыть браузер — перейдите по адресу выше вручную",
 
   "corp.connectors.title": "Коннекторы",
   "corp.connectors.description": "подключено {{connected}} из {{total}}",

@@ -28,3 +28,10 @@
 | `packages/app/src/context/language.tsx` | S-I2 | Русский по умолчанию при включённых корп-функциях | `corp: app sso + connectors` |
 | `packages/app/src/components/dialog-select-provider.tsx` | S-D5 | Перехват выбора провайдера `magnit_prod` | `corp: app sso + connectors` |
 | `packages/app/src/env.d.ts` | S-C2, S-I2 | Объявление `VITE_OPENCODE_CORP_HUB_URL` для веб-UI | `corp: app sso + connectors` |
+
+Новые файлы, не относящиеся к upstream (в таблице не перечисляются): `corp/**`,
+`packages/core/src/corp/**`, `packages/opencode/src/corp/**`, `packages/opencode/src/cli/cmd/corp.ts`,
+`packages/opencode/src/server/routes/instance/httpapi/{groups,handlers}/corp.ts`,
+`packages/tui/src/corp/**`, `packages/tui/src/component/corp/**`, `packages/app/src/corp/**`,
+`packages/app/src/components/corp/**`, `packages/app/src/context/corp.ts`,
+`.github/workflows/corp-ci.yml`.

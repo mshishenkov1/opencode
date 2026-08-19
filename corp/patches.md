@@ -11,7 +11,7 @@
 |---|---|---|---|
 | `bun.lock` | — | Пересчёт lock-файла после `bun install` (github-зависимость `ghostty-web` сдвинула коммит) | `corp: bun.lock — ghostty-web pin после установки` |
 | `packages/opencode/src/config/config.ts` | S-C3 | Мерж корпоративного слоя умолчаний до цикла `wellknown`, чтобы у слоя был наименьший приоритет | `corp: config layer` |
-| `packages/opencode/script/build.ts` | S-C2 | Build-константы `OPENCODE_CORP_HUB_URL` и `OPENCODE_CORP_CONFIG` в блоке `define` | `corp: config layer` |
+| `packages/opencode/script/build.ts` | S-C2, S-I2 | Build-константы `OPENCODE_CORP_HUB_URL` и `OPENCODE_CORP_CONFIG` в блоке `define`; `VITE_OPENCODE_CORP_HUB_URL` для сборки веб-UI | `corp: config layer`, `corp: app sso + connectors` |
 | `packages/opencode/src/server/routes/instance/httpapi/api.ts` | S-A1 | Регистрация группы корп-роутов `CorpApi` в `InstanceHttpApi` | `corp: hub client + routes` |
 | `packages/opencode/src/server/routes/instance/httpapi/server.ts` | S-A1 | Подключение `corpHandlers` к серверу | `corp: hub client + routes` |
 | `packages/sdk/openapi.json` | S-A1 | Перегенерация OpenAPI-схемы после добавления корп-роутов | `corp: hub client + routes` |
@@ -27,3 +27,4 @@
 | `packages/app/src/i18n/ru.ts` | S-I1 | Ключи `corp.*` | `corp: app sso + connectors` |
 | `packages/app/src/context/language.tsx` | S-I2 | Русский по умолчанию при включённых корп-функциях | `corp: app sso + connectors` |
 | `packages/app/src/components/dialog-select-provider.tsx` | S-D5 | Перехват выбора провайдера `magnit_prod` | `corp: app sso + connectors` |
+| `packages/app/src/env.d.ts` | S-C2, S-I2 | Объявление `VITE_OPENCODE_CORP_HUB_URL` для веб-UI | `corp: app sso + connectors` |

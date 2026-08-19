@@ -1,4 +1,6 @@
 import * as i18n from "@solid-primitives/i18n"
+// corp: признак корпоративной сборки веб-UI (S-I2)
+import { corpBuildEnabled } from "@/corp/enabled"
 import { createEffect, createMemo, createResource } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -162,8 +164,13 @@ const localeMatchers: Array<{ locale: Locale; match: (language: string) => boole
   { locale: "tr", match: (language) => language.startsWith("tr") },
 ]
 
+// corp: язык по умолчанию — русский в корпоративной сборке (S-I2). Явный выбор пользователя
+// (localStorage) и совпадение с navigator.languages по-прежнему имеют приоритет; в ванильной
+// сборке значение прежнее — "en".
+const fallbackLocale = (): Locale => (corpBuildEnabled ? "ru" : "en")
+
 function detectLocale(): Locale {
-  if (typeof navigator !== "object") return "en"
+  if (typeof navigator !== "object") return fallbackLocale()
 
   const languages = navigator.languages?.length ? navigator.languages : [navigator.language]
   for (const language of languages) {
@@ -173,11 +180,11 @@ function detectLocale(): Locale {
     if (match) return match.locale
   }
 
-  return "en"
+  return fallbackLocale()
 }
 
 export function normalizeLocale(value: string): Locale {
-  return LOCALES.includes(value as Locale) ? (value as Locale) : "en"
+  return LOCALES.includes(value as Locale) ? (value as Locale) : fallbackLocale()
 }
 
 function readStoredLocale() {

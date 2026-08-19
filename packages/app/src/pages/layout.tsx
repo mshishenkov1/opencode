@@ -49,6 +49,8 @@ import {
 } from "@/context/global-sync/session-prefetch"
 import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
+// corp: состояние корпоративного режима для команд и блока Getting Started (S-D1, S-D3, S-D4)
+import { useCorpStatus } from "@/context/corp"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { retry } from "@opencode-ai/core/util/retry"
 import { playSoundById } from "@/utils/sound"
@@ -131,6 +133,8 @@ export default function Layout(props: ParentProps) {
   const command = useCommand()
   const theme = useTheme()
   const language = useLanguage()
+  // corp: включённость корп-режима приходит от сервера — веб-UI не знает build-констант (S-C5)
+  const corpStatus = useCorpStatus()
   const newDesign = createMemo(() => settings.general.newLayoutDesigns())
   createEffect(() => setV2Toast(newDesign()))
   const initialDirectory = decode64(params.dir)
@@ -1026,6 +1030,27 @@ export default function Layout(props: ParentProps) {
         category: language.t("command.category.provider"),
         onSelect: () => connectProvider(),
       },
+      // corp: витрина и вход — только при включённых корп-функциях сервера (S-D1, S-D3, S-C5)
+      ...(corpStatus.data?.enabled
+        ? [
+            {
+              id: "corp.connectors",
+              title: language.t("corp.command.connectors"),
+              description: language.t("corp.command.connectors.description"),
+              category: language.t("command.category.mcp"),
+              slash: "connectors",
+              onSelect: () => openConnectors(),
+            },
+            {
+              id: "corp.login",
+              title: language.t("corp.command.login"),
+              description: language.t("corp.command.login.description"),
+              category: language.t("command.category.provider"),
+              slash: "login",
+              onSelect: () => openCorpLogin(),
+            },
+          ]
+        : []),
       {
         id: "server.switch",
         title: language.t("command.server.switch"),
@@ -1207,6 +1232,23 @@ export default function Layout(props: ParentProps) {
     void import("@/components/dialog-select-provider").then((x) => {
       if (dialogDead || dialogRun !== run) return
       dialog.show(() => <x.DialogSelectProvider />)
+    })
+  }
+
+  // corp: открытие корп-экранов по образцу connectProvider (S-D1, S-D3)
+  function openConnectors() {
+    const run = ++dialogRun
+    void import("@/components/corp/dialog-connectors").then((x) => {
+      if (dialogDead || dialogRun !== run) return
+      dialog.show(() => <x.DialogConnectors />)
+    })
+  }
+
+  function openCorpLogin() {
+    const run = ++dialogRun
+    void import("@/components/corp/dialog-corp-login").then((x) => {
+      if (dialogDead || dialogRun !== run) return
+      dialog.show(() => <x.DialogCorpLogin />)
     })
   }
 
@@ -2311,7 +2353,18 @@ export default function Layout(props: ParentProps) {
                 </div>
               </div>
               <div data-component="getting-started-actions">
-                <Button size="large" icon="plus-small" onClick={connectProvider}>
+                {/* corp: при включённых корп-функциях и отсутствии ключа первичная кнопка — вход по SSO (S-D4) */}
+                <Show when={corpStatus.data?.enabled && !corpStatus.data?.authenticated}>
+                  <Button size="large" icon="plus-small" onClick={openCorpLogin}>
+                    {language.t("corp.command.login")}
+                  </Button>
+                </Show>
+                <Button
+                  size="large"
+                  icon="plus-small"
+                  variant={corpStatus.data?.enabled && !corpStatus.data?.authenticated ? "ghost" : undefined}
+                  onClick={connectProvider}
+                >
                   {language.t("command.provider.connect")}
                 </Button>
                 <Button size="large" variant="ghost" onClick={() => setStore("gettingStartedDismissed", true)}>

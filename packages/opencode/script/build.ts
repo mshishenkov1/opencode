@@ -28,7 +28,9 @@ const createEmbeddedWebUIBundle = async () => {
   console.log(`Building Web UI to embed in the binary`)
   const appDir = path.join(import.meta.dirname, "../../app")
   const dist = path.join(appDir, "dist")
-  await $`OPENCODE_CHANNEL=${Script.channel} bun run --cwd ${appDir} build`
+  // corp: адрес Hub прокидывается в веб-UI отдельно — vite не видит define бинарника (S-C2, S-I2)
+  const corpHubUrl = process.env["CORP_HUB_URL"]?.trim().replace(/\/+$/, "") ?? ""
+  await $`OPENCODE_CHANNEL=${Script.channel} VITE_OPENCODE_CORP_HUB_URL=${corpHubUrl} bun run --cwd ${appDir} build`
   const files = (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: dist })))
     .map((file) => file.replaceAll("\\", "/"))
     .filter((file) => !file.endsWith(".map"))

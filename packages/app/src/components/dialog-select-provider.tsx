@@ -8,6 +8,9 @@ import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { DialogConnectProvider } from "./dialog-connect-provider"
 import { useLanguage } from "@/context/language"
 import { DialogCustomProvider } from "./dialog-custom-provider"
+// corp: перехват корпоративного провайдера (S-D5)
+import { CORP_PROVIDER_ID } from "@opencode-ai/core/corp/constants"
+import { useCorpStatus } from "@/context/corp"
 
 const CUSTOM_ID = "_custom"
 
@@ -15,6 +18,7 @@ export const DialogSelectProvider: Component = () => {
   const dialog = useDialog()
   const providers = useProviders()
   const language = useLanguage()
+  const corpStatus = useCorpStatus()
 
   const popularGroup = () => language.t("dialog.provider.group.popular")
   const otherGroup = () => language.t("dialog.provider.group.other")
@@ -55,6 +59,13 @@ export const DialogSelectProvider: Component = () => {
         }}
         onSelect={(x) => {
           if (!x) return
+          // corp: выбор корпоративного провайдера открывает корп-экран входа (S-D5).
+          if (x.id === CORP_PROVIDER_ID && corpStatus.data?.enabled) {
+            void import("@/components/corp/dialog-corp-login").then((module) => {
+              dialog.show(() => <module.DialogCorpLogin />)
+            })
+            return
+          }
           if (x.id === CUSTOM_ID) {
             dialog.show(() => <DialogCustomProvider back="providers" />)
             return

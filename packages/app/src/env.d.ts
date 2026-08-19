@@ -2,6 +2,8 @@ interface ImportMetaEnv {
   readonly VITE_OPENCODE_SERVER_HOST: string
   readonly VITE_OPENCODE_SERVER_PORT: string
   readonly VITE_OPENCODE_CHANNEL?: "dev" | "beta" | "prod"
+  // corp: адрес Hub корпоративной сборки — задаётся при сборке веб-UI (S-C2, S-I2)
+  readonly VITE_OPENCODE_CORP_HUB_URL?: string
 
   readonly VITE_SENTRY_DSN?: string
   readonly VITE_SENTRY_ENVIRONMENT?: string

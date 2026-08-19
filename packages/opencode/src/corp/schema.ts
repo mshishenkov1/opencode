@@ -182,6 +182,12 @@ export const LoginStart = Schema.Struct({
 }).annotate({ identifier: "CorpLoginStart" })
 export type LoginStart = Schema.Schema.Type<typeof LoginStart>
 
+/** Ответ на отмену входа (S-A9): сессия в памяти сервера освобождена. */
+export const LoginCancel = Schema.Struct({
+  cancelled: Schema.Boolean,
+}).annotate({ identifier: "CorpLoginCancel" })
+export type LoginCancel = Schema.Schema.Type<typeof LoginCancel>
+
 const LoginPending = Schema.Struct({ status: Schema.Literal("pending") }).annotate({
   identifier: "CorpLoginPending",
 })

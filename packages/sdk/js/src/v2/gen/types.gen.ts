@@ -2207,6 +2207,10 @@ export type CorpLoginError = {
 
 export type CorpLoginPoll = CorpLoginPending | CorpLoginTeamSelection | CorpLoginReady | CorpLoginError
 
+export type CorpLoginCancel = {
+  cancelled: boolean
+}
+
 export type CorpStatus = {
   hub_url?: string
   enabled: boolean
@@ -5783,6 +5787,40 @@ export type CorpLoginStartResponses = {
 }
 
 export type CorpLoginStartResponse = CorpLoginStartResponses[keyof CorpLoginStartResponses]
+
+export type CorpLoginCancelData = {
+  body?: never
+  path: {
+    loginID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/login/poll/{loginID}"
+}
+
+export type CorpLoginCancelErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpLoginCancelError = CorpLoginCancelErrors[keyof CorpLoginCancelErrors]
+
+export type CorpLoginCancelResponses = {
+  /**
+   * Сессия входа освобождена
+   */
+  200: CorpLoginCancel
+}
+
+export type CorpLoginCancelResponse = CorpLoginCancelResponses[keyof CorpLoginCancelResponses]
 
 export type CorpLoginPollData = {
   body?: never

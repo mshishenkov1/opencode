@@ -177,6 +177,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return yield* handlePoll(session, result)
     })
 
+    /** S-A9: закрытие экрана входа освобождает сессию (вместе с `poll_secret`) в памяти сервера. */
+    const loginCancel = Effect.fn("CorpHttpApi.loginCancel")(function* (ctx: { params: { loginID: string } }) {
+      yield* requireHub()
+      const known = CorpLogin.store.get(ctx.params.loginID) !== undefined
+      CorpLogin.store.drop(ctx.params.loginID)
+      return { cancelled: known }
+    })
+
     // --- Статус (S-A11) ---
 
     const status = Effect.fn("CorpHttpApi.status")(function* () {
@@ -476,6 +484,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       .handle("loginStart", loginStart)
       .handle("loginPoll", loginPoll)
       .handle("loginTeam", loginTeam)
+      .handle("loginCancel", loginCancel)
       .handle("status", status)
       .handle("catalog", catalog)
       .handle("connect", connect)

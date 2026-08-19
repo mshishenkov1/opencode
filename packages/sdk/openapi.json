@@ -954,6 +954,76 @@
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.login.poll({\n  ...\n})"
           }
         ]
+      },
+      "delete": {
+        "tags": ["corp"],
+        "operationId": "corp.login.cancel",
+        "parameters": [
+          {
+            "name": "loginID",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сессия входа освобождена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpLoginCancel"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Освобождает сессию входа в памяти сервера при закрытии экрана (S-A9).",
+        "summary": "Cancel corporate SSO login",
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.login.cancel({\n  ...\n})"
+          }
+        ]
       }
     },
     "/corp/login/poll/{loginID}/team": {
@@ -21916,6 +21986,16 @@
             "$ref": "#/components/schemas/CorpLoginError"
           }
         ]
+      },
+      "CorpLoginCancel": {
+        "type": "object",
+        "properties": {
+          "cancelled": {
+            "type": "boolean"
+          }
+        },
+        "required": ["cancelled"],
+        "additionalProperties": false
       },
       "CorpStatus": {
         "type": "object",

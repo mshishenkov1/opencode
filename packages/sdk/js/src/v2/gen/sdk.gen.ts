@@ -30,6 +30,8 @@ import type {
   CorpConnectResponses,
   CorpDisconnectErrors,
   CorpDisconnectResponses,
+  CorpLoginCancelErrors,
+  CorpLoginCancelResponses,
   CorpLoginPollErrors,
   CorpLoginPollResponses,
   CorpLoginStartErrors,
@@ -1527,6 +1529,38 @@ export class Login extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<CorpLoginStartResponses, CorpLoginStartErrors, ThrowOnError>({
       url: "/corp/login/start",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Cancel corporate SSO login
+   *
+   * Освобождает сессию входа в памяти сервера при закрытии экрана (S-A9).
+   */
+  public cancel<ThrowOnError extends boolean = false>(
+    parameters: {
+      loginID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "loginID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<CorpLoginCancelResponses, CorpLoginCancelErrors, ThrowOnError>({
+      url: "/corp/login/poll/{loginID}",
       ...options,
       ...params,
     })

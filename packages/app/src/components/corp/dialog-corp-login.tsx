@@ -37,15 +37,29 @@ export const DialogCorpLogin: Component = () => {
   const [hub, setHub] = createSignal<string>()
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | undefined
+  /** Незавершённая сессия входа: её нужно освободить на сервере при закрытии экрана (S-A9). */
+  let pending: string | undefined
 
-  // S-A9: закрытие экрана прекращает опрос, ключ не сохраняется.
+  // S-A9: закрытие экрана прекращает опрос, освобождает сессию в памяти сервера и не сохраняет ключ.
   onCleanup(() => {
     stopped = true
     if (timer) clearTimeout(timer)
+    cancel()
   })
+
+  function cancel() {
+    const loginID = pending
+    if (!loginID) return
+    pending = undefined
+    void sdk()
+      .client.corp.login.cancel({ loginID })
+      .catch(() => undefined)
+  }
 
   async function finish(email: string) {
     stopped = true
+    // Сессия уже освобождена сервером при `ready` (S-A3) — отменять нечего.
+    pending = undefined
     showToast({ variant: "success", title: language.t("corp.login.success", { email }) })
     await invalidate()
     dialog.close()
@@ -69,6 +83,7 @@ export const DialogCorpLogin: Component = () => {
   }
 
   async function start() {
+    cancel()
     stopped = false
     setStep({ kind: "starting" })
     const status = await sdk()
@@ -81,6 +96,7 @@ export const DialogCorpLogin: Component = () => {
     if (stopped) return
     const data = started?.data
     if (!data) return setStep({ kind: "error", code: "hub_unavailable" })
+    pending = data.login_id
     setStep({ kind: "waiting", loginID: data.login_id, code: data.user_code, url: data.browser_url })
     timer = setTimeout(() => void poll(data.login_id), POLL_INTERVAL_MS)
   }
@@ -109,6 +125,7 @@ export const DialogCorpLogin: Component = () => {
 
   async function openOtherProvider() {
     stopped = true
+    cancel()
     const module = await import("@/components/dialog-select-provider")
     dialog.show(() => <module.DialogSelectProvider />)
   }

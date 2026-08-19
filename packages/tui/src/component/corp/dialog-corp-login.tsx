@@ -39,15 +39,27 @@ export function DialogCorpLogin() {
   const [hub, setHub] = createSignal<string>()
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | undefined
+  /** Незавершённая сессия входа: её нужно освободить на сервере при закрытии экрана (S-A9). */
+  let pending: string | undefined
 
-  // S-A9: закрытие экрана прекращает опрос; сессия на сервере протухает сама по expires_in.
+  // S-A9: закрытие экрана прекращает опрос, освобождает сессию в памяти сервера и не сохраняет ключ.
   onCleanup(() => {
     stopped = true
     if (timer) clearTimeout(timer)
+    cancel()
   })
+
+  function cancel() {
+    const loginID = pending
+    if (!loginID) return
+    pending = undefined
+    void sdk.client.corp.login.cancel({ loginID }).catch(() => undefined)
+  }
 
   async function finish(email: string) {
     stopped = true
+    // Сессия уже освобождена сервером при `ready` (S-A3) — отменять нечего.
+    pending = undefined
     toast.show({ variant: "success", message: `${t("login.success")}: ${email}` })
     // Тот же порядок, что и в upstream-флоу провайдера (F6): сбросить инстанс и перечитать состояние.
     await sdk.client.instance.dispose().catch(() => undefined)
@@ -80,6 +92,7 @@ export function DialogCorpLogin() {
   }
 
   async function start() {
+    cancel()
     setStep({ kind: "starting" })
     stopped = false
     const status = await sdk.client.corp.status().catch(() => undefined)
@@ -94,6 +107,7 @@ export function DialogCorpLogin() {
     }
     // Браузер открывает серверная часть при `POST /corp/login/start` (S-A6 шаг 2, S-D8, F15);
     // ссылка ниже остаётся на экране как запасной путь, если открыть не удалось.
+    pending = data.login_id
     setStep({ kind: "waiting", loginID: data.login_id, code: data.user_code, url: data.browser_url })
     timer = setTimeout(() => void poll(data.login_id), POLL_INTERVAL_MS)
   }
@@ -144,6 +158,7 @@ export function DialogCorpLogin() {
         group: "Dialog",
         cmd: () => {
           stopped = true
+          cancel()
           dialog.replace(() => <DialogProviderList />)
         },
       },

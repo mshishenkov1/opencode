@@ -45,6 +45,7 @@ export const CorpPaths = {
   loginStart: "/corp/login/start",
   loginPoll: "/corp/login/poll/:loginID",
   loginTeam: "/corp/login/poll/:loginID/team",
+  loginCancel: "/corp/login/poll/:loginID",
   status: "/corp/status",
   catalog: "/corp/catalog",
   connect: "/corp/connectors/:alias/connect",
@@ -90,6 +91,18 @@ export const CorpApi = HttpApi.make("corp")
             identifier: "corp.login.team",
             summary: "Select team for corporate SSO login",
             description: "Отправляет выбранную команду в Hub и возвращает состояние входа.",
+          }),
+        ),
+        HttpApiEndpoint.delete("loginCancel", CorpPaths.loginCancel, {
+          params: { loginID: Schema.String },
+          query: WorkspaceRoutingQuery,
+          success: described(CorpSchema.LoginCancel, "Сессия входа освобождена"),
+          error: CorpDisabledError,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "corp.login.cancel",
+            summary: "Cancel corporate SSO login",
+            description: "Освобождает сессию входа в памяти сервера при закрытии экрана (S-A9).",
           }),
         ),
         HttpApiEndpoint.get("status", CorpPaths.status, {

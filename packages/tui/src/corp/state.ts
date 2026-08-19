@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js"
 import { corpEnabled } from "@opencode-ai/core/corp/constants"
 
 /**
@@ -9,6 +10,23 @@ import { corpEnabled } from "@opencode-ai/core/corp/constants"
 
 /** Период опроса входа (S-A4, R-L10). */
 export const POLL_INTERVAL_MS = 2000
+
+/**
+ * Есть ли в auth-store ключ `magnit_prod` (S-T2).
+ *
+ * Значение приходит из `GET /corp/status` (поле `authenticated`) и обновляется после входа:
+ * подсветка команды входа опирается на отсутствие корп-ключа, а не на upstream-признак
+ * «есть хоть какой-то подключённый провайдер».
+ */
+const [corpKey, setCorpKeySignal] = createSignal(false)
+
+export function hasCorpKey() {
+  return corpKey()
+}
+
+export function setCorpKey(value: boolean) {
+  setCorpKeySignal(value)
+}
 
 export { corpEnabled }
 

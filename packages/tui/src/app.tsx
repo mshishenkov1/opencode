@@ -42,7 +42,7 @@ import { DialogMcp } from "./component/dialog-mcp"
 // corp: корпоративные экраны — вход по SSO и витрина коннекторов (S-T1…S-T3)
 import { DialogCorpLogin } from "./component/corp/dialog-corp-login"
 import { DialogConnectors } from "./component/corp/dialog-connectors"
-import { corpEnabled } from "./corp/state"
+import { corpEnabled, hasCorpKey, setCorpKey } from "./corp/state"
 import { t as corpText } from "./corp/i18n"
 import { DialogStatus } from "./component/dialog-status"
 import { DialogThemeList } from "./component/dialog-theme-list"
@@ -542,6 +542,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           void sdk.client.corp
             .status()
             .then((result) => {
+              setCorpKey(result.data?.authenticated === true)
               if (result.data?.enabled && !result.data.authenticated) {
                 dialog.replace(() => <DialogCorpLogin />)
                 return
@@ -557,6 +558,14 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   )
 
   const connected = useConnected()
+  // corp: наличие ключа magnit_prod для подсветки команды входа (S-T2, S-A11)
+  onMount(() => {
+    if (!corpEnabled()) return
+    void sdk.client.corp
+      .status()
+      .then((result) => setCorpKey(result.data?.authenticated === true))
+      .catch(() => undefined)
+  })
   const currentWorktreeWorkspace = createMemo(() => {
     const workspaceID = project.workspace.current()
     if (!workspaceID) return
@@ -719,7 +728,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
               category: "Provider",
               slashName: "login",
               slashAliases: ["sso"],
-              suggested: !connected(),
+              suggested: !hasCorpKey(),
               run: () => {
                 dialog.replace(() => <DialogCorpLogin />)
               },

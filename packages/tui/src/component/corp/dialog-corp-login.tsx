@@ -12,7 +12,7 @@ import { DialogSelect } from "../../ui/dialog-select"
 import { Link } from "../../ui/link"
 import { useToast } from "../../ui/toast"
 import { DialogProvider as DialogProviderList } from "../dialog-provider"
-import { POLL_INTERVAL_MS } from "../../corp/state"
+import { POLL_INTERVAL_MS, setCorpKey } from "../../corp/state"
 
 /**
  * Корп-экран входа по SSO для TUI (S-A6, S-T8).
@@ -60,6 +60,8 @@ export function DialogCorpLogin() {
     stopped = true
     // Сессия уже освобождена сервером при `ready` (S-A3) — отменять нечего.
     pending = undefined
+    // Ключ magnit_prod появился: команда входа больше не подсвечивается (S-T2).
+    setCorpKey(true)
     toast.show({ variant: "success", message: `${t("login.success")}: ${email}` })
     // Тот же порядок, что и в upstream-флоу провайдера (F6): сбросить инстанс и перечитать состояние.
     await sdk.client.instance.dispose().catch(() => undefined)

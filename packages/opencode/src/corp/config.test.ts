@@ -22,8 +22,9 @@ import * as CorpConfig from "./config"
 import * as CorpConnectors from "./connectors"
 
 /**
- * Корпоративный слой конфигурации и действующий адрес Hub (S-C2…S-C7, S-Q6;
- * AC-01, AC-04, AC-05, AC-06, AC-07, AC-08, AC-11, AC-118).
+ * Корпоративный слой конфигурации, действующий адрес Hub и действующий адрес модели
+ * (S-C2…S-C7, S-C4a, S-C4b, S-Q6; AC-01, AC-04, AC-05, AC-06, AC-07, AC-08, AC-11, AC-118,
+ * AC-132, AC-133).
  *
  * Приоритет build-константы проверяется в отдельном процессе: она подставляется бандлером как
  * глобальная переменная и в dev-режиме не определена (S-C6).
@@ -31,6 +32,11 @@ import * as CorpConnectors from "./connectors"
 
 const ROOT = path.resolve(import.meta.dirname, "../../../..")
 const CONSTANTS = path.join(ROOT, "packages/core/src/corp/constants.ts")
+
+/** Умолчание адреса корпоративной модели из корп-конфига (S-C4a). */
+const CORP_MODEL_BASE_URL = "https://llmlite.ailab-copilot-prod.corp.tander.ru/v1"
+/** Имя переменной окружения, перекрывающей адрес модели внутри корп-слоя (S-C4a, D-20). */
+const MODEL_BASE_URL_ENV = "OPENCODE_CORP_MODEL_BASE_URL"
 
 // --- Действующий адрес Hub (S-C5) ---
 
@@ -134,17 +140,21 @@ describe("corp/config/opencode.corp.json (AC-01, AC-07)", () => {
     expect(parsed.model).toBe("magnit_prod/MagnitCopilot")
     const provider = parsed.provider?.["magnit_prod"]
     expect(provider?.npm).toBe("@ai-sdk/openai-compatible")
-    expect(provider?.options?.["apiKey"]).toBe("{env:MAGNIT_COPILOT_KEY}")
-    expect(provider?.options?.["baseURL"]).toBeString()
+    // S-C4b/D-21: ключ приходит только из auth-store, поэтому в конфиге его нет ни в каком виде.
+    expect(provider?.options?.["apiKey"]).toBeUndefined()
+    expect(provider?.options?.["baseURL"]).toBe(CORP_MODEL_BASE_URL)
     const model = provider?.models?.["MagnitCopilot"]
     expect(model?.limit?.context).toBeGreaterThan(0)
     expect(model?.limit?.output).toBeGreaterThan(0)
   })
 
-  test("AC-07: в корп-конфиге нет секретов", async () => {
+  test("AC-07: в корп-конфиге нет секретов и нет ключа провайдера", async () => {
     const text = await fs.readFile(path.join(ROOT, "corp/config/opencode.corp.json"), "utf8")
-    // Ключи подставляются переменной окружения; литералов ключей, токенов и паролей быть не должно.
-    expect(text).toContain("{env:MAGNIT_COPILOT_KEY}")
+    // S-C4/S-C4b: ключ выдаёт вход по SSO и хранит auth-store; ни литерала, ни подстановки {env:…}
+    // в файле быть не должно — значение из конфига перебило бы ключ из auth-store (F37, D-21).
+    for (const forbidden of ["apiKey", "MAGNIT_COPILOT_KEY", "copilot.magnit.ru"]) {
+      expect(text, forbidden).not.toContain(forbidden)
+    }
     for (const pattern of [/sk-[A-Za-z0-9]/, /Bearer\s+\S/, /"password"\s*:/i, /"token"\s*:\s*"[^"]+"/i]) {
       expect(text).not.toMatch(pattern)
     }

@@ -21,7 +21,10 @@
 | `packages/tui/src/config/keybind.ts` | S-T1, S-T6 | Имена корп-команд и действий витрины (без них действия не отображаются) | `1b32c4d283` |
 | `packages/tui/src/component/dialog-provider.tsx` | S-T5 | Перехват выбора провайдера `magnit_prod` — открывается корп-экран входа | `1b32c4d283` |
 | `packages/tui/src/component/dialog-mcp.tsx` | S-V13 | Подпись `title` из кэша каталога рядом с alias | `1b32c4d283` |
-| `packages/app/src/pages/layout.tsx` | S-D1, S-D3, S-D4 | Команды `corp.connectors` / `corp.login` и корп-кнопка в блоке Getting Started | `5adcde570d` |
+| `packages/app/src/pages/layout.tsx` | S-D1, S-D3, S-D4, S-D2b, S-D4a | Команды `corp.connectors` / `corp.login`, корп-кнопка в блоке Getting Started; корп-пропсы рельсы `SidebarContent` (только при `enabled=true`) и однократное автооткрытие экрана входа при первом запуске | `5adcde570d`, `0e30889d64`, `a1aa05ed89` |
+| `packages/app/src/pages/home.tsx` | S-D2a | Строка «Коннекторы» первой в нижнем блоке боковой панели Home, над «Настройками»; видимость — по `enabled` из `GET /corp/status` | `0e30889d64` |
+| `packages/app/src/pages/layout/sidebar-shell.tsx` | S-D2b | Необязательные пропсы `connectorsLabel`/`onOpenConnectors` и кнопка коннекторов над шестерёнкой: без пропсов рельса совпадает с upstream | `0e30889d64` |
+| `packages/ui/src/v2/components/icon.tsx` | S-D2a | Глиф `mcp` в наборе v2: подходящего имени в наборе нет, а `IconV2` молча подменяет неизвестное имя на `plus` — пункт «Коннекторы» рисовал бы плюс (D-17) | `127ea0ad68` |
 | `packages/app/src/components/dialog-select-provider.tsx` | S-D5 | Перехват выбора провайдера `magnit_prod` | `5adcde570d` |
 | `packages/app/src/context/language.tsx` | S-I2 | Русский язык по умолчанию при включённых корп-функциях | `5adcde570d` |
 | `packages/app/src/env.d.ts` | S-C2, S-I2 | Объявление `VITE_OPENCODE_CORP_HUB_URL` для веб-UI | `5adcde570d` |

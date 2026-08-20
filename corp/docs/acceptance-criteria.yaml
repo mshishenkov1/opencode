@@ -1,5 +1,5 @@
 # Критерии приёмки I-4: корпоративный форк OpenCode
-# Спецификация: corp/docs/spec.md (ревизия 1.4)
+# Спецификация: corp/docs/spec.md (ревизия 1.5)
 # Формат: id, rule (правила спецификации), type (unit|integration|manual|ci), given/when/then.
 # Все HTTP-обращения к Hub в автотестах — только к мокам, без сети.
 #
@@ -27,7 +27,24 @@
 # остаются в силе для случая, когда email известен. Требуемое поведение AC-127..AC-131 на момент
 # ревизии в коде отсутствует. Подробности — блок «Ревизия 1.4» в начале spec.md.
 
-version: 1.4
+# Ревизия 1.5 (2026-08-21): ИСПРАВЛЕНИЕ КОНТРАКТА по живой проверке корпоративной сборки.
+# Спецификация закрепляла нерабочую схему подключения к модели: корп-конфиг задавал несуществующий
+# хост copilot.magnit.ru и брал ключ из переменной MAGNIT_COPILOT_KEY, из-за чего чат не работал вовсе,
+# а вход по SSO терял смысл (значение apiKey из конфига перекрывает ключ из auth-store, факт F37).
+# Рабочий адрес — https://llmlite.ailab-copilot-prod.corp.tander.ru/v1, ключ приходит из auth-store
+# (S-A3); правка конфига сборки — коммит d7c9865. Новые правила S-C4a (адрес модели и переопределение
+# переменной OPENCODE_CORP_MODEL_BASE_URL), S-C4b (ключ только из auth-store и поведение без ключа),
+# S-C9 (диагностика конфликтов личного конфига: disabled_providers и локальный mcp.<alias>);
+# новые факты F37, F38; решения D-20, D-21, D-22; дополнены S-C4, S-A11a, S-Q6.
+# ПЕРЕФОРМУЛИРОВАН AC-07 (ожидания приведены к проверенной схеме; требование «нет секретов» усилено
+# запретом самого ключа options.apiKey). Добавлены AC-132 (переопределение адреса переменной окружения),
+# AC-133 (пользовательский слой выше переменной), AC-134 (чат работает сразу после входа),
+# AC-135 (нет ключа -> запрос не уходит, названа причина), AC-136 (disabled_providers),
+# AC-137 (локально переопределённый mcp.<alias>). Существующие ID не менялись и не ослаблялись.
+# Требуемое поведение AC-132, AC-133, AC-135, AC-136, AC-137 на момент ревизии в коде отсутствует.
+# Подробности — блок «Ревизия 1.5» в начале spec.md.
+
+version: 1.5
 spec: corp/docs/spec.md
 criteria:
 
@@ -85,13 +102,17 @@ criteria:
     negative: true
 
   - id: AC-07
-    rule: [S-C4]
+    rule: [S-C4, S-C4a, S-C4b]
     type: unit
     given: файл corp/config/opencode.corp.json
     when: он провалидирован схемой конфига OpenCode
     then: >
       валиден; содержит autoupdate=false, share="disabled", enabled_providers=["magnit_prod"],
-      провайдера magnit_prod с моделью MagnitCopilot и apiKey="{env:MAGNIT_COPILOT_KEY}";
+      model="magnit_prod/MagnitCopilot" и провайдера magnit_prod
+      (npm="@ai-sdk/openai-compatible", модель MagnitCopilot с limit.context>0 и limit.output>0)
+      с options.baseURL="https://llmlite.ailab-copilot-prod.corp.tander.ru/v1";
+      ключ options.apiKey у провайдера отсутствует (значение undefined), в тексте файла нет подстрок
+      "apiKey", "MAGNIT_COPILOT_KEY" и "copilot.magnit.ru";
       не содержит ни одного секрета (нет ключей, токенов, паролей)
 
   - id: AC-08
@@ -1134,19 +1155,107 @@ criteria:
       при известном email в том же месте показан email
     negative: true
 
+  - id: AC-132
+    rule: [S-C4a]
+    type: unit
+    given: >
+      корп-слой активен, корп-конфиг задаёт
+      provider.magnit_prod.options.baseURL="https://llmlite.ailab-copilot-prod.corp.tander.ru/v1";
+      слоёв конфига выше корп-слоя нет
+    when: >
+      конфиг собран трижды: без переменной окружения; с OPENCODE_CORP_MODEL_BASE_URL="https://llm.test/v1";
+      с OPENCODE_CORP_MODEL_BASE_URL="  " и затем с OPENCODE_CORP_MODEL_BASE_URL="не-url"
+    then: >
+      действующий baseURL равен соответственно
+      https://llmlite.ailab-copilot-prod.corp.tander.ru/v1, https://llm.test/v1,
+      и в обоих последних случаях — снова значению из корп-конфига; для "не-url" в лог записано
+      предупреждение с именем переменной и полученным значением; загрузка конфига не падает
+    negative: true
+
+  - id: AC-133
+    rule: [S-C4a, S-C3]
+    type: unit
+    given: >
+      задана OPENCODE_CORP_MODEL_BASE_URL="https://llm.test/v1", а глобальный конфиг пользователя
+      задаёт provider.magnit_prod.options.baseURL="https://user.test/v1"
+    when: конфиг собран через loadInstanceState
+    then: >
+      действует https://user.test/v1 (любой слой выше корп-слоя перебивает переменную окружения);
+      при удалении записи из конфига пользователя действует https://llm.test/v1
+
+  - id: AC-134
+    rule: [S-C4b, S-A3, S-C4a]
+    type: integration
+    given: >
+      корп-сборка с корп-конфигом по S-C4, мок LiteLLM на адресе из корп-конфига, пустой auth-store;
+      конфиги пользователя и проекта отсутствуют
+    when: >
+      пройден вход по корпоративному SSO (мок Hub отдаёт ready с key="sk-test"), после чего отправлен
+      первый запрос к модели без каких-либо правок конфигов и без перезапуска приложения
+    then: >
+      мок LiteLLM получил POST <baseURL из корп-конфига>/chat/completions с заголовком
+      "Authorization: Bearer sk-test" и model="MagnitCopilot"; ответ модели показан пользователю;
+      ошибок соединения и запросов к copilot.magnit.ru нет
+
+  - id: AC-135
+    rule: [S-C4b]
+    type: integration
+    given: >
+      корп-функции включены, записи magnit_prod в auth-store нет, в окружении процесса задана
+      MAGNIT_COPILOT_KEY="sk-env"
+    when: пользователь отправляет запрос к модели (TUI/Desktop и `opencode run`)
+    then: >
+      к LiteLLM не отправлено ни одного запроса; показано сообщение, называющее причину
+      («Вход через корпоративный SSO не выполнен: нет ключа для Magnit Copilot») и действие
+      «Войти через корпоративный SSO», открывающее корп-экран входа; в `opencode run` напечатана
+      подсказка «выполните opencode corp login» и код выхода 1; значение MAGNIT_COPILOT_KEY
+      как ключ не используется
+    negative: true
+
+  - id: AC-136
+    rule: [S-C9, S-A11a]
+    type: integration
+    given: >
+      корп-функции включены, ключ magnit_prod в auth-store есть, глобальный конфиг пользователя
+      содержит "disabled_providers": ["magnit_prod"]
+    when: выполнено `opencode corp status`, затем сделана попытка обратиться к модели
+    then: >
+      вывод содержит строку «Провайдер magnit_prod: выключен в конфиге пользователя
+      (disabled_providers): <путь к файлу>» ровно в этом виде, код выхода 1; сообщение в чате называет
+      ту же причину и тот же файл вместо upstream-ошибки «модель не найдена»; файл конфига пользователя
+      не изменён (побайтово); та же причина один раз записана в лог при старте
+    negative: true
+
+  - id: AC-137
+    rule: [S-C9]
+    type: integration
+    given: >
+      каталог Hub содержит alias tag с mcp_url=<hub>/mcp/tag, а глобальный конфиг пользователя
+      содержит собственную запись mcp.tag с type="local"
+    when: выполнено `opencode corp status` и открыта витрина коннекторов
+    then: >
+      вывод содержит строку «Коннекторы, переопределённые локально: tag: <путь к файлу>» ровно в этом
+      виде и код выхода 1; карточка tag помечена «переопределено локально» с путём к файлу; действие
+      «Подключить» на ней предупреждает о перезаписи полей личной записи; конфиг пользователя без
+      подтверждения действия не изменён
+    negative: true
+
 # ---------------------------------------------------------------- карта покрытия правил
 coverage:
   S-C1: [AC-01, AC-02]
   S-C2: [AC-03, AC-04]
   S-C3: [AC-05, AC-06]
   S-C4: [AC-07]
+  S-C4a: [AC-07, AC-132, AC-133, AC-134]
+  S-C4b: [AC-07, AC-134, AC-135]
   S-C5: [AC-08, AC-09, AC-37]
   S-C6: [AC-04, AC-10, AC-102]
   S-C7: [AC-11, AC-12]
   S-C8: [AC-13]
+  S-C9: [AC-136, AC-137]
   S-A1: [AC-14]
   S-A2: [AC-15, AC-16]
-  S-A3: [AC-17, AC-18, AC-127, AC-128]
+  S-A3: [AC-17, AC-18, AC-127, AC-128, AC-134]
   S-A4: [AC-19, AC-20, AC-21]
   S-A5: [AC-21, AC-22, AC-23, AC-99]
   S-A6: [AC-24, AC-25, AC-26, AC-129]
@@ -1155,7 +1264,7 @@ coverage:
   S-A9: [AC-30]
   S-A10: [AC-31, AC-32, AC-129]
   S-A11: [AC-33, AC-34, AC-35, AC-122, AC-130]
-  S-A11a: [AC-33, AC-35, AC-122, AC-130]
+  S-A11a: [AC-33, AC-35, AC-122, AC-130, AC-136, AC-137]
   S-A12: [AC-36, AC-37]
   S-A13: [AC-127, AC-128, AC-129, AC-130, AC-131]
   S-V1: [AC-38]
@@ -1211,14 +1320,14 @@ coverage:
   S-Q3: [AC-115]
   S-Q4: [AC-116]
   S-Q5: [AC-117]
-  S-Q6: [AC-118]
+  S-Q6: [AC-118, AC-132, AC-133]
   S-Q7: [AC-119]
   S-Q8: [AC-120]
   S-Q9: [AC-121, AC-124, AC-125, AC-126]
 
 negative_scenarios:
   hub_unavailable: [AC-20, AC-35, AC-41, AC-43, AC-44, AC-45, AC-63, AC-79, AC-122]
-  key_missing: [AC-33, AC-37, AC-48, AC-120, AC-122]
+  key_missing: [AC-33, AC-37, AC-48, AC-120, AC-122, AC-135]
   oauth_rejected: [AC-59, AC-60]
   permissions_cancelled: [AC-66]
   cache_expired: [AC-44, AC-46]
@@ -1229,3 +1338,5 @@ negative_scenarios:
   first_run_login_prompt: [AC-27, AC-28, AC-126]
   build_and_ci_failures: [AC-103, AC-106, AC-107, AC-110, AC-119]
   catalog_edge_cases: [AC-50, AC-51, AC-56, AC-70]
+  user_config_conflicts: [AC-136, AC-137]
+  model_base_url_invalid: [AC-132]

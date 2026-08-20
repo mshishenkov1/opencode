@@ -27,6 +27,7 @@
 | `packages/app/src/env.d.ts` | S-C2, S-I2 | Объявление `VITE_OPENCODE_CORP_HUB_URL` для веб-UI | `5adcde570d` |
 | `packages/app/src/i18n/en.ts` | S-I1 | Ключи `corp.*` | `5adcde570d` |
 | `packages/app/src/i18n/ru.ts` | S-I1 | Ключи `corp.*` | `5adcde570d` |
+| `packages/opencode/script/build-node.ts` | S-C2, S-B1, S-B3 | Build-константы `OPENCODE_CORP_HUB_URL` / `OPENCODE_CORP_CONFIG` и `OPENCODE_VERSION` для сервера, встроенного в Desktop: без них корп-режим в приложении был выключен, хотя CLI из той же сборки корпоративный (BUG-I4-003) | `e8cea036a4` |
 
 Новые файлы, не относящиеся к upstream (в таблице не перечисляются): `corp/**`,
 `packages/core/src/corp/**`, `packages/opencode/src/corp/**`, `packages/opencode/src/cli/cmd/corp.ts`,

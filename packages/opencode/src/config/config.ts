@@ -35,8 +35,9 @@ import { ConfigPlugin } from "./plugin"
 import { ConfigVariable } from "./variable"
 import { Npm } from "@opencode-ai/core/npm"
 import { withTransientReadRetry } from "@/util/effect-http-client"
-// corp: корпоративный слой умолчаний (S-C3)
+// corp: корпоративный слой умолчаний (S-C3) и диагностика конфликтов личного конфига (S-C9)
 import * as Corp from "@/corp/config"
+import * as CorpDiagnostics from "@/corp/diagnostics"
 
 // Custom merge function that concatenates array fields instead of replacing them
 // Keep remeda's deep conditional merge type out of hot config-loading paths; TS profiling showed it dominates here.
@@ -608,6 +609,12 @@ export const layer = Layer.effect(
         }
         if (Flag.OPENCODE_DISABLE_PRUNE) {
           result.compaction = { ...result.compaction, prune: false }
+        }
+
+        // corp: конфликты личного конфига (disabled_providers, локальный mcp.<alias>) один раз
+        // называются предупреждением в лог при старте — тем же текстом, что и `corp status` (S-C9 п. 2).
+        for (const warning of yield* Effect.promise(() => CorpDiagnostics.startupWarnings(ctx.directory))) {
+          yield* Effect.logWarning(warning)
         }
 
         return {

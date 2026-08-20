@@ -1,7 +1,7 @@
 import { NamedError } from "@opencode-ai/core/util/error"
 import { errorFormat } from "@/util/error"
 import { isRecord } from "@/util/record"
-// corp: тексты корп-ошибок обращения к модели (S-C4b)
+// corp: тексты корп-ошибок обращения к модели (S-C4b, S-C9)
 import * as CorpModel from "@/corp/model"
 
 type ConfigIssue = { message: string; path: string[] }
@@ -40,8 +40,8 @@ export function FormatError(input: unknown): string | undefined {
     if (formatted) return formatted
   }
 
-  // corp: причина и действие вместо upstream-текста «Unexpected server error» (S-C4b п. 3).
-  // Проверяется до остальных веток: корп-ошибка приходит в том же виде, что и ошибки конфига.
+  // corp: причина и действие вместо upstream-текстов «модель не найдена» / «Unexpected server error»
+  // (S-C4b п. 3, S-C9 п. 3). Проверяется до остальных веток: корп-ошибка приходит в том же виде.
   const corp = CorpModel.formatCliError(input)
   if (corp !== undefined) {
     process.exitCode = 1

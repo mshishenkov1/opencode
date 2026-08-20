@@ -1762,8 +1762,9 @@ export const layer = Layer.effect(
     const getModel = Effect.fn("Provider.getModel")(function* (providerID: ProviderV2.ID, modelID: ModelV2.ID) {
       const s = yield* InstanceState.get(state)
       const provider = s.providers[providerID]
-      // corp: без ключа из auth-store запрос к модели не отправляется вовсе (S-C4b).
-      yield* CorpModel.guard({ providerID, present: provider !== undefined, auth })
+      // corp: без ключа из auth-store запрос к модели не отправляется, а выключенный личным конфигом
+      // провайдер называется по имени вместо upstream-ошибки «модель не найдена» (S-C4b, S-C9).
+      yield* CorpModel.guard({ providerID, present: provider !== undefined, config, auth })
       if (!provider) {
         const catalogProvider = s.catalog[providerID]
         const suggestions = catalogProvider

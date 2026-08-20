@@ -82,9 +82,14 @@ export const CorpStatusCommand = effectCmd({
 
     yield* println(`Hub: ${url}`)
 
-    // S-A11a: сразу после строки «Hub: …» печатается адрес модели по S-C4a.
+    // S-A11a: сразу после строки «Hub: …» — адрес модели по S-C4a; конфликты личного конфига (S-C9)
+    // читаются здесь же, потому что для них нужен кэш каталога Hub.
+    const cached = yield* Effect.promise(() => CorpCatalogCache.read(url))
     const report = yield* Effect.promise(() =>
-      CorpDiagnostics.inspect({ directory: process.cwd() }).catch(() => CorpDiagnostics.EMPTY),
+      CorpDiagnostics.inspect({
+        directory: process.cwd(),
+        ...(cached === undefined ? {} : { catalog: cached.servers }),
+      }).catch(() => CorpDiagnostics.EMPTY),
     )
     yield* println(CorpDiagnostics.LINES.model(report.model ?? "не задана", report.baseURL ?? "адрес не задан"))
 
@@ -111,7 +116,6 @@ export const CorpStatusCommand = effectCmd({
       }
     }
 
-    const cached = yield* Effect.promise(() => CorpCatalogCache.read(url))
     if (!cached) {
       yield* println("Каталог: кэша нет")
     } else {
@@ -120,7 +124,11 @@ export const CorpStatusCommand = effectCmd({
       yield* println(`Каталог: версия ${cached.version}, кэш от ${at}${stale ? " (протух)" : ""}`)
     }
 
+    // S-C9: конфликты личного конфига называются, но не чинятся; любой из них даёт код выхода 1.
+    for (const line of CorpDiagnostics.conflictLines(report)) yield* println(line)
+
     if (!key) return yield* fail("Ключ не найден: выполните opencode corp login")
+    if (CorpDiagnostics.hasConflicts(report)) return yield* fail("")
   }),
 })
 

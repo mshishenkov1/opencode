@@ -144,7 +144,10 @@ export const DialogConnectors: Component = () => {
     <Dialog
       title={language.t("corp.connectors.title")}
       description={language.t("corp.connectors.description", { connected: connected(), total: cards().length })}
+      // corp: тот же формат окна, что у экрана настроек (`dialog-settings.tsx`): размер `x-large`
+      // (960x600) и та же анимация появления — витрина не полноэкранная (S-D6)
       size="x-large"
+      transition
       action={
         <div class="flex items-center gap-2">
           <Show when={needsLogin()}>

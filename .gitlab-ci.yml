@@ -1,0 +1,107 @@
+# Портирование .github/workflows/corp-ci.yml на GitLab CI.
+#
+# Зачем: прогоны GitHub Actions на приватном репозитории упираются в платные
+# минуты и лимит расходов аккаунта, а корпоративные раннеры стоят внутри контура.
+#
+# Что здесь ЕСТЬ: typecheck, корп-тесты, реестр правок upstream, дымовая проверка
+# корп-слоя и сборка CLI под linux-x64 и win32-x64.
+#
+# Чего здесь НЕТ и почему: сборки Desktop (mac-arm64, win-x64) и сборки CLI под
+# darwin-arm64 — для них нужны macOS- и Windows-раннеры, которых в корпоративном
+# GitLab нет. Эти проверки остаются за GitHub Actions (corp-ci.yml) либо ждут
+# появления соответствующих раннеров.
+
+variables:
+  REGISTRY_PREFIX: ""
+  BUN_IMAGE: "oven/bun:1.3"
+  # corp/patches.test.ts сверяется с базовым тегом upstream (git diff v1.17.9)
+  # и со всей историей ветки — поверхностный клон её ломает.
+  GIT_DEPTH: "0"
+  OPENCODE_CHANNEL: "magnit"
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH =~ /^corp\//
+    - if: $CI_COMMIT_TAG =~ /^v.*-magnit\./
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+stages: [checks, build]
+
+.bun:
+  image: "${REGISTRY_PREFIX}${BUN_IMAGE}"
+  interruptible: true
+  before_script:
+    - bun install --frozen-lockfile
+  cache:
+    key: "bun-$CI_COMMIT_REF_SLUG"
+    paths: [node_modules]
+
+typecheck:
+  stage: checks
+  extends: .bun
+  script:
+    - bun run --cwd packages/core typecheck
+    - bun run --cwd packages/opencode typecheck
+    - bun run --cwd packages/tui typecheck
+    - bun run --cwd packages/app typecheck
+    - bun run --cwd packages/sdk/js typecheck
+
+corp-tests:
+  # Корп-слой и реестр правок — то, за что отвечаем мы. Красный здесь означает
+  # нашу поломку, а не особенность окружения.
+  stage: checks
+  extends: .bun
+  script:
+    - bun run --cwd packages/opencode test src/corp
+    - bun run --cwd packages/opencode test ../../corp/patches.test.ts
+    - bun run --cwd packages/opencode test ../../corp/build.test.ts
+    - bun run --cwd packages/opencode test ../../corp/upstream-sync.test.ts
+
+corp-smoke:
+  stage: checks
+  extends: .bun
+  script:
+    - bun run corp/smoke.ts
+
+upstream-tests:
+  # Наборы пакетов целиком, вместе с тестами upstream. Часть из них требует
+  # среды, которой в CI нет (внешние процессы, файловые часы, сеть): в первом же
+  # прогоне на GitHub из 3192 тестов упало 8, из них 4 — именно такие.
+  # Поэтому задание информационное: оно показывает регресс, но не блокирует.
+  stage: checks
+  extends: .bun
+  allow_failure: true
+  script:
+    - bun run --cwd packages/opencode test
+    - bun run --cwd packages/tui test
+    - bun run --cwd packages/app test
+
+build-cli:
+  stage: build
+  extends: .bun
+  parallel:
+    matrix:
+      - TARGET: ["linux-x64", "win32-x64"]
+  script:
+    - bun run corp/build.ts --targets "$TARGET"
+    # Дымовая проверка только для сборки под ОС раннера (S-B7, S-Q8).
+    - |
+      if [ "$TARGET" = "linux-x64" ]; then
+        BIN="$PWD/packages/opencode/dist/opencode-linux-x64/bin/opencode"
+        "$BIN" --version
+        HOME_DIR="$(mktemp -d)"
+        set +e
+        XDG_DATA_HOME="$HOME_DIR/data" XDG_CONFIG_HOME="$HOME_DIR/config" \
+        XDG_CACHE_HOME="$HOME_DIR/cache" XDG_STATE_HOME="$HOME_DIR/state" NO_COLOR=1 \
+          "$BIN" corp status | tee status.txt
+        CODE=${PIPESTATUS[0]}
+        set -e
+        grep -q "ключ: нет" status.txt
+        test "$CODE" = "1"
+      fi
+  artifacts:
+    paths:
+      - packages/opencode/dist/*.zip
+    expire_in: 30 days

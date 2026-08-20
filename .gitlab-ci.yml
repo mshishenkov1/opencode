@@ -33,6 +33,9 @@ stages: [checks, build]
   image: "${REGISTRY_PREFIX}${BUN_IMAGE}"
   interruptible: true
   before_script:
+    # tree-sitter-powershell собирается node-gyp: нужны Python и компилятор,
+    # которых в slim-образе bun нет (на ubuntu-раннере GitHub они есть штатно).
+    - apt-get update -qq && apt-get install -y --no-install-recommends python3 make g++ >/dev/null
     - bun install --frozen-lockfile
   cache:
     key: "bun-$CI_COMMIT_REF_SLUG"

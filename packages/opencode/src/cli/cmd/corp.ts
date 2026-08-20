@@ -1,5 +1,6 @@
 import { Auth } from "@/auth"
 import * as CorpCatalogCache from "@/corp/catalog-cache"
+import * as CorpDiagnostics from "@/corp/diagnostics"
 import * as CorpHub from "@/corp/hub"
 import * as CorpLogin from "@/corp/login"
 import type * as CorpSchema from "@/corp/schema"
@@ -80,6 +81,12 @@ export const CorpStatusCommand = effectCmd({
     }
 
     yield* println(`Hub: ${url}`)
+
+    // S-A11a: сразу после строки «Hub: …» печатается адрес модели по S-C4a.
+    const report = yield* Effect.promise(() =>
+      CorpDiagnostics.inspect({ directory: process.cwd() }).catch(() => CorpDiagnostics.EMPTY),
+    )
+    yield* println(CorpDiagnostics.LINES.model(report.model ?? "не задана", report.baseURL ?? "адрес не задан"))
 
     const authSvc = yield* Auth.Service
     const record = yield* authSvc.get(CORP_PROVIDER_ID).pipe(Effect.orElseSucceed(() => undefined))

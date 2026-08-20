@@ -369,6 +369,14 @@ export const layer = Layer.effect(
               ),
             ),
           )
+          // corp: адрес корпоративной модели подменяется переменной окружения внутри корп-слоя,
+          // до слияния — поэтому любой слой выше перебивает её (S-C4a, D-20).
+          const modelBaseUrl = Corp.modelBaseUrlOverride()
+          if (modelBaseUrl && "invalid" in modelBaseUrl) {
+            yield* Effect.logWarning(Corp.modelBaseUrlWarning(modelBaseUrl.invalid))
+          } else if (modelBaseUrl) {
+            Corp.applyModelBaseUrl(corp, modelBaseUrl.url)
+          }
           yield* merge(Corp.CONFIG_SOURCE, corp, "global")
         }
 

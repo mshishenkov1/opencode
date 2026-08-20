@@ -21910,7 +21910,7 @@
             "type": "string"
           }
         },
-        "required": ["user_id", "email"],
+        "required": ["user_id"],
         "additionalProperties": false
       },
       "CorpLoginReady": {

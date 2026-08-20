@@ -1,11 +1,12 @@
 import { Component, createMemo, onCleanup, Show } from "solid-js"
 import type { CorpCatalogCard, CorpPermissionModel } from "@opencode-ai/sdk/v2"
+import { corpUserLabel } from "@opencode-ai/core/corp/constants"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { List } from "@opencode-ai/ui/list"
 import { Tag } from "@opencode-ai/ui/tag"
-import { corpErrorKey, useConnectorAction, useCorpCatalog, useCorpInvalidate } from "@/context/corp"
+import { corpErrorKey, useConnectorAction, useCorpCatalog, useCorpInvalidate, useCorpStatus } from "@/context/corp"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
@@ -99,6 +100,12 @@ export const DialogConnectors: Component = () => {
   const invalidate = useCorpInvalidate()
   const action = useConnectorAction()
   const catalog = useCorpCatalog(() => true)
+  const status = useCorpStatus()
+  /** Подпись пользователя в заголовке витрины: email, а при неизвестном email — `user_id` (S-A13). */
+  const user = createMemo(() => {
+    const value = status.data?.user
+    return value ? corpUserLabel(value) : undefined
+  })
   // Витрина открывается из `Layout` — директорного SDK-контекста там нет (BUG-I4-002). Поток событий
   // сервера общий для всех рабочих каталогов, поэтому слушаем его целиком и фильтруем по типу.
   const sdk = useServerSDK()
@@ -148,6 +155,8 @@ export const DialogConnectors: Component = () => {
       description={language.t("corp.connectors.description", { connected: connected(), total: cards().length })}
       action={
         <div class="flex items-center gap-2">
+          {/* AC-131: пользователь в заголовке — email, а при неизвестном email — `user_id`. */}
+          <Show when={user()}>{(value) => <span class="text-11-regular text-text-weaker">{value()}</span>}</Show>
           <Show when={needsLogin()}>
             <Button size="small" onClick={() => void openLogin()}>
               {language.t("corp.connectors.login")}

@@ -1,5 +1,6 @@
 import { TextAttributes } from "@opentui/core"
 import type { CorpCatalogCard, CorpCatalogView, CorpPermissionModel } from "@opencode-ai/sdk/v2"
+import { corpUserLabel } from "@opencode-ai/core/corp/constants"
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { useEvent } from "../../context/event"
 import { useSDK } from "../../context/sdk"
@@ -73,6 +74,14 @@ export function DialogConnectors() {
   const [view, setView] = createSignal<CorpCatalogView>()
   const [loading, setLoading] = createSignal(true)
   const [busy, setBusy] = createSignal<string>()
+  /** Подпись пользователя в заголовке витрины: email, а при неизвестном email — `user_id` (S-A13). */
+  const [user, setUser] = createSignal<string>()
+
+  async function loadUser() {
+    const status = await sdk.client.corp.status().catch(() => undefined)
+    const value = status?.data?.user
+    setUser(value ? corpUserLabel(value) : undefined)
+  }
 
   async function load(refresh = false) {
     setLoading(true)
@@ -210,6 +219,7 @@ export function DialogConnectors() {
   onMount(() => {
     dialog.setSize("large")
     void load()
+    void loadUser()
   })
 
   // S-V7 шаг 3 / AC-60: браузер открыть не удалось — показываем URL авторизации текстом,
@@ -229,7 +239,11 @@ export function DialogConnectors() {
           <text attributes={TextAttributes.BOLD} fg={theme.text}>
             {t("connectors.title")}
           </text>
-          <Show when={banner()}>{(value) => <text fg={theme.warning}>{value()}</text>}</Show>
+          <box flexDirection="row" gap={2}>
+            <Show when={banner()}>{(value) => <text fg={theme.warning}>{value()}</text>}</Show>
+            {/* AC-131: пользователь в заголовке — email, а при неизвестном email — `user_id`. */}
+            <Show when={user()}>{(value) => <text fg={theme.textMuted}>{value()}</text>}</Show>
+          </box>
         </box>
       }
       emptyView={<text fg={theme.textMuted}>{empty() ?? ""}</text>}

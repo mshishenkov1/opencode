@@ -48,3 +48,21 @@ export function corpHubUrl(override?: string): string | undefined {
 export function corpEnabled(override?: string): boolean {
   return corpHubUrl(override) !== undefined
 }
+
+/**
+ * Подпись пользователя для показа человеку (S-A13, D-19).
+ *
+ * Email может быть неизвестен: корпоративный LiteLLM его не возвращает, и Hub присылает поле
+ * отсутствующим или `null`. В этом случае пользователь показывается по `user_id` — единственному
+ * обязательному идентификатору. Пустая подстановка, «null» и «undefined» на экране запрещены,
+ * поэтому пустая строка приравнивается к неизвестному email.
+ */
+export function corpUserEmail(user: { email?: string | null }): string | undefined {
+  const email = typeof user.email === "string" ? user.email.trim() : ""
+  return email === "" ? undefined : email
+}
+
+/** Значение подписи: email, а при неизвестном email — `user_id` (S-A13). */
+export function corpUserLabel(user: { user_id: string; email?: string | null }): string {
+  return corpUserEmail(user) ?? user.user_id
+}

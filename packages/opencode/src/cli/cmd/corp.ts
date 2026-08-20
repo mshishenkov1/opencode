@@ -3,7 +3,7 @@ import * as CorpCatalogCache from "@/corp/catalog-cache"
 import * as CorpHub from "@/corp/hub"
 import * as CorpLogin from "@/corp/login"
 import type * as CorpSchema from "@/corp/schema"
-import { CORP_PROVIDER_ID, corpHubUrl } from "@opencode-ai/core/corp/constants"
+import { CORP_PROVIDER_ID, corpHubUrl, corpUserEmail, corpUserLabel } from "@opencode-ai/core/corp/constants"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect, Option } from "effect"
 import open from "open"
@@ -93,7 +93,11 @@ export const CorpStatusCommand = effectCmd({
     if (key) {
       const me = yield* Effect.promise(() => hub.me())
       if (me.ok) {
-        yield* println(`Пользователь: ${me.data.email} ${dim(me.data.user_id)}`)
+        // S-A11a / S-A13: email известен — `Пользователь: <email> <user_id>`, иначе `Пользователь: <user_id>`.
+        const email = corpUserEmail(me.data)
+        yield* println(
+          email === undefined ? `Пользователь: ${me.data.user_id}` : `Пользователь: ${email} ${dim(me.data.user_id)}`,
+        )
         if (me.data.key_kind) yield* println(`Тип ключа: ${me.data.key_kind}`)
       } else {
         yield* println(`Пользователь: ${errorText(me.code)}`)
@@ -210,7 +214,8 @@ export const CorpLoginCommand = effectCmd({
         })
         .pipe(Effect.orDie)
 
-      yield* spinner.stop(`Вход выполнен: ${data.user.email}`)
+      // S-A13: при неизвестном email пользователь показывается по `user_id` (AC-129).
+      yield* spinner.stop(`Вход выполнен: ${corpUserLabel(data.user)}`)
       yield* Prompt.log.info(`Тип ключа: ${data.key_kind}`)
       yield* Prompt.outro("Готово")
       return

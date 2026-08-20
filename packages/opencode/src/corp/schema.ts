@@ -25,9 +25,16 @@ export const Team = Schema.Struct({
 }).annotate({ identifier: "CorpTeam" })
 export type Team = Schema.Schema.Type<typeof Team>
 
+/**
+ * Пользователь Hub (§3.1, §3.2, S-A13, D-19).
+ *
+ * Обязателен только `user_id`: корпоративный LiteLLM email при входе через SSO не возвращает, поэтому
+ * Hub присылает поле `email` отсутствующим или со значением `null`. Такое тело схеме **соответствует**
+ * и отбрасыванию по S-V2 не подлежит (BUG-I1-002: отброшенный ready-ответ означает потерянный ключ).
+ */
 export const HubUser = Schema.Struct({
   user_id: Schema.String,
-  email: Schema.String,
+  email: Schema.optional(Schema.NullOr(Schema.String)),
 }).annotate({ identifier: "CorpHubUser" })
 export type HubUser = Schema.Schema.Type<typeof HubUser>
 
@@ -123,7 +130,8 @@ export type Catalog = Schema.Schema.Type<typeof Catalog>
 
 export const Me = Schema.Struct({
   user_id: Schema.String,
-  email: Schema.String,
+  // S-A13: email необязателен и допускает `null` — обязателен только `user_id`.
+  email: Schema.optional(Schema.NullOr(Schema.String)),
   key_kind: Schema.optional(KeyKind),
   created_at: Schema.optional(Schema.String),
 }).annotate({ identifier: "CorpMe" })

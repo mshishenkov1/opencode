@@ -10,7 +10,7 @@ import * as CorpLogin from "@/corp/login"
 import * as CorpSchema from "@/corp/schema"
 import * as CorpStatus from "@/corp/status"
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
-import { CORP_PROVIDER_ID } from "@opencode-ai/core/corp/constants"
+import { CORP_PROVIDER_ID, corpUserEmail } from "@opencode-ai/core/corp/constants"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -24,6 +24,17 @@ import { CorpDisabledError, CorpHubError } from "../groups/corp"
  * Все обращения к Hub выполняются здесь, на серверной стороне бинарника (D-2). Ключ провайдера и
  * `poll_secret` наружу не отдаются и в логи не пишутся.
  */
+
+/**
+ * Пользователь в ответах корп-роутов (S-A1, S-A13).
+ *
+ * Hub может прислать `email` отсутствующим или `null` — наружу неизвестный email отдаётся отсутствием
+ * поля: клиентам не приходит ни `null`, ни пустая строка, показывать им нечего кроме `user_id`.
+ */
+function publicUser(user: CorpSchema.HubUser): CorpSchema.HubUser {
+  const email = corpUserEmail(user)
+  return { user_id: user.user_id, ...(email === undefined ? {} : { email }) }
+}
 
 /** Свежесть внутрипроцессного memo каталога (S-V3). */
 const CATALOG_MEMO_MS = 60_000
@@ -143,7 +154,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         .pipe(Effect.orDie)
       CorpLogin.store.drop(session.loginId)
       yield* configSvc.invalidate()
-      return { status: "ready" as const, user: data.user, key_kind: data.key_kind }
+      return { status: "ready" as const, user: publicUser(data.user), key_kind: data.key_kind }
     })
 
     const loginPoll = Effect.fn("CorpHttpApi.loginPoll")(function* (ctx: { params: { loginID: string } }) {
@@ -212,7 +223,8 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return {
         ...base,
         hub_reachable: health.ok,
-        user: { user_id: me.data.user_id, email: me.data.email },
+        // S-A13: email может быть неизвестен — тогда поле не проставляется вовсе (без `null` наружу).
+        user: publicUser(me.data),
         ...(me.data.key_kind === undefined ? {} : { key_kind: me.data.key_kind }),
       }
     })

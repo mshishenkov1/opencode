@@ -1,5 +1,6 @@
 import { Component, createSignal, onCleanup, onMount, Show } from "solid-js"
-import type { CorpTeam } from "@opencode-ai/sdk/v2"
+import type { CorpHubUser, CorpTeam } from "@opencode-ai/sdk/v2"
+import { corpUserLabel } from "@opencode-ai/core/corp/constants"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
@@ -58,11 +59,12 @@ export const DialogCorpLogin: Component = () => {
       .catch(() => undefined)
   }
 
-  async function finish(email: string) {
+  // S-A13: подстановка в `corp.login.success` — email, а при неизвестном email — `user_id` (AC-129).
+  async function finish(user: CorpHubUser) {
     stopped = true
     // Сессия уже освобождена сервером при `ready` (S-A3) — отменять нечего.
     pending = undefined
-    showToast({ variant: "success", title: language.t("corp.login.success", { email }) })
+    showToast({ variant: "success", title: language.t("corp.login.success", { email: corpUserLabel(user) }) })
     await invalidate()
     dialog.close()
   }
@@ -81,7 +83,7 @@ export const DialogCorpLogin: Component = () => {
     }
     if (data.status === "team_selection_required") return setStep({ kind: "teams", loginID, teams: data.teams })
     if (data.status === "error") return setStep({ kind: "error", code: data.error })
-    await finish(data.user.email)
+    await finish(data.user)
   }
 
   async function start() {
@@ -119,7 +121,7 @@ export const DialogCorpLogin: Component = () => {
     }
     if (!data) return stay("hub_unavailable")
     if (data.status === "error") return stay(data.error)
-    if (data.status === "ready") return finish(data.user.email)
+    if (data.status === "ready") return finish(data.user)
     setStep({ kind: "waiting", loginID, code: "", url: "" })
     timer = setTimeout(() => void poll(loginID), POLL_INTERVAL_MS)
   }

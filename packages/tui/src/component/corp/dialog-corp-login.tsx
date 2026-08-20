@@ -1,5 +1,6 @@
 import { TextAttributes } from "@opentui/core"
-import type { CorpTeam } from "@opencode-ai/sdk/v2"
+import type { CorpHubUser, CorpTeam } from "@opencode-ai/sdk/v2"
+import { corpUserLabel } from "@opencode-ai/core/corp/constants"
 import { createSignal, onCleanup, onMount, Show } from "solid-js"
 import { useClipboard } from "../../context/clipboard"
 import { useSDK } from "../../context/sdk"
@@ -56,13 +57,14 @@ export function DialogCorpLogin() {
     void sdk.client.corp.login.cancel({ loginID }).catch(() => undefined)
   }
 
-  async function finish(email: string) {
+  // S-A13: пользователь показывается по email, а при неизвестном email — по `user_id` (AC-129).
+  async function finish(user: CorpHubUser) {
     stopped = true
     // Сессия уже освобождена сервером при `ready` (S-A3) — отменять нечего.
     pending = undefined
     // Ключ magnit_prod появился: команда входа больше не подсвечивается (S-T2).
     setCorpKey(true)
-    toast.show({ variant: "success", message: `${t("login.success")}: ${email}` })
+    toast.show({ variant: "success", message: `${t("login.success")}: ${corpUserLabel(user)}` })
     // Тот же порядок, что и в upstream-флоу провайдера (F6): сбросить инстанс и перечитать состояние.
     await sdk.client.instance.dispose().catch(() => undefined)
     await sync.bootstrap()
@@ -90,7 +92,7 @@ export function DialogCorpLogin() {
       setStep({ kind: "error", code: data.error })
       return
     }
-    await finish(data.user.email)
+    await finish(data.user)
   }
 
   async function start() {
@@ -134,7 +136,7 @@ export function DialogCorpLogin() {
       return
     }
     if (data.status === "ready") {
-      await finish(data.user.email)
+      await finish(data.user)
       return
     }
     setStep({ kind: "waiting", loginID, code: "", url: "" })

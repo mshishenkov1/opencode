@@ -2189,7 +2189,7 @@ export type CorpLoginTeamSelection = {
 
 export type CorpHubUser = {
   user_id: string
-  email: string
+  email?: string
 }
 
 export type CorpLoginReady = {

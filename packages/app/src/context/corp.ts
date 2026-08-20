@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/solid-query"
 import type { CorpCatalogView, CorpStatus } from "@opencode-ai/sdk/v2"
 import { useLanguage } from "@/context/language"
-import { useSDK } from "@/context/sdk"
+import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
 
 /**
@@ -9,6 +9,12 @@ import { showToast } from "@/utils/toast"
  *
  * Все обращения к Hub идут через корп-роуты сервера (D-2): браузерный UI в Hub не ходит,
  * CORS там не включён (I-1 R-A7).
+ *
+ * Область — сервер, а не рабочий каталог: корп-роуты объявлены на инстансе и не зависят от
+ * `?directory=` (см. `server/routes/instance/httpapi/groups/corp.ts`), а потребители — визуальный
+ * `Layout` и его диалоги — живут выше `SDKProvider` (директорного контекста там ещё нет).
+ * Поэтому используется `useServerSDK`, доступный во всей оболочке сервера; обращение к `useSDK`
+ * из `Layout` роняло приложение («SDK context must be used within a context provider», BUG-I4-002).
  */
 
 /** Клиент создаётся с `throwOnError: true`, поэтому пустое тело — это уже аномалия. */
@@ -17,39 +23,67 @@ function required<T>(value: T | undefined): T {
   return value
 }
 
+/**
+ * Ответ, которым подменяется недоступность корп-роутов (S-C6, BUG-I4-002).
+ *
+ * Ванильный сервер отвечает на `GET /corp/status` кодом 200 и `enabled=false`, так что сюда
+ * попадают только транспортные сбои — недоступный сервер или Hub. Для UI это «корп-функции
+ * недоступны», а не исключение: команды и корп-кнопка просто не появляются, поведение остаётся
+ * upstream.
+ */
+const STATUS_UNAVAILABLE: CorpStatus = {
+  enabled: false,
+  authenticated: false,
+  hub_reachable: false,
+  hub_error: "hub_unavailable",
+}
+
 export function useCorpStatus() {
-  const sdk = useSDK()
+  const sdk = useServerSDK()
   return useQuery(() => ({
-    queryKey: [sdk().scope, sdk().directory, "corp.status"] as const,
-    queryFn: (): Promise<CorpStatus> => sdk().client.corp.status().then((response) => required(response.data)),
+    queryKey: [sdk().scope, "corp.status"] as const,
+    queryFn: (): Promise<CorpStatus> =>
+      sdk()
+        .client.corp.status()
+        .then((response) => required(response.data))
+        .catch(() => STATUS_UNAVAILABLE),
     // Корп-режим не меняется в течение сессии, но ключ появляется после входа — обновляем по инвалидации.
     staleTime: 30_000,
     retry: false,
+    throwOnError: false,
   }))
 }
 
 export function useCorpCatalog(enabled: () => boolean) {
-  const sdk = useSDK()
+  const sdk = useServerSDK()
   return useQuery(() => ({
-    queryKey: [sdk().scope, sdk().directory, "corp.catalog"] as const,
-    queryFn: (): Promise<CorpCatalogView> => sdk().client.corp.catalog().then((response) => required(response.data)),
+    queryKey: [sdk().scope, "corp.catalog"] as const,
+    queryFn: (): Promise<CorpCatalogView> =>
+      sdk()
+        .client.corp.catalog()
+        .then((response) => required(response.data)),
     enabled: enabled(),
     retry: false,
+    // Витрина сама показывает «Hub недоступен» по пустым данным — ошибка не должна всплывать
+    // в ErrorBoundary приложения (BUG-I4-002).
+    throwOnError: false,
   }))
 }
 
 /** Инвалидация после действий витрины: каталог, статус и локальные статусы MCP (S-D7). */
 export function useCorpInvalidate() {
   const client = useQueryClient()
-  const sdk = useSDK()
+  const sdk = useServerSDK()
   return () => {
     const scope = sdk().scope
-    const directory = sdk().directory
     return client.invalidateQueries({
-      predicate: (query) =>
-        query.queryKey[0] === scope &&
-        query.queryKey[1] === directory &&
-        (query.queryKey[2] === "corp.catalog" || query.queryKey[2] === "corp.status" || query.queryKey[2] === "mcp"),
+      predicate: (query) => {
+        if (query.queryKey[0] !== scope) return false
+        // Корп-ключи — на уровне сервера, ключи MCP — на уровне рабочего каталога
+        // (`[scope, directory, "mcp"]`): после действия витрины обновляются все каталоги сервера.
+        if (query.queryKey[1] === "corp.catalog" || query.queryKey[1] === "corp.status") return true
+        return query.queryKey[2] === "mcp"
+      },
     })
   }
 }
@@ -60,7 +94,7 @@ export type ConnectorAction =
   | { kind: "permissions"; alias: string; preset: string }
 
 export function useConnectorAction() {
-  const sdk = useSDK()
+  const sdk = useServerSDK()
   const language = useLanguage()
   const invalidate = useCorpInvalidate()
 

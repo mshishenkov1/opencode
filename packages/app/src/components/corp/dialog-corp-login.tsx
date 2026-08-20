@@ -6,7 +6,7 @@ import { Dialog } from "@opencode-ai/ui/dialog"
 import { List } from "@opencode-ai/ui/list"
 import { corpErrorKey, useCorpInvalidate } from "@/context/corp"
 import { useLanguage } from "@/context/language"
-import { useSDK } from "@/context/sdk"
+import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
 
 /**
@@ -28,7 +28,9 @@ type Step =
   | { kind: "error"; code: string }
 
 export const DialogCorpLogin: Component = () => {
-  const sdk = useSDK()
+  // Экран открывается из `Layout` — директорного SDK-контекста там нет, корп-роуты его и не требуют
+  // (BUG-I4-002).
+  const sdk = useServerSDK()
   const dialog = useDialog()
   const language = useLanguage()
   const invalidate = useCorpInvalidate()

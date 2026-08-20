@@ -7,7 +7,7 @@ import { List } from "@opencode-ai/ui/list"
 import { Tag } from "@opencode-ai/ui/tag"
 import { corpErrorKey, useConnectorAction, useCorpCatalog, useCorpInvalidate } from "@/context/corp"
 import { useLanguage } from "@/context/language"
-import { useSDK } from "@/context/sdk"
+import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
 
 /**
@@ -97,16 +97,19 @@ export const DialogConnectors: Component = () => {
   const invalidate = useCorpInvalidate()
   const action = useConnectorAction()
   const catalog = useCorpCatalog(() => true)
-  const sdk = useSDK()
+  // Витрина открывается из `Layout` — директорного SDK-контекста там нет (BUG-I4-002). Поток событий
+  // сервера общий для всех рабочих каталогов, поэтому слушаем его целиком и фильтруем по типу.
+  const sdk = useServerSDK()
 
   // S-V7 шаг 3 / AC-60: браузер открыть не удалось — показываем URL авторизации текстом,
   // ожидание callback при этом продолжается.
   onCleanup(
-    sdk().event.on("mcp.browser.open.failed", (failed) => {
+    sdk().event.listen((event) => {
+      if (event.details.type !== "mcp.browser.open.failed") return
       showToast({
         variant: "default",
         title: language.t("corp.connectors.authorizing"),
-        description: failed.properties.url,
+        description: event.details.properties.url,
       })
     }),
   )
@@ -155,9 +158,7 @@ export const DialogConnectors: Component = () => {
         </div>
       }
     >
-      <Show when={banner()}>
-        {(value) => <div class="px-3 pb-2 text-11-regular text-text-weaker">{value()}</div>}
-      </Show>
+      <Show when={banner()}>{(value) => <div class="px-3 pb-2 text-11-regular text-text-weaker">{value()}</div>}</Show>
       <List
         class="px-3"
         search={{ placeholder: language.t("corp.connectors.search"), autofocus: true }}

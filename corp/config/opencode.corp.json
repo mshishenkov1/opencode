@@ -2,15 +2,16 @@
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": false,
   "share": "disabled",
-  "enabled_providers": ["magnit_prod"],
+  "enabled_providers": [
+    "magnit_prod"
+  ],
   "model": "magnit_prod/MagnitCopilot",
   "provider": {
     "magnit_prod": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Magnit Copilot",
       "options": {
-        "baseURL": "https://copilot.magnit.ru/v1",
-        "apiKey": "{env:MAGNIT_COPILOT_KEY}"
+        "baseURL": "https://llmlite.ailab-copilot-prod.corp.tander.ru/v1"
       },
       "models": {
         "MagnitCopilot": {

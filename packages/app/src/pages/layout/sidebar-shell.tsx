@@ -25,6 +25,11 @@ export const SidebarContent = (props: {
   openProjectKeybind: Accessor<string | undefined>
   onOpenProject: () => void
   renderProjectOverlay: () => JSX.Element
+  // corp: подпись и обработчик пункта «Коннекторы» (S-D2b). Пропсы необязательные: при выключенных
+  // корп-функциях `layout.tsx` их не передаёт, и кнопка не рендерится вовсе — рельса совпадает
+  // с upstream (S-D2, S-C6). Панель остаётся презентационной и о корп-статусе не знает.
+  connectorsLabel?: Accessor<string>
+  onOpenConnectors?: () => void
   settingsLabel: Accessor<string>
   settingsKeybind: Accessor<string | undefined>
   onOpenSettings: () => void
@@ -90,6 +95,19 @@ export const SidebarContent = (props: {
           </DragDropProvider>
         </div>
         <div class="shrink-0 w-full pt-3 pb-6 flex flex-col items-center gap-2">
+          {/* corp: витрина коннекторов — над шестерёнкой (S-D2b). Обычный `Tooltip`, а не
+              `TooltipKeybind`: у команды `corp.connectors` нет клавиатурной привязки. */}
+          <Show when={props.onOpenConnectors}>
+            <Tooltip placement={placement()} value={props.connectorsLabel?.() ?? ""}>
+              <IconButton
+                icon="mcp"
+                variant="ghost"
+                size="large"
+                onClick={() => props.onOpenConnectors?.()}
+                aria-label={props.connectorsLabel?.()}
+              />
+            </Tooltip>
+          </Show>
           <TooltipKeybind placement={placement()} title={props.settingsLabel()} keybind={props.settingsKeybind() ?? ""}>
             <IconButton
               icon="settings-gear"

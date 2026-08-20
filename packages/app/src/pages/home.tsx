@@ -44,6 +44,8 @@ import { pathKey } from "@/utils/path-key"
 import { useGlobal } from "@/context/global"
 import { useCommand } from "@/context/command"
 import { useSettings } from "@/context/settings"
+// corp: состояние корпоративного режима для пункта «Коннекторы» в боковой панели (S-D2a, S-C5)
+import { useCorpStatus } from "@/context/corp"
 import { ServerRowMenu } from "@/components/server/server-row-menu"
 import { ServerHealthIndicator } from "@/components/server/server-row"
 import { type ServerHealth } from "@/utils/server-health"
@@ -361,6 +363,7 @@ function HomeDesign() {
           unseenCount={unseenCount}
           openSettings={openSettings}
           openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
+          openConnectors={() => command.trigger("corp.connectors")}
           language={language}
         />
 
@@ -447,11 +450,16 @@ function HomeProjectColumn(props: {
   unseenCount: (server: ServerConnection.Any, project: LocalProject) => number
   openSettings: () => void
   openHelp: () => void
+  // corp: открытие витрины коннекторов через команду `corp.connectors` (S-D2, S-D2a)
+  openConnectors: () => void
   language: ReturnType<typeof useLanguage>
 }) {
   const global = useGlobal()
   const dialog = useDialog()
   const controller = useServerManagementController({ navigateOnAdd: false })
+  // corp: включённость корп-режима приходит от сервера, а не от build-константы веб-UI (S-C5, D-16).
+  // `useCorpStatus` работает поверх серверного SDK-контекста — директорного здесь ещё нет (BUG-I4-002).
+  const corpStatus = useCorpStatus()
   return (
     <aside class="flex min-w-0 flex-col lg:pt-[52px] mt-14 gap-4" aria-label={props.language.t("home.projects")}>
       <div class="flex h-7 min-w-0 items-center justify-between pl-1.5">
@@ -500,6 +508,19 @@ function HomeProjectColumn(props: {
         </For>
       </Show>
       <div class="mt-4 flex min-w-0 flex-col gap-1">
+        {/* corp: постоянный пункт витрины коннекторов — первым в блоке, над «Настройками» (S-D2a).
+            Видимость определяет ответ сервера `GET /corp/status`: при выключенных корп-функциях
+            блок совпадает с upstream, скрытого узла в DOM не остаётся (S-D2, S-C6). */}
+        <Show when={corpStatus.data?.enabled}>
+          <button
+            type="button"
+            class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
+            onClick={props.openConnectors}
+          >
+            <IconV2 name="mcp" size="small" />
+            <span class={HOME_PROJECT_NAV_LABEL}>{props.language.t("corp.sidebar.connectors")}</span>
+          </button>
+        </Show>
         <button
           type="button"
           class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}

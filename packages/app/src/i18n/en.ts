@@ -1050,6 +1050,9 @@ export const dict = {
   "corp.command.login": "Corporate SSO sign-in",
   "corp.command.login.description": "Sign in and get a corporate model key",
 
+  // corp: подпись постоянного пункта навигации «Коннекторы» (S-D2a, S-D2b, S-I1)
+  "corp.sidebar.connectors": "Connectors",
+
   "corp.login.title": "Corporate SSO sign-in",
   "corp.login.hub": "Hub address",
   "corp.login.code": "Confirmation code",

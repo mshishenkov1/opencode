@@ -2396,6 +2396,14 @@ export default function Layout(props: ParentProps) {
       openProjectKeybind={() => command.keybind("project.open")}
       onOpenProject={chooseProject}
       renderProjectOverlay={projectOverlay}
+      {...(corpStatus.data?.enabled
+        ? {
+            // corp: пункт витрины в свёрнутой рельсе — только при включённых корп-функциях сервера;
+            // иначе пропсы не передаются и кнопка не рендерится (S-D2b, S-C5)
+            connectorsLabel: () => language.t("corp.sidebar.connectors"),
+            onOpenConnectors: () => command.trigger("corp.connectors"),
+          }
+        : {})}
       settingsLabel={() => language.t("sidebar.settings")}
       settingsKeybind={() => command.keybind("settings.open")}
       onOpenSettings={openSettings}

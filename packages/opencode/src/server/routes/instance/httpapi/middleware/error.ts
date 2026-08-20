@@ -1,5 +1,7 @@
 import { NamedError } from "@opencode-ai/core/util/error"
 import { ConfigErrorV1 } from "@opencode-ai/core/v1/config/error"
+// corp: корп-ошибки обращения к модели отдаются пользователю с причиной (S-C4b)
+import * as CorpModel from "@/corp/model"
 import { Cause, Effect } from "effect"
 import { HttpRouter, HttpServerError, HttpServerRespondable, HttpServerResponse } from "effect/unstable/http"
 
@@ -23,6 +25,14 @@ export const errorLayer = HttpRouter.middleware<{ handles: unknown }>()((effect)
         ConfigErrorV1.DirectoryTypoError.isInstance(error)
       ) {
         return Effect.succeed(HttpServerResponse.jsonUnsafe(error.toObject(), { status: 400 }))
+      }
+
+      // corp: причина обращения к модели без выполненного входа должна дойти до пользователя,
+      // а не превратиться в «Unexpected server error» (S-C4b).
+      if (CorpModel.isCorpModelError(error)) {
+        return Effect.succeed(
+          HttpServerResponse.jsonUnsafe((error as { toObject(): unknown }).toObject(), { status: 400 }),
+        )
       }
 
       const ref = `err_${crypto.randomUUID().slice(0, 8)}`

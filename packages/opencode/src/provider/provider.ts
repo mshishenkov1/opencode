@@ -31,6 +31,8 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderError } from "./error"
+// corp: проверки перед обращением к корпоративной модели (S-C4b, S-C9)
+import * as CorpModel from "@/corp/model"
 
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 10_000
 
@@ -1760,6 +1762,8 @@ export const layer = Layer.effect(
     const getModel = Effect.fn("Provider.getModel")(function* (providerID: ProviderV2.ID, modelID: ModelV2.ID) {
       const s = yield* InstanceState.get(state)
       const provider = s.providers[providerID]
+      // corp: без ключа из auth-store запрос к модели не отправляется вовсе (S-C4b).
+      yield* CorpModel.guard({ providerID, present: provider !== undefined, auth })
       if (!provider) {
         const catalogProvider = s.catalog[providerID]
         const suggestions = catalogProvider

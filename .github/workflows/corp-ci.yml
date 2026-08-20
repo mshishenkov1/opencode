@@ -4,7 +4,8 @@ name: corp-ci
 #
 # На PR в main: установка, typecheck, тесты пакетов opencode/tui/app, дымовая проверка корп-слоя
 # и сборка CLI для darwin-arm64, linux-x64, win32-x64 со smoke `opencode --version`.
-# По тегу v*-magnit.*: дополнительно Desktop mac-arm64 и win-x64 и черновик GitHub Release.
+# На PR дополнительно собирается Desktop mac-arm64 с проверкой бандла.
+# По тегу v*-magnit.*: Desktop mac-arm64 и win-x64 и черновик GitHub Release.
 
 on:
   pull_request:
@@ -107,21 +108,16 @@ jobs:
           path: packages/opencode/dist/*.zip
           if-no-files-found: warn
 
+  # На PR собирается только mac-arm64: этого хватает, чтобы поймать класс BUG-I4-002/BUG-I4-003
+  # (Desktop не собирался и падал на старте, а нашли это руками). По тегу собираются обе площадки.
   build-desktop:
     name: сборка Desktop ${{ matrix.name }}
-    if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-magnit.')
     needs: checks
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: mac-arm64
-            runner: macos-latest
-            args: --desktop --skip-cli
-          - name: win-x64
-            runner: windows-latest
-            args: --desktop --skip-cli --win
+        include: ${{ fromJSON(startsWith(github.ref, 'refs/tags/v') && '[{"name":"mac-arm64","runner":"macos-latest","args":"--desktop --skip-cli"},{"name":"win-x64","runner":"windows-latest","args":"--desktop --skip-cli --win"}]' || '[{"name":"mac-arm64","runner":"macos-latest","args":"--desktop --skip-cli"}]') }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -133,14 +129,36 @@ jobs:
           CORP_HUB_URL: ${{ vars.CORP_HUB_URL }}
           CORP_BUILD: ${{ vars.CORP_BUILD }}
           OPENCODE_CHANNEL: magnit
+          # Подписи пока нет (согласование ИБ не пройдено): без этого electron-builder на macOS
+          # ищет сертификат в связке ключей раннера и падает.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: bun run corp/build.ts ${{ matrix.args }}
 
+      # BUG-I4-003: сборка молча заканчивалась без Electron-приложения. Проверяем сам бандл,
+      # а не только наличие архива.
+      - name: Проверка бандла Desktop
+        if: matrix.name == 'mac-arm64'
+        run: |
+          set -euo pipefail
+          app=$(ls -d packages/desktop/dist/mac-arm64/*.app | head -1)
+          test -n "$app"
+          test -d "$app/Contents/Frameworks/Electron Framework.framework"
+          test -x "$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist"
+          ls packages/desktop/dist/*.dmg packages/desktop/dist/*.zip
+
+      # directories.output в electron-builder.config.ts — dist; каталога release не существует,
+      # и с прежним путём задание выкладывало пустоту (if-no-files-found: warn это не показывал).
       - name: Загрузка артефактов
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencode-desktop-${{ matrix.name }}
-          path: packages/desktop/release/*
-          if-no-files-found: warn
+          path: |
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.zip
+            packages/desktop/dist/*.exe
+            packages/desktop/dist/*.blockmap
+          if-no-files-found: error
 
   release:
     name: черновик релиза

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Script } from "@opencode-ai/script"
+import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 
@@ -12,6 +13,23 @@ process.chdir(dir)
 
 const generated = await import("./generate.ts")
 
+// corp: корпоративный слой — те же build-константы, что и у бинарника CLI (S-C2, S-B3).
+// Этот бандл — сервер, встроенный в Desktop: без констант корп-режим в приложении выключен,
+// хотя CLI из той же сборки корпоративный (BUG-I4-003). Без CORP_HUB_URL и без
+// corp/config/opencode.corp.json константы не определяются — сборка ванильная (S-C6).
+const corpDefine: Record<string, string> = {}
+{
+  const hubUrl = process.env["CORP_HUB_URL"]?.trim().replace(/\/+$/, "")
+  if (hubUrl) corpDefine["OPENCODE_CORP_HUB_URL"] = JSON.stringify(hubUrl)
+  const corpConfigPath = path.resolve(dir, "../../corp/config/opencode.corp.json")
+  if (fs.existsSync(corpConfigPath)) {
+    const text = fs.readFileSync(corpConfigPath, "utf8").trim()
+    if (text) corpDefine["OPENCODE_CORP_CONFIG"] = JSON.stringify(text)
+  }
+  if (Object.keys(corpDefine).length === 0) console.log("corp: build-константы не заданы, собирается ванильная сборка")
+  else console.log(`corp: build-константы ${Object.keys(corpDefine).join(", ")}`)
+}
+
 await Bun.build({
   target: "node",
   entrypoints: ["./src/node.ts"],
@@ -22,6 +40,10 @@ await Bun.build({
   define: {
     OPENCODE_MODELS_DEV: generated.modelsData,
     OPENCODE_CHANNEL: `'${Script.channel}'`,
+    // corp: версия корп-сборки (S-B1) — как в script/build.ts, иначе встроенный сервер
+    // сообщает «local» там, где CLI сообщает `1.17.9-magnit.N`.
+    OPENCODE_VERSION: `'${Script.version}'`,
+    ...corpDefine,
   },
   files: {
     "opencode-web-ui.gen.ts": "",

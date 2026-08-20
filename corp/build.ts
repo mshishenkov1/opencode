@@ -3,15 +3,22 @@
  * Сборка корпоративных артефактов (S-B1…S-B4).
  *
  *   bun run corp/build.ts [--targets darwin-arm64,linux-x64] [--desktop] [--skip-cli] [--publish]
- *                         [--skip-install] [--skip-embed-web-ui] [--win]
+ *                         [--skip-install] [--skip-embed-web-ui] [--win] [--channel latest]
  *
  * Версия артефактов — `<версия upstream>-magnit.<N>`, где `N` берётся из env `CORP_BUILD`
  * или файла `corp/version` (по умолчанию `1`). Исходные `package.json` upstream не правятся:
- * версия передаётся через `OPENCODE_VERSION`, который `@opencode-ai/script` принимает как есть.
+ * версия передаётся через `OPENCODE_VERSION`, который `@opencode-ai/script` принимает как есть,
+ * а в Desktop — через `extraMetadata.version` electron-builder.
  *
- * Корпоративные build-константы (S-C2) подставляет `packages/opencode/script/build.ts` из
- * env `CORP_HUB_URL` и файла `corp/config/opencode.corp.json`. Без `CORP_HUB_URL` собирается
- * ванильная сборка — с предупреждением, но без ошибки (S-C6).
+ * Канал сборки (`--channel`, по умолчанию `latest`) уходит в `OPENCODE_CHANNEL` и задаёт имя и
+ * идентификатор Desktop-приложения, набор иконок и режим веб-UI. `latest` — канал раздачи:
+ * приложение называется «OpenCode», а не «OpenCode Dev» (S-B3).
+ *
+ * Корпоративные build-константы (S-C2) подставляют `packages/opencode/script/build.ts` (CLI) и
+ * `packages/opencode/script/build-node.ts` (сервер, встроенный в Desktop) из env `CORP_HUB_URL`
+ * и файла `corp/config/opencode.corp.json`; веб-UI получает адрес Hub через
+ * `VITE_OPENCODE_CORP_HUB_URL`. Без `CORP_HUB_URL` собирается ванильная сборка — с
+ * предупреждением, но без ошибки (S-C6).
  */
 
 import { $ } from "bun"
@@ -80,10 +87,29 @@ export function distName(target: CliTarget) {
 }
 
 const version = corpVersion()
-const hubUrl = process.env["CORP_HUB_URL"]?.trim()
-const channel = process.env["OPENCODE_CHANNEL"]?.trim() || "magnit"
+// Адрес Hub нормализуется здесь же, как в script/build.ts: хвостовой `/` ломает сравнение адресов.
+const hubUrl = process.env["CORP_HUB_URL"]?.trim().replace(/\/+$/, "")
+/**
+ * Канал сборки (S-B3).
+ *
+ * `latest` — канал раздачи: так его называет CLI upstream (`@opencode-ai/script`), и с ним
+ * `opencode` не считается preview-сборкой. Значение переопределяется `--channel` или env
+ * `OPENCODE_CHANNEL`; `dev` оставляет прежнее «OpenCode Dev» для отладки.
+ */
+const channel = option("channel")?.trim() || process.env["OPENCODE_CHANNEL"]?.trim() || "latest"
+
+/**
+ * Тот же канал в терминах Desktop (S-B3).
+ *
+ * `electron-builder.config.ts` и `scripts/utils.ts` знают только `dev` / `beta` / `prod` и на любом
+ * другом значении молча сваливаются в `dev` — отсюда «OpenCode Dev» в раздаче (BUG-I4-003).
+ * Канал раздачи у Desktop называется `prod`, поэтому `latest` переводится здесь; конфиг
+ * electron-builder при этом не меняется (S-B9, AC-112).
+ */
+const desktopChannel = channel === "latest" ? "prod" : channel
 
 console.log(`версия сборки: ${version}`)
+console.log(`канал сборки: ${channel}${desktopChannel === channel ? "" : ` (Desktop: ${desktopChannel})`}`)
 if (!hubUrl) console.warn("CORP_HUB_URL не задан — собирается ванильная сборка (S-C6)")
 else console.log(`адрес Hub: ${hubUrl}`)
 
@@ -91,7 +117,9 @@ const env = {
   ...process.env,
   OPENCODE_VERSION: version,
   OPENCODE_CHANNEL: channel,
-  ...(hubUrl ? { CORP_HUB_URL: hubUrl } : {}),
+  // CORP_HUB_URL читают бандлеры бинарника и встроенного сервера, VITE_… — сборка веб-UI:
+  // vite не видит `define` бандлера и берёт только переменные с префиксом VITE_ (S-C2, S-I2).
+  ...(hubUrl ? { CORP_HUB_URL: hubUrl, VITE_OPENCODE_CORP_HUB_URL: hubUrl } : {}),
 }
 
 const artifacts: { name: string; file: string }[] = []
@@ -138,19 +166,50 @@ if (flag("desktop")) {
     console.error("сборка Desktop для win-x64 требует Windows: запустите её на Windows-стенде или в CI")
     process.exit(1)
   }
+  const desktopEnv = { ...env, OPENCODE_CHANNEL: desktopChannel }
+  /**
+   * Аргументы electron-builder (S-B1, S-B4).
+   *
+   * `extraMetadata.version` — версия S-B1: сам `packages/desktop/package.json` не правится, а
+   * upstream-скрипт `scripts/prepare.ts`, который это делает, в цепочке S-B3 не участвует.
+   * `--publish never` — публикация только по `--publish` этого скрипта (S-B4); заодно в
+   * приложение не кладётся `app-update.yml`, то есть корп-сборка не станет обновляться из
+   * публичных релизов upstream.
+   */
+  const packageArgs = ["--publish", "never", `-c.extraMetadata.version=${version}`]
+
+  // electron-builder только упаковывает уже собранный каталог `out/`. Без этих двух шагов он падает
+  // на «Application entry file out/main/index.js was not found» (BUG-I4-003):
+  //   prebuild — иконки и metainfo канала + сборка встроенного сервера (script/build-node.ts,
+  //              туда же уходят CORP_HUB_URL и OPENCODE_VERSION);
+  //   build    — electron-vite: main, preload и веб-UI (VITE_OPENCODE_CORP_HUB_URL).
+  console.log("Desktop: prebuild (иконки, metainfo, встроенный сервер)")
+  await $`bun run prebuild`.cwd(desktop).env(desktopEnv)
+  console.log("Desktop: electron-vite build")
+  await $`bun run build`.cwd(desktop).env(desktopEnv)
+
+  const entry = path.join(desktop, "out/main/index.js")
+  // Молчаливый пропуск запрещён (S-B3): без entry electron-builder соберёт битый архив.
+  if (!fs.existsSync(entry)) {
+    console.error(`сборка Electron не создала ${entry}`)
+    process.exit(1)
+  }
+
   if (process.platform === "darwin") {
     console.log("сборка Desktop mac-arm64")
-    await $`bun run package:mac`.cwd(desktop).env(env)
+    await $`bun run package:mac ${packageArgs}`.cwd(desktop).env(desktopEnv)
   }
   if (process.platform === "win32") {
     console.log("сборка Desktop win-x64")
-    await $`bun run package:win`.cwd(desktop).env(env)
+    await $`bun run package:win ${packageArgs}`.cwd(desktop).env(desktopEnv)
   }
-  const release = path.join(desktop, "release")
-  if (fs.existsSync(release)) {
-    for (const entry of fs.readdirSync(release)) {
+  // `directories.output` в electron-builder.config.ts — `dist`; `release` остаётся в списке для
+  // сборок, где каталог вывода переопределён.
+  for (const dir of [path.join(desktop, "dist"), path.join(desktop, "release")]) {
+    if (!fs.existsSync(dir)) continue
+    for (const entry of fs.readdirSync(dir)) {
       if (!/\.(dmg|zip|exe|msi|blockmap)$/.test(entry)) continue
-      artifacts.push({ name: entry, file: path.join(release, entry) })
+      artifacts.push({ name: entry, file: path.join(dir, entry) })
     }
   }
 }

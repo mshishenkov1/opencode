@@ -52,12 +52,59 @@ CORP_HUB_URL=https://hub.magnit.ru bun run corp/build.ts --targets darwin-arm64
 
 # Desktop (mac-arm64 на macOS, win-x64 на Windows-стенде или в CI)
 CORP_HUB_URL=https://hub.magnit.ru bun run corp/build.ts --desktop --skip-cli
+
+# отладочная сборка Desktop под именем «OpenCode Dev» и с отдельным идентификатором
+CORP_HUB_URL=https://hub.magnit.ru bun run corp/build.ts --desktop --skip-cli --channel dev
 ```
 
 Версия сборки — `<версия upstream>-magnit.<N>`, где `N` берётся из `corp/version` или env `CORP_BUILD`.
 Скрипт печатает sha256 каждого артефакта. Публикация в GitHub Releases — только с явным `--publish`.
 
 Без `CORP_HUB_URL` скрипт печатает предупреждение и собирает ванильную сборку.
+
+### Канал сборки (`--channel`)
+
+`--channel <канал>` (или env `OPENCODE_CHANNEL`) уходит в сборку как `OPENCODE_CHANNEL`.
+**По умолчанию `latest`** — канал раздачи. Раньше канал не задавался явно (`magnit`), и Desktop
+молча собирался как отладочный «OpenCode Dev».
+
+| `--channel` | Канал Desktop | Имя приложения | Идентификатор | Веб-UI |
+|---|---|---|---|---|
+| `latest` (по умолчанию) | `prod` | `OpenCode` | `ai.opencode.desktop` | prod-режим, без бейджа DEV |
+| `dev` | `dev` | `OpenCode Dev` | `ai.opencode.desktop.dev` | dev-режим |
+| `beta` | `beta` | `OpenCode Beta` | `ai.opencode.desktop.beta` | dev-режим |
+
+У CLI и Desktop канал раздачи называется по-разному: `latest` у `@opencode-ai/script`, `prod` у
+`electron-builder`. `corp/build.ts` переводит `latest` → `prod` для шагов Desktop, поэтому
+конфигурация electron-builder не правится (S-B9, AC-112).
+
+Смена канала меняет каталог данных Desktop-приложения и имя файла БД CLI (`opencode.db` для
+`latest`/`prod`), поэтому канал задаётся явно и не меняется от сборки к сборке.
+
+Публикация из `electron-builder` запрещена (`--publish never`): релиз собирает только `--publish`
+этого скрипта (S-B4). Автообновление CLI выключено корп-умолчанием `autoupdate: false` (S-C3).
+
+> **[проверить] Автообновление Desktop.** На каналах `latest`/`prod` и `beta` electron-updater
+> включён (`UPDATER_ENABLED = app.isPackaged && CHANNEL !== "dev"`), а `app-update.yml` в собранном
+> приложении указывает на **публичный репозиторий upstream** `anomalyco/opencode` — этот фид
+> electron-builder подставляет из `publish` в `packages/desktop/electron-builder.config.ts`, а при
+> его отсутствии выводит из `repository` в `package.json`. То есть корп-приложение будет
+> предлагать и ставить поверх себя ванильный OpenCode. Выключить это можно только правкой
+> `publish` в конфиге electron-builder или подменой фида на приватный форк, а конфигурация
+> electron-builder в I-4 заморожена (S-B9, AC-112). До решения раздавать Desktop либо с
+> `--channel dev`, либо с осознанием, что обновления придут из upstream.
+
+### Что делает `--desktop`
+
+`bun run prebuild` (иконки и metainfo канала + сборка встроенного сервера `script/build-node.ts`) →
+`bun run build` (electron-vite: main, preload, веб-UI) → `package:mac` / `package:win`. Первые два шага
+обязательны: electron-builder только упаковывает готовый `out/` и без них падает на
+«Application entry file out/main/index.js was not found». Артефакты — в `packages/desktop/dist`.
+
+Корп-константы попадают в Desktop так же, как в CLI: `CORP_HUB_URL` и `corp/config/opencode.corp.json`
+— в бандл встроенного сервера (`packages/opencode/script/build-node.ts`), `VITE_OPENCODE_CORP_HUB_URL`
+— в веб-UI, версия S-B1 — через `OPENCODE_VERSION` и аргумент `-c.extraMetadata.version`
+electron-builder (сам `packages/desktop/package.json` не правится).
 
 ## Локальная дымовая проверка
 

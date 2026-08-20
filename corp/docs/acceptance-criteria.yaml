@@ -1,5 +1,5 @@
 # Критерии приёмки I-4: корпоративный форк OpenCode
-# Спецификация: corp/docs/spec.md (ревизия 1.3)
+# Спецификация: corp/docs/spec.md (ревизия 1.4)
 # Формат: id, rule (правила спецификации), type (unit|integration|manual|ci), given/when/then.
 # Все HTTP-обращения к Hub в автотестах — только к мокам, без сети.
 #
@@ -15,8 +15,19 @@
 # S-D2a, S-D2b, S-D4a; уточнены S-D2, S-D4, S-A7, S-I1, S-Q9. Существующие ID не менялись и не
 # ослаблялись. Требуемое поведение AC-124..AC-126 на момент ревизии в коде отсутствует.
 # Подробности — блок «Ревизия 1.3» в начале spec.md.
+#
+# Ревизия 1.4 (2026-08-20): ИЗМЕНЕНИЕ КОНТРАКТА по BUG-I1-002 (critical). Корпоративный LiteLLM при SSO
+# не отдаёт email, Hub присылает user.email отсутствующим или null; клиент отбрасывал такой ready-ответ
+# как hub_invalid_response и терял уже выданный ключ. Email объявлен необязательным полем (новое правило
+# S-A13, решение D-19; уточнены §3.1, §3.2, S-A1, S-A6, S-A10, S-A11, S-A11a, S-V2, S-Q3).
+# Добавлены AC-127 (ready с email:null принят, ключ сохранён), AC-128 (ready без поля email принят),
+# AC-129 (экран входа и `corp login` показывают user_id вместо неизвестного email),
+# AC-130 (`corp status` печатает «Пользователь: <user_id>»), AC-131 (заголовок витрины показывает
+# user_id вместо неизвестного email). Существующие ID не менялись и не ослаблялись; AC-17 и AC-34
+# остаются в силе для случая, когда email известен. Требуемое поведение AC-127..AC-131 на момент
+# ревизии в коде отсутствует. Подробности — блок «Ревизия 1.4» в начале spec.md.
 
-version: 1.3
+version: 1.4
 spec: corp/docs/spec.md
 criteria:
 
@@ -1062,6 +1073,67 @@ criteria:
       не происходит даже после закрытия экрана; при authenticated=true или enabled=false автооткрытия
       нет вовсе
 
+  # ------------------- добавлены ревизией 1.4 (2026-08-20): изменение контракта по BUG-I1-002
+  # Email пользователя — необязательное поле (S-A13, D-19). На момент ревизии поведение НЕ реализовано:
+  # схема packages/opencode/src/corp/schema.ts требует email строкой, ready-ответ отбрасывается.
+  - id: AC-127
+    rule: [S-A13, S-A3, S-V2]
+    type: unit
+    given: >
+      мок Hub отдаёт {status:"ready", key:"sk-test", key_kind:"persistent",
+      user:{user_id:"u1", email:null}, team_id:"t1"}
+    when: клиент дождался ready
+    then: >
+      ответ принят (ошибки hub_invalid_response нет); Auth.set вызван для magnit_prod с
+      {type:"api", key:"sk-test"} и metadata с hub/key_kind/user_id:"u1"; вход завершён,
+      сессия входа удалена из памяти
+    negative: true
+
+  - id: AC-128
+    rule: [S-A13, S-A3, S-V2]
+    type: unit
+    given: >
+      мок Hub отдаёт {status:"ready", key:"sk-test", key_kind:"persistent",
+      user:{user_id:"u1"}, team_id:"t1"} — поля email в теле нет вовсе
+    when: клиент дождался ready
+    then: >
+      ответ принят (ошибки hub_invalid_response нет), ключ сохранён в auth-store, вход завершён;
+      ответ без user_id при этом по-прежнему отбрасывается с hub_invalid_response
+    negative: true
+
+  - id: AC-129
+    rule: [S-A13, S-A6, S-A10]
+    type: integration
+    given: мок Hub отдаёт ready с user:{user_id:"u1"} без email (или с email:null)
+    when: пройден вход на корп-экране (TUI и Desktop/web) и командой `opencode corp login --hub <мок>`
+    then: >
+      сообщение об успехе содержит подстроку «Вход выполнен: u1»; в выводе и на экране нет
+      «null», «undefined», пустой подстановки и пустых скобок; код выхода `opencode corp login` — 0
+    negative: true
+
+  - id: AC-130
+    rule: [S-A13, S-A11, S-A11a]
+    type: integration
+    given: ключ magnit_prod есть, мок Hub отвечает на /health и на /api/me телом {user_id:"u1", key_kind:"persistent"} без email
+    when: выполнено `opencode corp status`
+    then: >
+      вывод содержит строку «Пользователь: u1» ровно в этом виде (без второго значения, без скобок,
+      без «null»/«undefined») и строку «Тип ключа: persistent»; сам ключ в выводе отсутствует;
+      код выхода 0
+    negative: true
+
+  - id: AC-131
+    rule: [S-A13]
+    type: unit
+    given: >
+      GET /corp/status отвечает enabled=true, authenticated=true, user:{user_id:"u1"} без email
+      (Hub вернул /api/me без email)
+    when: открыта витрина коннекторов и отрисован её заголовок
+    then: >
+      в заголовке показан «u1»; строк «null»/«undefined» и пустой подписи пользователя нет;
+      при известном email в том же месте показан email
+    negative: true
+
 # ---------------------------------------------------------------- карта покрытия правил
 coverage:
   S-C1: [AC-01, AC-02]
@@ -1074,19 +1146,20 @@ coverage:
   S-C8: [AC-13]
   S-A1: [AC-14]
   S-A2: [AC-15, AC-16]
-  S-A3: [AC-17, AC-18]
+  S-A3: [AC-17, AC-18, AC-127, AC-128]
   S-A4: [AC-19, AC-20, AC-21]
   S-A5: [AC-21, AC-22, AC-23, AC-99]
-  S-A6: [AC-24, AC-25, AC-26]
+  S-A6: [AC-24, AC-25, AC-26, AC-129]
   S-A7: [AC-27, AC-28, AC-126]
   S-A8: [AC-29]
   S-A9: [AC-30]
-  S-A10: [AC-31, AC-32]
-  S-A11: [AC-33, AC-34, AC-35, AC-122]
-  S-A11a: [AC-33, AC-35, AC-122]
+  S-A10: [AC-31, AC-32, AC-129]
+  S-A11: [AC-33, AC-34, AC-35, AC-122, AC-130]
+  S-A11a: [AC-33, AC-35, AC-122, AC-130]
   S-A12: [AC-36, AC-37]
+  S-A13: [AC-127, AC-128, AC-129, AC-130, AC-131]
   S-V1: [AC-38]
-  S-V2: [AC-39, AC-40, AC-41]
+  S-V2: [AC-39, AC-40, AC-41, AC-127, AC-128]
   S-V3: [AC-42, AC-43, AC-44, AC-45, AC-46, AC-47]
   S-V4: [AC-48]
   S-V5: [AC-49]
@@ -1150,6 +1223,7 @@ negative_scenarios:
   permissions_cancelled: [AC-66]
   cache_expired: [AC-44, AC-46]
   invalid_hub_response: [AC-23, AC-40]
+  user_email_unknown: [AC-127, AC-128, AC-129, AC-130, AC-131]
   login_session_errors: [AC-21, AC-22, AC-26, AC-30, AC-32]
   vanilla_mode: [AC-04, AC-09, AC-10, AC-102, AC-124, AC-125, AC-126]
   first_run_login_prompt: [AC-27, AC-28, AC-126]

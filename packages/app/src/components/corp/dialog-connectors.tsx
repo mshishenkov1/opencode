@@ -9,12 +9,14 @@ import { corpErrorKey, useConnectorAction, useCorpCatalog, useCorpInvalidate } f
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
+import { CorpDialog } from "./dialog-shell"
 
 /**
  * Витрина коннекторов для Desktop/web (S-D2, S-D6, S-D7, S-V6, S-V11, S-V12).
  *
- * Полноэкранный диалог, а не URL-маршрут: сегмент `/:dir` роутера перехватывает произвольные пути
- * (D-4). Группировка — по владельцу, порядок — как в каталоге Hub.
+ * Отдельный диалог, а не URL-маршрут: сегмент `/:dir` роутера перехватывает произвольные пути
+ * (D-4). Группировка — по владельцу, порядок — как в каталоге Hub. Контейнер и габариты окна берутся
+ * из `CorpDialog` — того же формата, что открытый у пользователя экран настроек (S-D6).
  */
 
 const STATUS_KEY = {
@@ -141,13 +143,9 @@ export const DialogConnectors: Component = () => {
   const needsLogin = createMemo(() => catalog.data?.hub_error === "unauthorized")
 
   return (
-    <Dialog
+    <CorpDialog
       title={language.t("corp.connectors.title")}
       description={language.t("corp.connectors.description", { connected: connected(), total: cards().length })}
-      // corp: тот же формат окна, что у экрана настроек (`dialog-settings.tsx`): размер `x-large`
-      // (960x600) и та же анимация появления — витрина не полноэкранная (S-D6)
-      size="x-large"
-      transition
       action={
         <div class="flex items-center gap-2">
           <Show when={needsLogin()}>
@@ -179,7 +177,7 @@ export const DialogConnectors: Component = () => {
       >
         {(card) => (
           <div class="w-full flex items-center justify-between gap-x-3">
-            <div class="flex flex-col gap-0.5 min-w-0">
+            <div class="flex flex-col gap-0.5 min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <span class="truncate">{card.title}</span>
                 <span class="text-11-regular text-text-weaker">{language.t(STATUS_KEY[card.status])}</span>
@@ -194,7 +192,7 @@ export const DialogConnectors: Component = () => {
                 <span class="text-11-regular text-text-weaker truncate">{card.error ?? card.description}</span>
               </Show>
             </div>
-            <div class="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+            <div class="flex items-center gap-1 shrink-0" onClick={(event) => event.stopPropagation()}>
               <Show when={card.actions.includes("connect") || card.actions.includes("reconnect")}>
                 <Button
                   size="small"
@@ -234,7 +232,7 @@ export const DialogConnectors: Component = () => {
               </Show>
               <Show when={card.actions.includes("open_hub") && card.hub_url}>
                 <a
-                  class="text-11-regular text-text-weaker underline"
+                  class="text-11-regular text-text-weaker underline whitespace-nowrap"
                   href={card.hub_url}
                   target="_blank"
                   rel="noreferrer"
@@ -246,6 +244,6 @@ export const DialogConnectors: Component = () => {
           </div>
         )}
       </List>
-    </Dialog>
+    </CorpDialog>
   )
 }

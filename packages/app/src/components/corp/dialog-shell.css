@@ -1,0 +1,4 @@
+/* Корп-окна в формате settings-v2: содержимое выравнивается по 16px-паддингу шапки DialogV2. */
+[data-component="dialog-v2"] [data-slot="dialog-content"].corp-dialog-v2 [data-slot="dialog-body"] {
+  padding: 0 4px 8px;
+}

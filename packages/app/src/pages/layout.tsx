@@ -51,6 +51,8 @@ import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 // corp: состояние корпоративного режима для команд и блока Getting Started (S-D1, S-D3, S-D4)
 import { useCorpStatus } from "@/context/corp"
+// corp: решение об автооткрытии экрана входа при первом запуске (S-D4a)
+import { shouldAutoOpenCorpLogin } from "@/corp/first-run"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { retry } from "@opencode-ai/core/util/retry"
 import { playSoundById } from "@/utils/sound"
@@ -93,6 +95,15 @@ import {
 } from "./layout/sidebar-workspace"
 import { ProjectDragOverlay, SortableProject, type ProjectSidebarContext } from "./layout/sidebar-project"
 import { SidebarContent } from "./layout/sidebar-shell"
+
+/**
+ * corp: автооткрытие экрана входа было в этом запуске процесса (S-D4a, D-18).
+ *
+ * Признак модульный, а не в состоянии компонента: `Layout` пересоздаётся при смене сервера,
+ * а требование — «не более одного раза за запуск». В хранилище не пишется: после перезапуска
+ * пользователь без ключа снова увидит предложение войти.
+ */
+let corpLoginAutoOpened = false
 
 export default function Layout(props: ParentProps) {
   const serverSDK = useServerSDK()
@@ -1251,6 +1262,25 @@ export default function Layout(props: ParentProps) {
       dialog.show(() => <x.DialogCorpLogin />)
     })
   }
+
+  // corp: первый запуск — экран входа открывается сам, без ввода команд (S-D4a, S-A7).
+  // Решение принимает чистая функция; эффект не зависит от маршрута, ширины окна, состояния
+  // боковой панели и `store.gettingStartedDismissed` — тот блок остаётся запасным путём (S-D4).
+  createEffect(() => {
+    const status = corpStatus.data
+    if (!status) return
+    if (
+      !shouldAutoOpenCorpLogin({
+        enabled: status.enabled,
+        authenticated: status.authenticated,
+        dialogActive: !!dialog.active,
+        alreadyOpened: corpLoginAutoOpened,
+      })
+    )
+      return
+    corpLoginAutoOpened = true
+    openCorpLogin()
+  })
 
   function openServer() {
     const run = ++dialogRun

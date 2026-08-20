@@ -12,7 +12,7 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Global } from "@opencode-ai/core/global"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Logger } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { AccountTest } from "../../test/fake/account"
 import { NpmTest } from "../../test/fake/npm"
@@ -205,6 +205,7 @@ const clear = () => Effect.runPromise(clearEffect)
 beforeEach(clear)
 afterEach(async () => {
   delete process.env["OPENCODE_CORP_CONFIG"]
+  delete process.env[MODEL_BASE_URL_ENV]
   await clear()
 })
 
@@ -333,6 +334,132 @@ describe("corp — слой конфигурации (AC-05, AC-06, AC-11, AC-11
           expect(after).toBe(before)
         }),
       )
+    }),
+    60_000,
+  )
+})
+
+// --- Действующий адрес корпоративной модели (S-C4a, D-20) ---
+
+/** Корп-слой в том же виде, что и `corp/config/opencode.corp.json`, но с заданным адресом модели. */
+const corpLayerWithModel = (baseURL: string) =>
+  JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    autoupdate: false,
+    share: "disabled",
+    enabled_providers: ["magnit_prod"],
+    model: "magnit_prod/MagnitCopilot",
+    provider: {
+      magnit_prod: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Magnit Copilot",
+        options: { baseURL },
+        models: {
+          MagnitCopilot: { name: "Magnit Copilot", tool_call: true, limit: { context: 200000, output: 32000 } },
+        },
+      },
+    },
+  })
+
+/** Наблюдаемое значение по S-C4a: адрес, с которым провайдер пойдёт в LiteLLM. */
+const modelBaseURL = (config: { provider?: Record<string, { options?: Record<string, unknown> }> }) =>
+  config.provider?.["magnit_prod"]?.options?.["baseURL"]
+
+/** Собирает конфиг и возвращает действующий адрес модели вместе с текстом записей лога. */
+const loadWithLogs = (global?: object) =>
+  Effect.gen(function* () {
+    const lines: string[] = []
+    const logger = Logger.make((options: Logger.Options<unknown>) => {
+      const parts = Array.isArray(options.message) ? options.message : [options.message]
+      lines.push(
+        `${options.logLevel} ` +
+          parts.map((part) => (typeof part === "string" ? part : JSON.stringify(part))).join(" "),
+      )
+    })
+    const baseURL = yield* withTree(global, () =>
+      Config.Service.use((svc) => svc.get()).pipe(
+        Effect.map(modelBaseURL),
+        Effect.provide(Logger.layer([logger], { mergeWithExisting: true })),
+      ),
+    )
+    return { baseURL, logs: lines.join("\n") }
+  })
+
+/**
+ * Приоритет источников адреса модели (S-C4a, AC-132, AC-133).
+ *
+ * ОЖИДАЕМО КРАСНЫЕ (BUG-I4-004): переменная `OPENCODE_CORP_MODEL_BASE_URL` в реализации отсутствует —
+ * корп-слой не подменяет `provider.magnit_prod.options.baseURL` и не пишет предупреждение о
+ * непригодном значении. Тесты — минимальное воспроизведение бага; удалять и ослаблять их нельзя.
+ */
+describe("corp — действующий адрес модели (AC-132, AC-133)", () => {
+  it.effect(
+    "AC-132: без переменной окружения действует адрес из корп-конфига",
+    Effect.gen(function* () {
+      process.env["OPENCODE_CORP_CONFIG"] = corpLayerWithModel(CORP_MODEL_BASE_URL)
+      delete process.env[MODEL_BASE_URL_ENV]
+      const { baseURL } = yield* loadWithLogs()
+      expect(baseURL).toBe(CORP_MODEL_BASE_URL)
+    }),
+    60_000,
+  )
+
+  it.effect(
+    "AC-132: OPENCODE_CORP_MODEL_BASE_URL подменяет адрес внутри корп-слоя",
+    Effect.gen(function* () {
+      process.env["OPENCODE_CORP_CONFIG"] = corpLayerWithModel(CORP_MODEL_BASE_URL)
+      process.env[MODEL_BASE_URL_ENV] = "https://llm.test/v1"
+      const { baseURL } = yield* loadWithLogs()
+      expect(baseURL).toBe("https://llm.test/v1")
+    }),
+    60_000,
+  )
+
+  it.effect(
+    "AC-132: строка из пробелов трактуется как «не задано» — действует умолчание",
+    Effect.gen(function* () {
+      process.env["OPENCODE_CORP_CONFIG"] = corpLayerWithModel(CORP_MODEL_BASE_URL)
+      process.env[MODEL_BASE_URL_ENV] = "  "
+      const { baseURL } = yield* loadWithLogs()
+      expect(baseURL).toBe(CORP_MODEL_BASE_URL)
+    }),
+    60_000,
+  )
+
+  it.effect(
+    "AC-132: не-URL отбрасывается с предупреждением в лог, загрузка конфига не падает",
+    Effect.gen(function* () {
+      process.env["OPENCODE_CORP_CONFIG"] = corpLayerWithModel(CORP_MODEL_BASE_URL)
+      process.env[MODEL_BASE_URL_ENV] = "не-url"
+      const { baseURL, logs } = yield* loadWithLogs()
+      expect(baseURL).toBe(CORP_MODEL_BASE_URL)
+      // Предупреждение называет и переменную, и полученное значение (S-C4a).
+      expect(logs).toContain(MODEL_BASE_URL_ENV)
+      expect(logs).toContain("не-url")
+    }),
+    60_000,
+  )
+
+  it.effect(
+    "AC-133: глобальный конфиг пользователя перекрывает переменную окружения",
+    Effect.gen(function* () {
+      process.env["OPENCODE_CORP_CONFIG"] = corpLayerWithModel(CORP_MODEL_BASE_URL)
+      process.env[MODEL_BASE_URL_ENV] = "https://llm.test/v1"
+      const { baseURL } = yield* loadWithLogs({
+        provider: { magnit_prod: { options: { baseURL: "https://user.test/v1" } } },
+      })
+      expect(baseURL).toBe("https://user.test/v1")
+    }),
+    60_000,
+  )
+
+  it.effect(
+    "AC-133: без записи в конфиге пользователя действует переменная окружения",
+    Effect.gen(function* () {
+      process.env["OPENCODE_CORP_CONFIG"] = corpLayerWithModel(CORP_MODEL_BASE_URL)
+      process.env[MODEL_BASE_URL_ENV] = "https://llm.test/v1"
+      const { baseURL } = yield* loadWithLogs({ model: "magnit_prod/MagnitCopilot" })
+      expect(baseURL).toBe("https://llm.test/v1")
     }),
     60_000,
   )

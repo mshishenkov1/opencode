@@ -121,10 +121,10 @@ function startHub(script: Script) {
   }
 }
 
-async function run(home: string, args: string[]) {
+async function run(home: string, args: string[], options: { cwd?: string; env?: Record<string, string> } = {}) {
   const proc = Bun.spawn({
     cmd: ["bun", "run", "--conditions=browser", ENTRY, ...args],
-    cwd: ROOT,
+    cwd: options.cwd ?? ROOT,
     env: {
       ...process.env,
       PATH: `${stubPath}:${process.env["PATH"] ?? ""}`,
@@ -137,6 +137,7 @@ async function run(home: string, args: string[]) {
       OPENCODE_CORP_HUB_URL: "",
       NO_COLOR: "1",
       CI: "1",
+      ...options.env,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -179,6 +180,12 @@ const STATUS_LINES = {
   catalog: "Каталог: ",
   catalogMissing: "Каталог: кэша нет",
   keyHint: "Ключ не найден: выполните opencode corp login",
+  // Ревизия 1.5 (S-C4a, S-C9): адрес модели и диагностика конфликтов личного конфига.
+  model: (model: string, baseURL: string) => `Модель: ${model} на ${baseURL}`,
+  providerDisabled: (file: string) =>
+    `Провайдер magnit_prod: выключен в конфиге пользователя (disabled_providers): ${file}`,
+  connectorsOverridden: (aliases: string, file: string) =>
+    `Коннекторы, переопределённые локально: ${aliases}: ${file}`,
 } as const
 
 /** Все строки контракта S-A11a одним списком — для проверки совпадения с `grep` дымовой проверки. */
@@ -193,6 +200,9 @@ const CONTRACT = [
   STATUS_LINES.keyHint,
   "Пользователь: ",
   "Тип ключа: ",
+  "Модель: ",
+  "Провайдер magnit_prod: выключен в конфиге пользователя (disabled_providers): ",
+  "Коннекторы, переопределённые локально: ",
 ]
 
 const hubs: { stop: () => void }[] = []
@@ -468,4 +478,129 @@ describe("группа команд (AC-36)", () => {
     expect(result.out).toContain("status")
     expect(result.code).not.toBe(0)
   })
+})
+
+// --- Диагностика конфликтов личного конфига (S-C9, S-A11a; AC-136, AC-137) ---
+
+const MODEL_BASE_URL = "https://llm.test/v1"
+const MODEL_REF = "magnit_prod/MagnitCopilot"
+
+/** Корп-слой того же вида, что `corp/config/opencode.corp.json` (S-C4). */
+const CORP_CONFIG = JSON.stringify({
+  $schema: "https://opencode.ai/config.json",
+  autoupdate: false,
+  share: "disabled",
+  enabled_providers: ["magnit_prod"],
+  model: MODEL_REF,
+  provider: {
+    magnit_prod: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Magnit Copilot",
+      options: { baseURL: MODEL_BASE_URL },
+      models: {
+        MagnitCopilot: { name: "Magnit Copilot", tool_call: true, limit: { context: 200000, output: 32000 } },
+      },
+    },
+  },
+})
+
+/** Пустой каталог проекта: `corp status` не должен зависеть от конфига репозитория. */
+async function makeProject(home: string) {
+  const directory = path.join(home, "project")
+  await fs.mkdir(directory, { recursive: true })
+  await fs.writeFile(path.join(directory, "README.md"), "проект для теста")
+  return directory
+}
+
+/** Глобальный конфиг пользователя; возвращает путь — он входит в строки контракта S-A11a. */
+async function writeGlobalConfig(home: string, config: object) {
+  const file = path.join(home, "config", "opencode", "opencode.json")
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  await fs.writeFile(file, JSON.stringify({ $schema: "https://opencode.ai/config.json", ...config }, null, 2))
+  return file
+}
+
+/**
+ * ОЖИДАЕМО КРАСНЫЕ (BUG-I4-004, BUG-I4-006): `corp status` не печатает ни строки «Модель: …»,
+ * ни диагностики конфликтов личного конфига и завершается кодом 0 там, где S-C9 требует 1.
+ * Тесты — минимальное воспроизведение; удалять и ослаблять их нельзя.
+ */
+describe("opencode corp status — адрес модели и конфликты личного конфига (AC-136, AC-137)", () => {
+  test(
+    "S-A11a: строка «Модель: <model> на <baseURL>» печатается всегда (AC-132)",
+    async () => {
+      const server = hub({ polls: [PENDING] })
+      const home = await makeHome()
+      const directory = await makeProject(home)
+      await writeKey(home)
+
+      const result = await run(home, ["corp", "status", "--hub", server.url], {
+        cwd: directory,
+        env: { OPENCODE_CORP_CONFIG: CORP_CONFIG },
+      })
+
+      expect(result.out).toContain(STATUS_LINES.model(MODEL_REF, MODEL_BASE_URL))
+    },
+    60_000,
+  )
+
+  test(
+    "AC-136: выключенный в конфиге пользователя провайдер назван в выводе, код выхода 1",
+    async () => {
+      const server = hub({ polls: [PENDING] })
+      const home = await makeHome()
+      const directory = await makeProject(home)
+      await writeKey(home)
+      const file = await writeGlobalConfig(home, { disabled_providers: ["magnit_prod"] })
+      const before = await fs.readFile(file, "utf8")
+
+      const result = await run(home, ["corp", "status", "--hub", server.url], {
+        cwd: directory,
+        env: { OPENCODE_CORP_CONFIG: CORP_CONFIG },
+      })
+
+      expect(result.out).toContain(STATUS_LINES.providerDisabled(file))
+      expect(result.code).toBe(1)
+      // S-C9/D-22: диагностика не правит чужой конфиг.
+      expect(await fs.readFile(file, "utf8")).toBe(before)
+    },
+    60_000,
+  )
+
+  test(
+    "AC-137: локально переопределённый alias назван в выводе с путём к файлу, код выхода 1",
+    async () => {
+      const server = hub({ polls: [PENDING] })
+      const home = await makeHome()
+      const directory = await makeProject(home)
+      await writeKey(home)
+      // Каталог Hub знает alias tag как удалённый коннектор Hub…
+      await CatalogCache.write(
+        {
+          hubUrl: server.url,
+          fetchedAt: Date.now(),
+          version: "2026-08-21.1",
+          servers: [
+            { alias: "tag", title: "Tag", status: "ga", mode: "facade", mcp_url: `${server.url}/mcp/tag` },
+          ],
+        },
+        path.join(home, "data", "opencode"),
+      )
+      // …а личный конфиг задаёт свой mcp.tag: слияние идёт по полям (F38), коннектор Hub ломается.
+      const file = await writeGlobalConfig(home, {
+        mcp: { tag: { type: "local", command: ["echo", "hi"], enabled: true } },
+      })
+      const before = await fs.readFile(file, "utf8")
+
+      const result = await run(home, ["corp", "status", "--hub", server.url], {
+        cwd: directory,
+        env: { OPENCODE_CORP_CONFIG: CORP_CONFIG },
+      })
+
+      expect(result.out).toContain(STATUS_LINES.connectorsOverridden("tag", file))
+      expect(result.code).toBe(1)
+      expect(await fs.readFile(file, "utf8")).toBe(before)
+    },
+    60_000,
+  )
 })

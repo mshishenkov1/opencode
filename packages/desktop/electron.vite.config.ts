@@ -1,22 +1,18 @@
 import { sentryVitePlugin } from "@sentry/vite-plugin"
 import { defineConfig } from "electron-vite"
-import appPlugin from "@opencode-ai/app/vite"
+import appPlugin, { resolveChannel } from "@opencode-ai/app/vite"
 import * as fs from "node:fs/promises"
 
 const OPENCODE_SERVER_DIST = "../opencode/dist/node"
 
 // corp: канал `magnit` — корпоративная раздача; `latest` (канал раздачи CLI) переводится в него,
-// прежде переводился в `prod` — идентичность ванильного апстрима (S-B3, S-B10).
-// Неизвестное значение — ошибка, а не молчаливый откат в `dev` (D-25); незаданное — `dev`.
-const CHANNELS = ["dev", "beta", "prod", "magnit", "latest"] as const
-
-const channel = (() => {
-  const raw = process.env.OPENCODE_CHANNEL
-  if (raw === undefined || raw === "") return "dev"
-  if (raw === "latest" || raw === "magnit") return "magnit"
-  if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  throw new Error(`неизвестный канал сборки: ${raw}; допустимые: ${CHANNELS.join(", ")}`)
-})()
+// прежде переводился в `prod` — идентичность ванильного апстрима (S-B3, S-B10). Неизвестное
+// значение — ошибка, а не молчаливый откат в `dev` (D-25); незаданное — `dev`.
+//
+// Разбор берётся из `@opencode-ai/app/vite` — того же места, откуда его берёт `define` веб-интерфейса
+// (`VITE_OPENCODE_CHANNEL`). Своя копия здесь означала два расходящихся источника канала: главный
+// процесс знал `magnit`, а интерфейс сваливался в `dev` и рисовал в заголовке ярлык «DEV».
+const channel = resolveChannel()
 
 // corp: адрес сервера обновлений в главный процесс (S-B11, S-C2) — по образцу OPENCODE_CORP_HUB_URL.
 // Пустая строка означает «адрес не задан»: апдейтер выключается целиком (UPDATER_ENABLED).

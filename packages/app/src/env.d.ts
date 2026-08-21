@@ -1,7 +1,8 @@
 interface ImportMetaEnv {
   readonly VITE_OPENCODE_SERVER_HOST: string
   readonly VITE_OPENCODE_SERVER_PORT: string
-  readonly VITE_OPENCODE_CHANNEL?: "dev" | "beta" | "prod"
+  // corp: `magnit` — канал корпоративной раздачи, в него переводится и `latest` (S-B3, S-B10)
+  readonly VITE_OPENCODE_CHANNEL?: "dev" | "beta" | "prod" | "magnit"
   // corp: адрес Hub корпоративной сборки — задаётся при сборке веб-UI (S-C2, S-I2)
   readonly VITE_OPENCODE_CORP_HUB_URL?: string
 

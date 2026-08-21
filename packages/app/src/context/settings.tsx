@@ -52,7 +52,12 @@ export interface Settings {
 export const monoDefault = "System Mono"
 export const sansDefault = "System Sans"
 export const terminalDefault = "JetBrainsMono Nerd Font Mono"
-export const newLayoutDesignsDefault = import.meta.env.VITE_OPENCODE_CHANNEL !== "prod"
+// corp: `magnit` — канал раздачи, корпоративный аналог `prod`, а не preview-канал (S-B3, S-B10):
+// в раздаче непоказанные макеты по умолчанию выключены, как и у ванильного `prod`. До того как
+// канал стал доезжать до интерфейса, корпоративная сборка выглядела для него как `dev` и включала
+// их сама собой.
+const RELEASE_CHANNELS: ReadonlyArray<string | undefined> = ["prod", "magnit"]
+export const newLayoutDesignsDefault = !RELEASE_CHANNELS.includes(import.meta.env.VITE_OPENCODE_CHANNEL)
 
 const monoFallback =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'

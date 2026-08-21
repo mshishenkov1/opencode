@@ -17,6 +17,9 @@ variables:
   # corp/patches.test.ts сверяется с базовым тегом upstream (git diff v1.17.9)
   # и со всей историей ветки — поверхностный клон её ломает.
   GIT_DEPTH: "0"
+  # Раннер GitLab тянет ссылки без тегов, поэтому базовый тег upstream в клоне
+  # не появляется даже при полной истории: тесты реестра падают на «unknown revision».
+  GIT_FETCH_EXTRA_FLAGS: "--prune --quiet --tags"
   OPENCODE_CHANNEL: "magnit"
 
 workflow:

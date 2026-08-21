@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import * as CorpHub from "./hub"
+import * as CorpSchema from "./schema"
+import { liveCatalogBody, liveConnectionsBody, liveTagCard } from "../../test/fixture/corp-hub-live"
 
 /**
- * Клиент Hub (S-V2, S-Q2; AC-16, AC-21, AC-22, AC-23, AC-39, AC-40, AC-41, AC-114).
+ * Клиент Hub (S-V2, S-V14, S-Q2; AC-16, AC-21, AC-22, AC-23, AC-39, AC-40, AC-41, AC-114,
+ * AC-154, AC-156, AC-158, AC-159, AC-160, AC-162, AC-163, AC-167, AC-168, AC-169).
  *
  * Сеть не используется: `fetch` инъектируется. Проверяется наблюдаемое поведение контрактов §3.1–3.2 —
  * заголовки исходящего запроса, разбор ответа схемой и стабильные коды ошибок наружу.
@@ -237,19 +240,43 @@ describe("corp/hub — успешные вызовы (AC-39, AC-114)", () => {
   })
 })
 
-describe("corp/hub — ошибки (AC-21, AC-22, AC-23, AC-40, AC-41, AC-114)", () => {
-  test("AC-40: тело без обязательного поля alias отбрасывается целиком", async () => {
+describe("corp/hub — ошибки (AC-21, AC-22, AC-23, AC-40, AC-41, AC-114, AC-160)", () => {
+  test("AC-40: карточка без обязательного поля alias отбрасывается поодиночке, соседние принимаются", async () => {
     const { hub } = client(() =>
       json({
         version: "1",
-        servers: [{ title: "GitLab", status: "ga", mode: "facade", mcp_url: "https://hub.test/mcp/gitlab" }],
+        servers: [
+          // Карточка без `alias`: показать её нельзя (нечем идентифицировать запись конфига).
+          { title: "GitLab", status: "ga", mode: "facade", mcp_url: "https://hub.test/mcp/gitlab" },
+          {
+            alias: "tag",
+            title: "ТЭГ (Mattermost)",
+            status: "beta",
+            mode: "facade",
+            mcp_url: "https://hub.test/mcp/tag",
+          },
+        ],
       }),
     )
     const result = await hub.catalog()
-    expect(result).toEqual({ ok: false, code: "hub_invalid_response" })
+
+    // Ошибки нет: из-за одной непонятой карточки витрина больше не пустеет (S-V14 п.2).
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.data.servers).toEqual([
+      {
+        alias: "tag",
+        title: "ТЭГ (Mattermost)",
+        status: "beta",
+        mode: "facade",
+        mcp_url: "https://hub.test/mcp/tag",
+      },
+    ])
+    // Отброшенная карточка названа: alias прочитать не удалось, причина — путь к полю (S-V14 п.5).
+    expect(result.dropped).toEqual([{ reason: "alias" }])
   })
 
-  test("AC-40: не-JSON тело при 200 — hub_invalid_response", async () => {
+  test("AC-160: не-JSON тело при 200 — hub_invalid_response", async () => {
     const { hub } = client(() => new Response("<html>oops</html>", { status: 200 }))
     const result = await hub.catalog()
     expect(result).toEqual({ ok: false, code: "hub_invalid_response" })
@@ -356,6 +383,272 @@ describe("corp/hub — ошибки (AC-21, AC-22, AC-23, AC-40, AC-41, AC-114)"
     expect(await hub.catalog()).toEqual({ ok: false, code: "unauthorized" })
     expect(await hub.me()).toEqual({ ok: false, code: "unauthorized" })
     expect(calls).toHaveLength(0)
+  })
+})
+
+/**
+ * Устойчивость разбора списочных ответов Hub (S-V14, S-Q2; AC-154, AC-156, AC-158, AC-159, AC-160,
+ * AC-162, AC-168, AC-169).
+ *
+ * Тела фиксированные и сняты с живого Hub (`test/fixture/corp-hub-live.ts`): прежние фикстуры форка
+ * были написаны по тексту спецификации, разошлись с контрактом Hub и подтверждали неверную схему —
+ * из-за этого BUG-I4-008 дожил до пользователя.
+ */
+describe("corp/hub — разбор каталога по S-V14 (AC-154, AC-162, AC-168)", () => {
+  test("AC-154: живая карточка tag с моделью прав tool_filter принимается без потерь", async () => {
+    const { hub } = client(() => json(liveCatalogBody()))
+    const result = await hub.catalog()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.data.servers).toHaveLength(1)
+    expect(result.dropped).toEqual([])
+
+    const tag = result.data.servers[0]!
+    expect(tag.alias).toBe("tag")
+    expect(tag.title).toBe("ТЭГ (Mattermost)")
+    expect(tag.status).toBe("beta")
+    expect(tag.mode).toBe("facade")
+    expect(tag.mcp_url).toBe(String(liveTagCard()["mcp_url"]))
+    expect(tag.auth_kind).toBe("user_token")
+    expect(tag.connection).toEqual({
+      status: "connected",
+      preset: "readonly",
+      updated_at: "2026-08-21T06:39:54.386790+00:00",
+    })
+
+    // Модель прав доходит до карточки дословно — тем же значением, что прислал Hub (S-V3).
+    expect(tag.permission_model).toEqual(liveTagCard()["permission_model"])
+    const model = CorpSchema.parsePermissionModel(tag.permission_model)
+    if (model?.kind !== "tool_filter") throw new Error("ожидалась модель tool_filter")
+    // Состав среза сохранён целиком и в исходном порядке ответа Hub (S-V9).
+    const live = (liveTagCard()["permission_model"] as { presets: Record<string, { tools: string[] }> }).presets
+    expect(model.presets["readonly"]!.tools).toEqual(live["readonly"]!.tools)
+    expect(model.presets["readwrite"]!.tools).toEqual(["*"])
+    expect(Object.keys(model.presets)).toEqual(["readonly", "readwrite"])
+  })
+
+  test("AC-162: auth_methods и любые неизвестные поля игнорируются и карточку не отбрасывают", async () => {
+    const body = liveCatalogBody()
+    const card = (body["servers"] as Record<string, unknown>[])[0]!
+    // Поле ревизии 3 Hub уже есть в живом теле; добавляем ещё неизвестное сверху и во вложенном объекте.
+    expect(card["auth_methods"]).toBeDefined()
+    card["totally_unknown_field"] = { any: ["shape", 1, null] }
+    ;(card["connection"] as Record<string, unknown>)["unknown_nested"] = "ignore me"
+
+    const { hub } = client(() => json(body))
+    const result = await hub.catalog()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.dropped).toEqual([])
+    const tag = result.data.servers[0]!
+    expect(tag.alias).toBe("tag")
+    expect(tag.connection?.status).toBe("connected")
+    // Неизвестные поля не доезжают до модели карточки, но и причиной отказа не являются (S-V14 п.4).
+    expect(tag).not.toHaveProperty("auth_methods")
+    expect(tag).not.toHaveProperty("totally_unknown_field")
+  })
+
+  test("AC-168: version числом и version строкой принимаются одинаково, наружу уходит строка", async () => {
+    const numeric = liveCatalogBody()
+    expect(numeric["version"]).toBe(1)
+    const fromNumber = await client(() => json(numeric)).hub.catalog()
+
+    expect(fromNumber.ok).toBe(true)
+    if (!fromNumber.ok) throw new Error("ожидался успех")
+    expect(fromNumber.data.version).toBe("1")
+    expect(typeof fromNumber.data.version).toBe("string")
+
+    const textual = liveCatalogBody()
+    textual["version"] = "1"
+    const fromString = await client(() => json(textual)).hub.catalog()
+
+    expect(fromString.ok).toBe(true)
+    if (!fromString.ok) throw new Error("ожидался успех")
+    expect(fromString.data.version).toBe("1")
+    // Форма пришедшего значения на состав витрины не влияет (D-29).
+    expect(fromString.data.servers).toEqual(fromNumber.data.servers)
+  })
+})
+
+describe("corp/hub — граница ядра карточки (AC-156, AC-158, AC-159, AC-163)", () => {
+  const gitlab = {
+    alias: "gitlab",
+    title: "GitLab",
+    owner: "Платформа",
+    status: "ga",
+    mode: "facade",
+    mcp_url: "https://hub.test/mcp/gitlab",
+    permission_model: { kind: "header_groups", groups: [{ id: "read", title: "Чтение", preset: "readonly" }] },
+  }
+
+  test("AC-156: неизвестный вид модели прав карточку не отбрасывает, значение сохраняется дословно", async () => {
+    const quota = { kind: "quota_tiers", tiers: [{ id: "basic", calls: 100 }] }
+    const card = liveTagCard()
+    card["permission_model"] = quota
+    const { hub } = client(() => json({ version: 1, servers: [card] }))
+    const result = await hub.catalog()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.dropped).toEqual([])
+    expect(result.data.servers.map((server) => server.alias)).toEqual(["tag"])
+    expect(result.data.servers[0]!.permission_model).toEqual(quota)
+    // Клиент этой модели не понял — экран прав недоступен, карточка живёт (S-V14 п.3, D-27).
+    expect(CorpSchema.parsePermissionModel(result.data.servers[0]!.permission_model)).toBeUndefined()
+  })
+
+  test("AC-158: три карточки — валидная, без alias и живая tag — дают две принятые", async () => {
+    const { hub } = client(() =>
+      json({
+        version: 1,
+        servers: [gitlab, { title: "Безымянный", mode: "facade", mcp_url: "https://hub.test/mcp/x" }, liveTagCard()],
+      }),
+    )
+    const result = await hub.catalog()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.data.servers.map((server) => server.alias)).toEqual(["gitlab", "tag"])
+    expect(result.dropped).toEqual([{ reason: "alias" }])
+  })
+
+  test("AC-159: карточки без alias, без title и с mode вне перечисления отброшены, валидная принята", async () => {
+    const { hub } = client(() =>
+      json({
+        version: 1,
+        servers: [
+          { title: "Без alias", mode: "facade", mcp_url: "https://hub.test/mcp/a" },
+          { alias: "no-title", mode: "facade", mcp_url: "https://hub.test/mcp/b" },
+          { alias: "proxy", title: "Прокси", mode: "proxy", mcp_url: "https://hub.test/mcp/c" },
+          gitlab,
+        ],
+      }),
+    )
+    const result = await hub.catalog()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.data.servers.map((server) => server.alias)).toEqual(["gitlab"])
+    expect(result.dropped).toEqual([
+      { reason: "alias" },
+      { alias: "no-title", reason: "title" },
+      { alias: "proxy", reason: "mode" },
+    ])
+  })
+
+  test("AC-159: пустой alias, null в mcp_url и не-объект в списке — тоже отброшенные карточки", async () => {
+    const { hub } = client(() =>
+      json({
+        version: 1,
+        servers: [
+          { alias: "", title: "Пустой alias", mode: "facade", mcp_url: "https://hub.test/mcp/a" },
+          { alias: "no-url", title: "Без адреса", mode: "facade", mcp_url: null },
+          "строка вместо карточки",
+          gitlab,
+        ],
+      }),
+    )
+    const result = await hub.catalog()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.data.servers.map((server) => server.alias)).toEqual(["gitlab"])
+    expect(result.dropped).toEqual([{ reason: "alias" }, { alias: "no-url", reason: "mcp_url" }, { reason: "server" }])
+  })
+
+  test("AC-163: неизвестное значение status карточку не отбрасывает — поле трактуется как отсутствующее", async () => {
+    const card = liveTagCard()
+    card["status"] = "sunset"
+    const { hub } = client(() => json({ version: 1, servers: [card] }))
+    const result = await hub.catalog()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.dropped).toEqual([])
+    expect(result.data.servers[0]!.alias).toBe("tag")
+    expect(result.data.servers[0]!.status).toBeUndefined()
+  })
+})
+
+describe("corp/hub — нарушенный конверт каталога (AC-160)", () => {
+  const card = {
+    alias: "gitlab",
+    title: "GitLab",
+    mode: "facade",
+    mcp_url: "https://hub.test/mcp/gitlab",
+  }
+
+  test("AC-160: нет поля version — ответ отброшен целиком", async () => {
+    const { hub } = client(() => json({ servers: [card] }))
+    expect(await hub.catalog()).toEqual({ ok: false, code: "hub_invalid_response" })
+  })
+
+  test("AC-160: servers не массив — ответ отброшен целиком", async () => {
+    const { hub } = client(() => json({ version: 1, servers: { gitlab: card } }))
+    expect(await hub.catalog()).toEqual({ ok: false, code: "hub_invalid_response" })
+
+    const missing = client(() => json({ version: 1 }))
+    expect(await missing.hub.catalog()).toEqual({ ok: false, code: "hub_invalid_response" })
+  })
+
+  test("AC-160: version недопустимого типа — ответ отброшен целиком", async () => {
+    for (const version of [null, true, { major: 1 }, [1]]) {
+      const { hub } = client(() => json({ version, servers: [card] }))
+      expect(await hub.catalog(), JSON.stringify(version)).toEqual({ ok: false, code: "hub_invalid_response" })
+    }
+  })
+
+  test("AC-160: тело-массив вместо конверта — ответ отброшен целиком", async () => {
+    const { hub } = client(() => json([card]))
+    expect(await hub.catalog()).toEqual({ ok: false, code: "hub_invalid_response" })
+  })
+})
+
+describe("corp/hub — поэлементный разбор GET /api/me/connections (AC-169, S-V14 п.6)", () => {
+  test("AC-169: живое тело — массив верхнего уровня — разбирается целиком", async () => {
+    const { hub } = client(() => json(liveConnectionsBody()))
+    const result = await hub.connections()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.data).toEqual([
+      {
+        alias: "tag",
+        status: "connected",
+        preset: "readonly",
+        groups: [],
+        created_at: "2026-08-20T22:00:39.068829+00:00",
+        updated_at: "2026-08-21T06:39:54.386790+00:00",
+      },
+    ])
+    expect(result.dropped).toEqual([])
+  })
+
+  test("AC-169: неразобранный элемент отбрасывается поодиночке, остальные применяются", async () => {
+    const { hub } = client(() =>
+      json([
+        { status: "connected", preset: "readonly" },
+        { alias: "tag", status: "connected", preset: "readonly" },
+        { alias: "gitlab", status: "sunset" },
+        { alias: "jira", status: "needs_reauth", unknown_field: { any: "shape" } },
+      ]),
+    )
+    const result = await hub.connections()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("ожидался успех")
+    expect(result.data.map((entry) => entry.alias)).toEqual(["tag", "jira"])
+    expect(result.dropped).toEqual([{ reason: "alias" }, { alias: "gitlab", reason: "status" }])
+  })
+
+  test("AC-169: тело, не являющееся массивом, даёт hub_invalid_response", async () => {
+    const envelope = client(() => json({ connections: [{ alias: "tag", status: "connected" }] }))
+    expect(await envelope.hub.connections()).toEqual({ ok: false, code: "hub_invalid_response" })
+
+    const text = client(() => json("tag"))
+    expect(await text.hub.connections()).toEqual({ ok: false, code: "hub_invalid_response" })
   })
 })
 

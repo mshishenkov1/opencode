@@ -1086,6 +1086,12 @@ export const dict = {
   "corp.connectors.reauth": "Re-authorization required",
   "corp.connectors.authorizing": "Authorizing in the browser…",
   "corp.connectors.always": "Always available",
+  "corp.connectors.permissionsUnavailable":
+    "This app version does not support the connector permission model — manage permissions in the Hub",
+  "corp.connectors.toolsPreview": "Tools in the {{preset}} preset",
+  "corp.connectors.partial": "Some catalog cards were not parsed and are hidden: {{dropped}}",
+
+  "corp.empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
 
   "corp.status.connected": "connected",
   "corp.status.needs_auth": "needs auth",

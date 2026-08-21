@@ -39,6 +39,7 @@ const ru = {
   "connectors.deprecated": "устаревший",
   "connectors.stale": "данные устарели, действия недоступны",
   "connectors.presetTitle": "Права коннектора",
+  "connectors.permissionsUnavailable": "Модель прав не поддерживается этой версией приложения — правами можно управлять в Hub",
   "connectors.reauth": "Требуется повторная авторизация",
 
   "status.connected": "✓ Подключён",
@@ -99,6 +100,7 @@ const en: Record<Key, string> = {
   "connectors.deprecated": "deprecated",
   "connectors.stale": "data is stale, actions unavailable",
   "connectors.presetTitle": "Connector permissions",
+  "connectors.permissionsUnavailable": "This app version does not support the connector permission model — manage permissions in the Hub",
   "connectors.reauth": "Re-authorization required",
 
   "status.connected": "✓ Connected",

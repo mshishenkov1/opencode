@@ -27,9 +27,15 @@ const STATUS_KEY = {
   unavailable: "corp.status.unavailable",
 } as const
 
-/** Пресеты карточки для экрана прав (S-V9). */
+/**
+ * Пресеты карточки для экрана прав (S-V9): по одной строке таблицы на вид модели прав.
+ *
+ * `header_groups` — `readonly`/`readwrite` с локализованными названиями; `tool_filter` и `consent` —
+ * имена ключей `presets` в порядке ответа Hub; неизвестный вид, отсутствующая или неразобранная
+ * модель (S-V14) — пустой список: выбор недоступен, причина показывается отдельно.
+ */
 export function presetsFor(model: CorpPermissionModel | undefined): { value: string; labelKey?: string }[] {
-  if (!model) return [{ value: "readonly", labelKey: "corp.preset.readonly" }]
+  if (!model) return []
   if (model.kind === "header_groups")
     return [
       { value: "readonly", labelKey: "corp.preset.readonly" },
@@ -38,12 +44,25 @@ export function presetsFor(model: CorpPermissionModel | undefined): { value: str
   return Object.keys(model.presets).map((value) => ({ value }))
 }
 
+/**
+ * Состав среза инструментов пресета (S-V9, вид `tool_filter`): имена и шаблоны как есть.
+ * Для остальных видов список пуст — состав прав на экране не показывается.
+ */
+export function toolsFor(model: CorpPermissionModel | undefined, preset: string | undefined): string[] {
+  if (!model || model.kind !== "tool_filter" || preset === undefined) return []
+  return model.presets[preset]?.tools ?? []
+}
+
 const DialogConnectorPermissions: Component<{ card: CorpCatalogCard }> = (props) => {
   const language = useLanguage()
   const dialog = useDialog()
   const action = useConnectorAction()
 
   const options = createMemo(() => presetsFor(props.card.permission_model))
+  // Пресеты не предлагаются — вид модели прав клиенту неизвестен либо модель не разобрана (S-V9).
+  const unavailable = createMemo(() => options().length === 0)
+  const selected = createMemo(() => props.card.preset ?? options()[0]?.value)
+  const tools = createMemo(() => toolsFor(props.card.permission_model, selected()))
   const groups = createMemo(() => {
     const model = props.card.permission_model
     return model?.kind === "header_groups" ? model.groups : []
@@ -56,6 +75,17 @@ const DialogConnectorPermissions: Component<{ card: CorpCatalogCard }> = (props)
   return (
     <Dialog title={language.t("corp.connectors.presetTitle", { title: props.card.title })}>
       <div class="px-3 pb-3 flex flex-col gap-4">
+        <Show when={unavailable()}>
+          <div class="text-11-regular text-text-weaker">{language.t("corp.connectors.permissionsUnavailable")}</div>
+        </Show>
+        <Show when={tools().length > 0}>
+          <div class="flex flex-col gap-1">
+            <div class="text-11-regular text-text-weaker">
+              {language.t("corp.connectors.toolsPreview", { preset: selected() ?? "" })}
+            </div>
+            <div class="text-14-regular text-text-base break-all">{tools().join(", ")}</div>
+          </div>
+        </Show>
         <Show when={groups().length > 0}>
           <div class="flex flex-col gap-1">
             {groups().map((group) => (
@@ -134,11 +164,26 @@ export const DialogConnectors: Component = () => {
     return language.t("corp.connectors.hubDownCached", { at: new Date(Number(data.cached_at)).toLocaleString() })
   })
 
+  /** Число карточек, отброшенных разбором каталога (S-V14 п.5). */
+  const dropped = createMemo(() => catalog.data?.dropped?.length ?? 0)
+
+  /**
+   * Предупреждение о неполном каталоге (S-V12): разобрана хотя бы одна карточка, но не все —
+   * витрина показывает принятые и говорит, сколько отброшено.
+   */
+  const partial = createMemo(() => {
+    if (dropped() === 0 || cards().length === 0) return undefined
+    return language.t("corp.connectors.partial", { dropped: dropped() })
+  })
+
   const emptyMessage = createMemo(() => {
     const data = catalog.data
     if (!data) return language.t("corp.connectors.hubDown")
     if (data.hub_error === "unauthorized") return language.t("corp.connectors.needsLogin")
     if (data.hub_error) return `${language.t("corp.connectors.hubDown")}: ${language.t(corpErrorKey(data.hub_error))}`
+    // Четвёртое состояние S-V12: Hub ответил, карточки были, но все отброшены разбором. Текст
+    // обязан отличаться от «Каталог пуст» — это сообщение о дефекте клиента, а не правда о каталоге.
+    if (dropped() > 0) return language.t("corp.empty.unparsed", { dropped: dropped() })
     return language.t("corp.connectors.empty")
   })
 
@@ -169,6 +214,7 @@ export const DialogConnectors: Component = () => {
       }
     >
       <Show when={banner()}>{(value) => <div class="px-3 pb-2 text-11-regular text-text-weaker">{value()}</div>}</Show>
+      <Show when={partial()}>{(value) => <div class="px-3 pb-2 text-11-regular text-text-weaker">{value()}</div>}</Show>
       <List
         class="px-3"
         search={{ placeholder: language.t("corp.connectors.search"), autofocus: true }}
@@ -220,10 +266,17 @@ export const DialogConnectors: Component = () => {
                 </Button>
               </Show>
               <Show when={card.actions.includes("permissions")}>
+                {/* S-V9, строка 4: вид модели прав неизвестен или не разобран — действие видно,
+                    но заблокировано, а рядом показана причина. Остальные действия работают. */}
+                <Show when={!card.permission_model}>
+                  <span class="text-11-regular text-text-weaker truncate max-w-64">
+                    {language.t("corp.connectors.permissionsUnavailable")}
+                  </span>
+                </Show>
                 <Button
                   size="small"
                   variant="ghost"
-                  disabled={action.isPending || card.blocked}
+                  disabled={action.isPending || card.blocked || !card.permission_model}
                   onClick={() => dialog.push(() => <DialogConnectorPermissions card={card} />)}
                 >
                   {language.t("corp.connectors.permissions")}

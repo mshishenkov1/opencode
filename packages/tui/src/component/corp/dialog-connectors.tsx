@@ -48,9 +48,14 @@ function Status(props: { card: CorpCatalogCard; busy: boolean }) {
   )
 }
 
-/** Пресеты карточки для экрана прав (S-V9). */
+/**
+ * Пресеты карточки для экрана прав (S-V9), по строке таблицы на вид модели прав.
+ *
+ * Пустой список — модель прав отсутствует, неизвестна или не разобрана (S-V14): выбор недоступен,
+ * вместо экрана показывается причина.
+ */
 export function presetOptions(model: CorpPermissionModel | undefined) {
-  if (!model) return [{ value: "readonly", title: t("preset.readonly") }]
+  if (!model) return []
   if (model.kind === "header_groups") {
     const groups = model.groups.map((group) => `${group.title}${group.preset ? ` (${group.preset})` : ""}`).join(", ")
     const always = model.always?.length ? ` · ${model.always.join(", ")}` : ""
@@ -59,7 +64,15 @@ export function presetOptions(model: CorpPermissionModel | undefined) {
       { value: "readwrite", title: t("preset.readwrite"), description: groups + always },
     ]
   }
-  return Object.entries(model.presets).map(([value, title]) => ({ value, title }))
+  // `tool_filter`: имена пресетов в порядке ответа Hub, состав среза — списком инструментов как есть.
+  if (model.kind === "tool_filter")
+    return Object.entries(model.presets).map(([value, preset]) => ({
+      value,
+      title: value,
+      description: preset.tools.join(", "),
+    }))
+  // `consent`: только имена пресетов — состав прав выбирается на экране согласия целевой системы.
+  return Object.keys(model.presets).map((value) => ({ value, title: value }))
 }
 
 export function DialogConnectors() {
@@ -149,6 +162,12 @@ export function DialogConnectors() {
       return
     }
     const options = presetOptions(card.permission_model)
+    if (options.length === 0) {
+      // S-V9, строка 4: вид модели прав неизвестен или не разобран — экран прав не открывается,
+      // пользователю называется причина. Остальные действия карточки работают как обычно.
+      toast.show({ variant: "warning", message: t("connectors.permissionsUnavailable") })
+      return
+    }
     const preset = await new Promise<string | null>((resolve) => {
       dialog.replace(
         () => (

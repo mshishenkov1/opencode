@@ -984,6 +984,12 @@ export const dict = {
   "corp.connectors.reauth": "Требуется повторная авторизация",
   "corp.connectors.authorizing": "Авторизация в браузере…",
   "corp.connectors.always": "Всегда доступно",
+  "corp.connectors.permissionsUnavailable":
+    "Модель прав не поддерживается этой версией приложения — правами можно управлять в Hub",
+  "corp.connectors.toolsPreview": "Инструменты пресета {{preset}}",
+  "corp.connectors.partial": "Часть карточек каталога не разобрана и не показана: {{dropped}}",
+
+  "corp.empty.unparsed": "Каталог не разобран: отброшены все карточки ({{dropped}})",
 
   "corp.status.connected": "подключён",
   "corp.status.needs_auth": "требуется авторизация",

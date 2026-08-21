@@ -136,11 +136,66 @@ describe("corp/patches.md — реестр правок upstream (AC-13, AC-108,
     for (const subject of log) expect(subject, subject).toStartWith("corp: ")
   })
 
-  test("AC-112: packages/desktop/electron-builder.config.ts не изменён", () => {
-    const changed = changedUpstreamFiles(git(["diff", "--name-status", base]))
-    expect(changed).not.toContain("packages/desktop/electron-builder.config.ts")
-    expect(changed.filter((file) => file.startsWith("packages/desktop/"))).toEqual([])
-    expect(changed).not.toContain("packages/opencode/script/sign-windows.ps1")
+  /**
+   * AC-112 (ревизия 1.6). Прежняя редакция S-B9 замораживала файл целиком, и тест требовал
+   * отсутствия правок во всём `packages/desktop/`. Ревизия 1.6 заменила заморозку ограниченным
+   * разрешением: корпоративная ветка канала `magnit` добавляется, а `dev`/`beta`/`prod`, общая часть
+   * `getBase()` и блоки подписи остаются upstream. Проверяется теперь объём правок, а не их
+   * отсутствие; значения каналов — в `packages/desktop/electron-builder.config.corp.test.ts`.
+   */
+  describe("AC-112: объём правок конфигурации упаковки Desktop", () => {
+    const file = "packages/desktop/electron-builder.config.ts"
+
+    test("AC-112: файл — правка upstream и перечислен в реестре", () => {
+      const changed = changedUpstreamFiles(git(["diff", "--name-status", base]))
+      expect(changed).toContain(file)
+      expect(listedFiles(markdown)).toContain(file)
+      const row = rows(markdown).find((entry) => entry.file === file)
+      expect(row?.rule).toMatch(/S-B9/)
+    })
+
+    test("AC-112: подпись не изменена", () => {
+      const changed = changedUpstreamFiles(git(["diff", "--name-status", base]))
+      expect(changed).not.toContain("script/sign-windows.ps1")
+      expect(fs.existsSync(path.join(ROOT, "script/sign-windows.ps1"))).toBe(true)
+    })
+
+    test("AC-112: из файла удалён только прежний разбор OPENCODE_CHANNEL", () => {
+      const diff = git(["diff", "--unified=0", base, "--", file]).split("\n")
+      const removed = diff
+        .filter((line) => line.startsWith("-") && !line.startsWith("---"))
+        .map((line) => line.slice(1).trim())
+      // Любая правка ванильной ветки, общей части getBase() или блока подписи — это удалённая
+      // строка, которой здесь быть не должно (S-B9: «иных правок в файле не вносится»).
+      expect(removed).toEqual([
+        'if (raw === "dev" || raw === "beta" || raw === "prod") return raw',
+        'return "dev"',
+      ])
+    })
+
+    test("AC-112: добавленные строки не приносят чужой адрес и не трогают подпись", () => {
+      const diff = git(["diff", "--unified=0", base, "--", file]).split("\n")
+      const added = diff
+        .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+        .map((line) => line.slice(1))
+      expect(added.length).toBeGreaterThan(0)
+      for (const line of added) {
+        // Адрес обновлений приходит только из переменной сборки (S-B11, D-24).
+        expect(line, line).not.toMatch(/https?:\/\//)
+        expect(line, line).not.toMatch(/anomalyco|provider:\s*"github"/)
+        expect(line, line).not.toMatch(/notarize|signtoolOptions|hardenedRuntime|entitlements/)
+      }
+    })
+
+    test("AC-112: строки идентичности, публикации и подписи upstream сохранены байт в байт", () => {
+      const upstream = git(["show", `${base}:${file}`]).split("\n")
+      const current = new Set(fs.readFileSync(path.join(ROOT, file), "utf8").split("\n"))
+      const guarded =
+        /notarize|dmg|signtoolOptions|signWindows|productName|appId|publish|packageName|legacyDesktopEntry|APP_IDS|"ai\.opencode\.desktop/
+      const lines = upstream.filter((line) => guarded.test(line))
+      expect(lines.length).toBeGreaterThan(10)
+      for (const line of lines) expect(current.has(line), line).toBe(true)
+    })
   })
 
   test("AC-01: базовый тег реестра берётся из corp/upstream-base и существует", () => {

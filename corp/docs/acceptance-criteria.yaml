@@ -1,5 +1,5 @@
 # Критерии приёмки I-4: корпоративный форк OpenCode
-# Спецификация: corp/docs/spec.md (ревизия 1.5)
+# Спецификация: corp/docs/spec.md (ревизия 1.6)
 # Формат: id, rule (правила спецификации), type (unit|integration|manual|ci), given/when/then.
 # Все HTTP-обращения к Hub в автотестах — только к мокам, без сети.
 #
@@ -26,6 +26,24 @@
 # user_id вместо неизвестного email). Существующие ID не менялись и не ослаблялись; AC-17 и AC-34
 # остаются в силе для случая, когда email известен. Требуемое поведение AC-127..AC-131 на момент
 # ревизии в коде отсутствует. Подробности — блок «Ревизия 1.4» в начале spec.md.
+
+# Ревизия 1.6 (2026-08-21): ИЗМЕНЕНИЕ КОНТРАКТА по живой проверке раздачи Desktop. Корпоративная сборка
+# использовала идентичность ванильного апстрима: corp/build.ts переводил канал latest в десктопный prod,
+# а prod в packages/desktop/electron-builder.config.ts — это appId ai.opencode.desktop и
+# publish github/anomalyco/opencode. Следствия: сборка не запускалась рядом с ванильным OpenCode
+# (общий appId => общий каталог данных и общая блокировка экземпляра), а её апдейтер скачал ванильный
+# OpenCode 1.18.19 с чужих релизов и был готов подменить корпоративную сборку.
+# Правило S-B9 переформулировано: заморозка electron-builder.config.ts заменена разрешением ровно на
+# корпоративный канал (часть про подпись сохранена). Новые правила S-B10 (канал magnit: appId
+# ai.opencode.desktop.magnit, productName «OpenCode Magnit», каталог данных, имена артефактов,
+# неизвестный канал — ошибка вместо молчаливого dev), S-B11 (обновления с внутреннего сервера по адресу
+# из переменной сборки CORP_DESKTOP_UPDATE_URL; переменная не задана — апдейтер выключен), S-B12
+# (сосуществование с ванильной сборкой), S-Q10 (тесты идентичности и фида); дополнено S-B3 (latest и
+# magnit дают десктопный канал magnit); новые факты F39, F40, F41; решения D-23, D-24, D-25.
+# ПЕРЕФОРМУЛИРОВАН AC-112: вместо «файл не изменён» — «изменения ограничены каналом magnit, ветки
+# dev/beta/prod совпадают с upstream по appId, productName и publish, блоки подписи не тронуты».
+# Добавлены AC-138 … AC-153. Существующие ID не удалялись и не ослаблялись.
+# Подробности — блок «Ревизия 1.6» в начале spec.md.
 
 # Ревизия 1.5 (2026-08-21): ИСПРАВЛЕНИЕ КОНТРАКТА по живой проверке корпоративной сборки.
 # Спецификация закрепляла нерабочую схему подключения к модели: корп-конфиг задавал несуществующий
@@ -954,9 +972,15 @@ criteria:
   - id: AC-112
     rule: [S-B9]
     type: unit
-    given: packages/desktop/electron-builder.config.ts
-    when: сравнён с upstream-версией
-    then: файл не изменён; подпись остаётся upstream-логикой
+    given: packages/desktop/electron-builder.config.ts ветки corp/i4-sso-connectors
+    when: сравнён с upstream-версией базового тега (corp/upstream-base)
+    then: >
+      отличия ограничены корпоративным каналом: значение magnit в разборе OPENCODE_CHANNEL и в
+      APP_IDS, ветка case "magnit" в getConfig(), ошибка на неизвестном канале и вычисление publish
+      из CORP_DESKTOP_UPDATE_URL; ветки dev, beta и prod дают те же appId, productName и publish,
+      что upstream (в частности prod — ai.opencode.desktop и owner "anomalyco"); блоки подписи
+      (mac.notarize, dmg.sign, win.signtoolOptions, script/sign-windows.ps1) не изменены;
+      файл перечислен в corp/patches.md
 
   # ---------------------------------------------------------------- S-Q*: тесты
   - id: AC-113
@@ -1240,6 +1264,171 @@ criteria:
       подтверждения действия не изменён
     negative: true
 
+  # ---------------------------------------------- ревизия 1.6: идентичность Desktop и обновления
+  - id: AC-138
+    rule: [S-B10]
+    type: unit
+    given: packages/desktop/electron-builder.config.ts, переменная OPENCODE_CHANNEL=magnit
+    when: конфигурация упаковки вычислена
+    then: >
+      appId = "ai.opencode.desktop.magnit"; productName = "OpenCode Magnit";
+      artifactName = "opencode-magnit-desktop-${os}-${arch}.${ext}";
+      rpm.packageName = "opencode-magnit";
+      extraMetadata.desktopName = "ai.opencode.desktop.magnit.desktop";
+      protocols.name = "OpenCode Magnit"; строки legacyDesktopEntryFpm в ветке нет
+
+  - id: AC-139
+    rule: [S-B10, S-B12]
+    type: manual
+    given: собранная корпоративная сборка Desktop для macOS (канал magnit)
+    when: осмотрен бандл и его Info.plist
+    then: >
+      путь бандла оканчивается на "OpenCode Magnit.app";
+      CFBundleIdentifier = ai.opencode.desktop.magnit; CFBundleName = OpenCode Magnit;
+      значения ai.opencode.desktop и "OpenCode" без суффикса в Info.plist не встречаются
+
+  - id: AC-140
+    rule: [S-B10]
+    type: unit
+    given: OPENCODE_CHANNEL=corp (значение вне dev/beta/prod/magnit)
+    when: вычислены конфигурация упаковки, конфигурация electron-vite, scripts/utils.ts resolveChannel
+      и константы главного процесса
+    then: >
+      каждое из четырёх мест завершается ошибкой, текст которой содержит полученное значение "corp"
+      и список допустимых каналов; сборка завершается ненулевым кодом, артефакт не создаётся;
+      молчаливый откат в dev не происходит ни в одном из мест
+    negative: true
+
+  - id: AC-141
+    rule: [S-B10]
+    type: unit
+    given: переменная OPENCODE_CHANNEL не задана
+    when: вычислены те же четыре места
+    then: канал равен dev, ошибки нет, локальная разработка работает как прежде
+
+  - id: AC-142
+    rule: [S-B10, S-B12]
+    type: manual
+    given: на машине установлен ванильный OpenCode с каталогом <appData>/ai.opencode.desktop
+    when: корпоративная сборка запущена впервые и закрыта
+    then: >
+      создан каталог <appData>/ai.opencode.desktop.magnit с настройками, логами и electron-store
+      корпоративной сборки; содержимое каталога ai.opencode.desktop не изменилось
+
+  - id: AC-143
+    rule: [S-B3]
+    type: unit
+    given: corp/build.ts
+    when: выполнено `bun run corp/build.ts --channel latest --desktop --skip-cli`, затем то же с
+      `--channel magnit`
+    then: >
+      в первом случае напечатано «канал сборки: latest (Desktop: magnit)», во втором —
+      «канал сборки: magnit»; сборке Desktop в обоих случаях передан OPENCODE_CHANNEL=magnit;
+      значение prod не передаётся ни в одном из случаев
+
+  - id: AC-144
+    rule: [S-B3, S-B10]
+    type: unit
+    given: corp/build.ts
+    when: выполнено `bun run corp/build.ts --channel stable`
+    then: >
+      код выхода 1, напечатано «неизвестный канал сборки: stable; допустимые: latest, magnit, dev,
+      beta, prod», ни CLI, ни Desktop не собираются
+    negative: true
+
+  - id: AC-145
+    rule: [S-B11]
+    type: integration
+    given: сборка Desktop канала magnit с CORP_DESKTOP_UPDATE_URL=https://updates.example.corp/opencode
+    when: приложение собрано и запущено
+    then: >
+      в ресурсах бандла есть app-update.yml с provider: generic и url
+      https://updates.example.corp/opencode; в логе старта строка «auto updater configured» с полями
+      channel: "magnit" и feedUrl: "https://updates.example.corp/opencode"; все запросы проверки
+      обновлений уходят только на updates.example.corp
+
+  - id: AC-146
+    rule: [S-B11]
+    type: integration
+    given: сборка Desktop канала magnit, переменная CORP_DESKTOP_UPDATE_URL не задана
+    when: приложение собрано и запущено, сеанс работы наблюдается целиком
+    then: >
+      файла app-update.yml в бандле нет; в логе ровно одна строка «auto updater disabled» с полем
+      reason: "update url not configured"; строк «Found version», «Update has already been
+      downloaded» и «Proxy server for native Squirrel.Mac» в логе нет; ни одного сетевого обращения
+      к github.com и к релизам anomalyco/opencode не выполнено
+    negative: true
+
+  - id: AC-147
+    rule: [S-B11]
+    type: manual
+    given: запущена сборка с выключенным апдейтером (CORP_DESKTOP_UPDATE_URL не задан)
+    when: пользователь выбирает пункт проверки обновлений
+    then: >
+      показан диалог с текстом «Automatic updates are disabled in this build.»; ничего не
+      скачивается, состояние приложения не меняется
+    negative: true
+
+  - id: AC-148
+    rule: [S-B11]
+    type: integration
+    given: >
+      electron-store opencode.updater содержит запись ready с version 1.18.19, оставшуюся от прежней
+      сборки, апдейтер выключен (CORP_DESKTOP_UPDATE_URL не задан)
+    when: приложение запущено и закрыто
+    then: >
+      установка не выполняется, диалог «Restart now?» не показывается, запись ready удалена,
+      после перезапуска версия приложения остаётся корпоративной (<версия upstream>-magnit.N)
+    negative: true
+
+  - id: AC-149
+    rule: [S-B11, S-B9]
+    type: ci
+    given: собранный артефакт Desktop канала magnit
+    when: выполнен поиск по содержимому бандла
+    then: >
+      ни один файл конфигурации обновлений не содержит provider: github, owner: anomalyco или
+      github.com/anomalyco; при обнаружении такой строки шаг CI падает
+    negative: true
+
+  - id: AC-150
+    rule: [S-B12]
+    type: manual
+    given: на одной машине установлены ванильный OpenCode и корпоративная сборка
+    when: запущены оба приложения подряд
+    then: >
+      оба открыты одновременно, каждое своим окном; запуск одного не переводит фокус на окно другого;
+      в списке приложений видны две записи — «OpenCode» и «OpenCode Magnit»
+
+  - id: AC-151
+    rule: [S-B12]
+    type: manual
+    given: обе сборки установлены, в корпоративной выполнен вход по корпоративному SSO
+    when: открыт ванильный OpenCode
+    then: >
+      ванильная сборка не показывает корп-режим, не знает о ключе magnit_prod, её настройки и сессии
+      не изменились; корпоративная сборка после этого продолжает работать с сохранённым ключом
+
+  - id: AC-152
+    rule: [S-Q10]
+    type: unit
+    given: тест конфигурации упаковки Desktop
+    when: тест выполнен
+    then: >
+      покрыты каналы magnit, dev, beta, prod (upstream-значения appId, productName и publish, включая
+      owner: "anomalyco" у prod), неизвестное значение (исключение) и незаданная переменная (dev),
+      а также обе ветки фида обновлений — с CORP_DESKTOP_UPDATE_URL (provider generic и ровно этот
+      адрес) и без неё (блока publish нет)
+
+  - id: AC-153
+    rule: [S-Q10, S-B8]
+    type: ci
+    given: шаг CI, собравший Desktop канала magnit
+    when: выполнена проверка артефакта
+    then: >
+      проверены CFBundleIdentifier, CFBundleName и наличие/содержимое app-update.yml; шаг падает при
+      чужом appId, чужом имени приложения или фиде, отличном от адреса из CORP_DESKTOP_UPDATE_URL
+
 # ---------------------------------------------------------------- карта покрытия правил
 coverage:
   S-C1: [AC-01, AC-02]
@@ -1308,13 +1497,16 @@ coverage:
   S-I5: [AC-98, AC-99]
   S-B1: [AC-100]
   S-B2: [AC-101, AC-102]
-  S-B3: [AC-103]
+  S-B3: [AC-103, AC-143, AC-144]
   S-B4: [AC-104]
   S-B5: [AC-105, AC-106, AC-107]
   S-B6: [AC-13, AC-108]
   S-B7: [AC-109, AC-110]
-  S-B8: [AC-111]
-  S-B9: [AC-112]
+  S-B8: [AC-111, AC-153]
+  S-B9: [AC-112, AC-149]
+  S-B10: [AC-138, AC-139, AC-140, AC-141, AC-142, AC-144]
+  S-B11: [AC-145, AC-146, AC-147, AC-148, AC-149]
+  S-B12: [AC-139, AC-142, AC-150, AC-151]
   S-Q1: [AC-113]
   S-Q2: [AC-114]
   S-Q3: [AC-115]
@@ -1324,6 +1516,7 @@ coverage:
   S-Q7: [AC-119]
   S-Q8: [AC-120]
   S-Q9: [AC-121, AC-124, AC-125, AC-126]
+  S-Q10: [AC-152, AC-153]
 
 negative_scenarios:
   hub_unavailable: [AC-20, AC-35, AC-41, AC-43, AC-44, AC-45, AC-63, AC-79, AC-122]
@@ -1336,7 +1529,9 @@ negative_scenarios:
   login_session_errors: [AC-21, AC-22, AC-26, AC-30, AC-32]
   vanilla_mode: [AC-04, AC-09, AC-10, AC-102, AC-124, AC-125, AC-126]
   first_run_login_prompt: [AC-27, AC-28, AC-126]
-  build_and_ci_failures: [AC-103, AC-106, AC-107, AC-110, AC-119]
+  build_and_ci_failures: [AC-103, AC-106, AC-107, AC-110, AC-119, AC-140, AC-144]
   catalog_edge_cases: [AC-50, AC-51, AC-56, AC-70]
   user_config_conflicts: [AC-136, AC-137]
   model_base_url_invalid: [AC-132]
+  desktop_channel_unknown: [AC-140, AC-144]
+  desktop_updater_disabled: [AC-146, AC-147, AC-148, AC-149]

@@ -148,6 +148,7 @@ jobs:
           CORP_HUB_URL: ${{ vars.CORP_HUB_URL }}
           CORP_BUILD: ${{ vars.CORP_BUILD }}
           OPENCODE_CHANNEL: magnit
+          CORP_DESKTOP_UPDATE_URL: ${{ vars.CORP_DESKTOP_UPDATE_URL }}
           # Подписи пока нет (согласование ИБ не пройдено): без этого electron-builder на macOS
           # ищет сертификат в связке ключей раннера и падает.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -168,6 +169,19 @@ jobs:
 
       # directories.output в electron-builder.config.ts — dist; каталога release не существует,
       # и с прежним путём задание выкладывало пустоту (if-no-files-found: warn это не показывал).
+      # Идентичность корпоративной сборки и источник обновлений (AC-139, AC-149, AC-153):
+      # свой appId и имя, фид только из переменной сборки, чужого фида в конфигурации нет.
+      - name: Идентичность и обновления Desktop
+        if: matrix.name == 'mac-arm64'
+        run: |
+          if [ -n "${CORP_DESKTOP_UPDATE_URL:-}" ]; then
+            bun run corp/verify-desktop-bundle.ts packages/desktop/dist --update-url "$CORP_DESKTOP_UPDATE_URL"
+          else
+            bun run corp/verify-desktop-bundle.ts packages/desktop/dist
+          fi
+        env:
+          CORP_DESKTOP_UPDATE_URL: ${{ vars.CORP_DESKTOP_UPDATE_URL }}
+
       - name: Загрузка артефактов
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

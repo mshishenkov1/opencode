@@ -26,17 +26,29 @@ async function signWindows(configuration: { path: string }) {
   )
 }
 
+// corp: канал `magnit` — корпоративная раздача (S-B9, S-B10). Неизвестное значение — ошибка сборки,
+// а не молчаливый откат в `dev`: именно он дал раздачу под именем «OpenCode Dev» (D-25).
+// Незаданная переменная по-прежнему означает `dev` — это режим локальной разработки.
+const CHANNELS = ["dev", "beta", "prod", "magnit"] as const
+
 const channel = (() => {
   const raw = process.env.OPENCODE_CHANNEL
-  if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  return "dev"
+  if (raw === undefined || raw === "") return "dev"
+  if (raw === "dev" || raw === "beta" || raw === "prod" || raw === "magnit") return raw
+  throw new Error(`неизвестный канал сборки: ${raw}; допустимые: ${CHANNELS.join(", ")}`)
 })()
 
 const APP_IDS = {
   dev: "ai.opencode.desktop.dev",
   beta: "ai.opencode.desktop.beta",
   prod: "ai.opencode.desktop",
+  magnit: "ai.opencode.desktop.magnit",
 } as const
+
+// corp: адрес внутреннего сервера обновлений (S-B11, D-24). Умолчания нет и в репозитории адрес не
+// хранится: он приходит из окружения сборки, как CORP_HUB_URL. Без переменной блока `publish` в
+// корпоративной ветке нет вовсе, `app-update.yml` в бандл не попадает и апдейтер выключен.
+const corpUpdateUrl = process.env.CORP_DESKTOP_UPDATE_URL?.trim().replace(/\/+$/, "") || undefined
 
 const getBase = (appId: string): Configuration => ({
   artifactName: "opencode-desktop-${os}-${arch}.${ext}",
@@ -138,6 +150,20 @@ function getConfig() {
         publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
         deb: { fpm: [legacyDesktopEntryFpm] },
         rpm: { packageName: "opencode", fpm: [legacyDesktopEntryFpm] },
+      }
+    }
+    // corp: корпоративная раздача (S-B10, S-B11). Собственные appId и имя дают отдельный каталог
+    // пользовательских данных и позволяют держать сборку рядом с ванильным OpenCode (S-B12).
+    // Строка совместимости legacyDesktopEntryFpm — наследие ванильного `prod` — не переносится.
+    case "magnit": {
+      return {
+        ...base,
+        appId,
+        artifactName: "opencode-magnit-desktop-${os}-${arch}.${ext}",
+        productName: "OpenCode Magnit",
+        protocols: { name: "OpenCode Magnit", schemes: ["opencode"] },
+        ...(corpUpdateUrl ? { publish: { provider: "generic", url: corpUpdateUrl, channel: "magnit" } } : {}),
+        rpm: { packageName: "opencode-magnit" },
       }
     }
   }

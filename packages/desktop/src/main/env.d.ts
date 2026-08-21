@@ -1,5 +1,7 @@
 interface ImportMetaEnv {
   readonly OPENCODE_CHANNEL: string
+  // corp: адрес внутреннего сервера обновлений Desktop (S-B11); пустая строка — адрес не задан.
+  readonly OPENCODE_CORP_UPDATE_URL: string
 }
 
 interface ImportMeta {

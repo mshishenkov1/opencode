@@ -11,8 +11,10 @@
  * а в Desktop — через `extraMetadata.version` electron-builder.
  *
  * Канал сборки (`--channel`, по умолчанию `latest`) уходит в `OPENCODE_CHANNEL` и задаёт имя и
- * идентификатор Desktop-приложения, набор иконок и режим веб-UI. `latest` — канал раздачи:
- * приложение называется «OpenCode», а не «OpenCode Dev» (S-B3).
+ * идентификатор Desktop-приложения, набор иконок и режим веб-UI. `latest` — канал раздачи; в
+ * терминах Desktop ему соответствует корпоративный канал `magnit`: приложение называется
+ * «OpenCode Magnit» и имеет собственный `appId` (S-B3, S-B10). Адрес сервера обновлений Desktop —
+ * `CORP_DESKTOP_UPDATE_URL`; без него автообновление выключено (S-B11).
  *
  * Корпоративные build-константы (S-C2) подставляют `packages/opencode/script/build.ts` (CLI) и
  * `packages/opencode/script/build-node.ts` (сервер, встроенный в Desktop) из env `CORP_HUB_URL`
@@ -98,15 +100,35 @@ const hubUrl = process.env["CORP_HUB_URL"]?.trim().replace(/\/+$/, "")
  */
 const channel = option("channel")?.trim() || process.env["OPENCODE_CHANNEL"]?.trim() || "latest"
 
+/** Допустимые каналы сборки (S-B3, S-B10). */
+const CHANNELS = ["latest", "magnit", "dev", "beta", "prod"] as const
+
+// Неизвестный канал — громкая ошибка, а не молчаливый откат в `dev` (S-B10, D-25, AC-144):
+// именно молчаливый откат дал «OpenCode Dev» в корпоративной раздаче (BUG-I4-003).
+if (!CHANNELS.includes(channel as (typeof CHANNELS)[number])) {
+  console.error(`неизвестный канал сборки: ${channel}; допустимые: ${CHANNELS.join(", ")}`)
+  process.exit(1)
+}
+
 /**
- * Тот же канал в терминах Desktop (S-B3).
+ * Тот же канал в терминах Desktop (S-B3, ревизия 1.6).
  *
- * `electron-builder.config.ts` и `scripts/utils.ts` знают только `dev` / `beta` / `prod` и на любом
- * другом значении молча сваливаются в `dev` — отсюда «OpenCode Dev» в раздаче (BUG-I4-003).
- * Канал раздачи у Desktop называется `prod`, поэтому `latest` переводится здесь; конфиг
- * electron-builder при этом не меняется (S-B9, AC-112).
+ * Канал корпоративной раздачи Desktop — `magnit`: собственный `appId`
+ * `ai.opencode.desktop.magnit`, имя «OpenCode Magnit» и собственный каталог пользовательских данных
+ * (S-B10). Прежний перевод `latest → prod` отдавал корпоративной сборке идентичность ванильного
+ * апстрима: общий каталог данных и апдейтер, тянущий релизы `anomalyco/opencode` (ревизия 1.6).
  */
-const desktopChannel = channel === "latest" ? "prod" : channel
+const desktopChannel = channel === "latest" || channel === "magnit" ? "magnit" : channel
+
+/**
+ * Адрес внутреннего сервера обновлений Desktop (S-B11, D-24).
+ *
+ * Нормализуется как адрес Hub — хвостовой `/` ломает сравнение адресов. Умолчания нет: без
+ * переменной блок `publish` в ветке `magnit` не появляется, `app-update.yml` в бандл не попадает и
+ * автообновление выключено целиком — «нет адреса» означает «нет автообновления», а не «спросить у
+ * апстрима».
+ */
+const desktopUpdateUrl = process.env["CORP_DESKTOP_UPDATE_URL"]?.trim().replace(/\/+$/, "")
 
 console.log(`версия сборки: ${version}`)
 console.log(`канал сборки: ${channel}${desktopChannel === channel ? "" : ` (Desktop: ${desktopChannel})`}`)
@@ -166,15 +188,23 @@ if (flag("desktop")) {
     console.error("сборка Desktop для win-x64 требует Windows: запустите её на Windows-стенде или в CI")
     process.exit(1)
   }
-  const desktopEnv = { ...env, OPENCODE_CHANNEL: desktopChannel }
+  // CORP_DESKTOP_UPDATE_URL читают `electron-builder.config.ts` (блок `publish` канала `magnit`) и
+  // `electron.vite.config.ts` (build-константа `OPENCODE_CORP_UPDATE_URL` главного процесса) — S-B11.
+  const desktopEnv = {
+    ...env,
+    OPENCODE_CHANNEL: desktopChannel,
+    ...(desktopUpdateUrl ? { CORP_DESKTOP_UPDATE_URL: desktopUpdateUrl } : {}),
+  }
+  if (desktopUpdateUrl) console.log(`адрес обновлений Desktop: ${desktopUpdateUrl}`)
+  else console.warn("CORP_DESKTOP_UPDATE_URL не задан — автообновление Desktop выключено (S-B11)")
   /**
    * Аргументы electron-builder (S-B1, S-B4).
    *
    * `extraMetadata.version` — версия S-B1: сам `packages/desktop/package.json` не правится, а
    * upstream-скрипт `scripts/prepare.ts`, который это делает, в цепочке S-B3 не участвует.
-   * `--publish never` — публикация только по `--publish` этого скрипта (S-B4); заодно в
-   * приложение не кладётся `app-update.yml`, то есть корп-сборка не станет обновляться из
-   * публичных релизов upstream.
+   * `--publish never` — публикация только по `--publish` этого скрипта (S-B4). Источник обновлений
+   * задаёт не он, а блок `publish` канала `magnit`: без `CORP_DESKTOP_UPDATE_URL` блока нет, и
+   * `app-update.yml` в бандл не попадает вовсе (S-B11).
    */
   const packageArgs = ["--publish", "never", `-c.extraMetadata.version=${version}`]
 

@@ -1,11 +1,16 @@
 import { $ } from "bun"
 
-export type Channel = "dev" | "beta" | "prod"
+// corp: канал `magnit` — корпоративная раздача (S-B10). Неизвестное значение — ошибка сборки, а не
+// молчаливый откат в `dev` (D-25); незаданная переменная по-прежнему означает `dev`.
+export const CHANNELS = ["dev", "beta", "prod", "magnit"] as const
+
+export type Channel = (typeof CHANNELS)[number]
 
 export function resolveChannel(): Channel {
   const raw = Bun.env.OPENCODE_CHANNEL
-  if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  return "dev"
+  if (raw === undefined || raw === "") return "dev"
+  if (raw === "dev" || raw === "beta" || raw === "prod" || raw === "magnit") return raw
+  throw new Error(`неизвестный канал сборки: ${raw}; допустимые: ${CHANNELS.join(", ")}`)
 }
 
 export const SIDECAR_BINARIES: Array<{ rustTarget: string; ocBinary: string; assetExt: string }> = [

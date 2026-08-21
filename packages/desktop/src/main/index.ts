@@ -39,15 +39,20 @@ import { registerWslIpcHandlers } from "./wsl/ipc"
 import { spawnWslSidecar } from "./wsl/sidecar"
 import { migrate } from "./migrate"
 
+// corp: канал `magnit` — корпоративная раздача (S-B10). Собственный appId означает собственный
+// каталог пользовательских данных (userData = <appData>/<appId>), собственную блокировку
+// единственного экземпляра и совместную работу с установленным ванильным OpenCode (S-B12).
 const APP_NAMES: Record<string, string> = {
   dev: "OpenCode Dev",
   beta: "OpenCode Beta",
   prod: "OpenCode",
+  magnit: "OpenCode Magnit",
 }
 const APP_IDS: Record<string, string> = {
   dev: "ai.opencode.desktop.dev",
   beta: "ai.opencode.desktop.beta",
   prod: "ai.opencode.desktop",
+  magnit: "ai.opencode.desktop.magnit",
 }
 const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"

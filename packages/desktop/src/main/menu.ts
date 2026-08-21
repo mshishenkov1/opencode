@@ -7,7 +7,6 @@ import {
   type DesktopMenuRole,
 } from "@opencode-ai/app/desktop-menu"
 
-import { UPDATER_ENABLED } from "./constants"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 
 type Deps = {
@@ -39,7 +38,10 @@ function nativeItem(entry: DesktopMenuEntry, deps: Deps): MenuItemConstructorOpt
   const item: MenuItemConstructorOptions = {
     label: entry.label,
     accelerator: entry.accelerator?.macos,
-    enabled: entry.enabled === "updater" ? UPDATER_ENABLED : undefined,
+    // corp: пункт проверки обновлений остаётся доступным и при выключенном апдейтере — вместо
+    // серого пункта пользователь получает диалог «Automatic updates are disabled in this build.»
+    // (S-B11, AC-147). Проверка при этом не выполняется: контроллер выключен.
+    enabled: entry.enabled === "updater" ? true : undefined,
   }
 
   if (entry.command) {

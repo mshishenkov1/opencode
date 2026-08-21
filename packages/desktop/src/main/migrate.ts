@@ -22,10 +22,15 @@ function tauriDir(id: string) {
 }
 
 // The Tauri app identifier changes between dev/beta/prod builds.
+// corp: у канала `magnit` предшественника на Tauri не было — идентификатор задан собственный, чтобы
+// каталога не нашлось и миграция стала пустой операцией (S-B10, S-B12). Без строки индекс по
+// `CHANNEL` давал бы `undefined`, и `join()` ронял бы приложение на старте; брать здесь ванильный
+// `ai.opencode.desktop` нельзя — это затянуло бы данные ванильной сборки в корпоративную.
 const TAURI_APP_IDS: Record<string, string> = {
   dev: "ai.opencode.desktop.dev",
   beta: "ai.opencode.desktop.beta",
   prod: "ai.opencode.desktop",
+  magnit: "ai.opencode.desktop.magnit",
 }
 function tauriAppId() {
   return app.isPackaged ? TAURI_APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"

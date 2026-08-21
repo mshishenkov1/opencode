@@ -5,12 +5,22 @@ import * as fs from "node:fs/promises"
 
 const OPENCODE_SERVER_DIST = "../opencode/dist/node"
 
+// corp: канал `magnit` — корпоративная раздача; `latest` (канал раздачи CLI) переводится в него,
+// прежде переводился в `prod` — идентичность ванильного апстрима (S-B3, S-B10).
+// Неизвестное значение — ошибка, а не молчаливый откат в `dev` (D-25); незаданное — `dev`.
+const CHANNELS = ["dev", "beta", "prod", "magnit", "latest"] as const
+
 const channel = (() => {
   const raw = process.env.OPENCODE_CHANNEL
+  if (raw === undefined || raw === "") return "dev"
+  if (raw === "latest" || raw === "magnit") return "magnit"
   if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  if (process.env.OPENCODE_CHANNEL === "latest") return "prod"
-  return "dev"
+  throw new Error(`неизвестный канал сборки: ${raw}; допустимые: ${CHANNELS.join(", ")}`)
 })()
+
+// corp: адрес сервера обновлений в главный процесс (S-B11, S-C2) — по образцу OPENCODE_CORP_HUB_URL.
+// Пустая строка означает «адрес не задан»: апдейтер выключается целиком (UPDATER_ENABLED).
+const corpUpdateUrl = process.env.CORP_DESKTOP_UPDATE_URL?.trim().replace(/\/+$/, "") ?? ""
 
 const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
 
@@ -35,6 +45,7 @@ export default defineConfig({
   main: {
     define: {
       "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.OPENCODE_CORP_UPDATE_URL": JSON.stringify(corpUpdateUrl),
     },
     build: {
       rollupOptions: {

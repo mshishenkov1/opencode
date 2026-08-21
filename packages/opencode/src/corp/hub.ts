@@ -9,13 +9,24 @@ import * as CorpSchema from "./schema"
  * `X-Request-ID` (uuid4) и таймаут 5 с на запрос. Ответы валидируются схемой; несоответствие — ошибка
  * `hub_invalid_response`, ответ отбрасывается целиком (частично карточки не подменяются).
  *
+ * Ревизия 1.7 (S-V14): «целиком» относится к **конверту**. Списочные ответы `/api/catalog` и
+ * `/api/me/connections` разбираются поэлементно — неразобранный элемент выбрасывается и попадает в
+ * `dropped`, остальные принимаются, `hub_invalid_response` остаётся только за нарушением конверта.
+ *
  * Модуль намеренно написан на промисах и не зависит от Effect: он вызывается и из корп-роутов, и из CLI,
  * и покрывается модульными тестами с моком `fetch` без поднятия слоёв.
  */
 
 export const REQUEST_TIMEOUT_MS = 5000
 
-export type Result<T> = { ok: true; data: T } | ({ ok: false } & CorpErrors.HubFailure)
+export type Result<T> =
+  | {
+      ok: true
+      data: T
+      /** Элементы списочного ответа, отброшенные разбором (S-V14 п.5); только для `catalog`/`connections`. */
+      dropped?: CorpSchema.Dropped[]
+    }
+  | ({ ok: false } & CorpErrors.HubFailure)
 
 export interface Options {
   hubUrl: string
@@ -149,18 +160,35 @@ export function make(options: Options) {
       return call(CorpSchema.Me, { method: "GET", path: "/api/me" })
     },
 
-    /** §3.2 `GET {hub}/api/catalog` */
+    /**
+     * §3.2 `GET {hub}/api/catalog` — разбор поэлементный (S-V14).
+     *
+     * `hub_invalid_response` возвращается только при нарушении конверта; карточка, ядро которой не
+     * разобрано, отбрасывается поодиночке и попадает в `dropped`, остальные принимаются.
+     */
     async catalog(): Promise<Result<CorpSchema.Catalog>> {
-      return call(CorpSchema.Catalog, { method: "GET", path: "/api/catalog" })
+      const result = await raw({ method: "GET", path: "/api/catalog" })
+      if (!result.ok) return result
+      const parsed = CorpSchema.parseCatalog(result.data)
+      if (!parsed) return fail("hub_invalid_response")
+      return { ok: true, data: { version: parsed.version, servers: parsed.servers }, dropped: parsed.dropped }
     },
 
-    /** §3.2 `GET {hub}/api/me/connections` */
+    /** §3.2 `GET {hub}/api/me/connections` — поэлементно, как каталог (S-V14 п.6). */
     async connections(): Promise<Result<CorpSchema.MyConnection[]>> {
-      return call(CorpSchema.MyConnections, { method: "GET", path: "/api/me/connections" })
+      const result = await raw({ method: "GET", path: "/api/me/connections" })
+      if (!result.ok) return result
+      const parsed = CorpSchema.parseMyConnections(result.data)
+      if (!parsed) return fail("hub_invalid_response")
+      return { ok: true, data: parsed.items, dropped: parsed.dropped }
     },
 
     /** §3.2 `PUT {hub}/api/me/connections/{alias}/permissions` */
-    async setPermissions(alias: string, preset: string, groups?: string[]): Promise<Result<CorpSchema.PermissionsUpdate>> {
+    async setPermissions(
+      alias: string,
+      preset: string,
+      groups?: string[],
+    ): Promise<Result<CorpSchema.PermissionsUpdate>> {
       return call(CorpSchema.PermissionsUpdate, {
         method: "PUT",
         path: `/api/me/connections/${encodeURIComponent(alias)}/permissions`,

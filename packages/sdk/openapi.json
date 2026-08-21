@@ -22109,18 +22109,45 @@
         "required": ["kind", "groups"],
         "additionalProperties": false
       },
-      "CorpPermissionPresets": {
+      "CorpPermissionToolFilterPreset": {
+        "type": "object",
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["tools"],
+        "additionalProperties": false
+      },
+      "CorpPermissionToolFilter": {
         "type": "object",
         "properties": {
           "kind": {
             "type": "string",
-            "enum": ["consent", "tool_filter"]
+            "enum": ["tool_filter"]
           },
           "presets": {
             "type": "object",
             "additionalProperties": {
-              "type": "string"
+              "$ref": "#/components/schemas/CorpPermissionToolFilterPreset"
             }
+          }
+        },
+        "required": ["kind", "presets"],
+        "additionalProperties": false
+      },
+      "CorpPermissionConsent": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["consent"]
+          },
+          "presets": {
+            "type": "object"
           }
         },
         "required": ["kind", "presets"],
@@ -22132,7 +22159,10 @@
             "$ref": "#/components/schemas/CorpPermissionHeaderGroups"
           },
           {
-            "$ref": "#/components/schemas/CorpPermissionPresets"
+            "$ref": "#/components/schemas/CorpPermissionToolFilter"
+          },
+          {
+            "$ref": "#/components/schemas/CorpPermissionConsent"
           }
         ]
       },
@@ -22208,6 +22238,19 @@
         "required": ["alias", "title", "status", "actions", "deprecated", "blocked", "configured"],
         "additionalProperties": false
       },
+      "CorpDropped": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": ["reason"],
+        "additionalProperties": false
+      },
       "CorpCatalogView": {
         "type": "object",
         "properties": {
@@ -22267,6 +22310,12 @@
               "not_found",
               "invalid_request"
             ]
+          },
+          "dropped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorpDropped"
+            }
           }
         },
         "required": ["version", "source", "stale", "servers"],

@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Option, Schema } from "effect"
 import { Code } from "./errors"
 
 /**
@@ -86,15 +86,36 @@ const PermissionHeaderGroups = Schema.Struct({
   always: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
 }).annotate({ identifier: "CorpPermissionHeaderGroups" })
 
-const PermissionPresets = Schema.Struct({
-  kind: Schema.Literals(["consent", "tool_filter"]),
-  presets: Schema.Record(Schema.String, Schema.String),
-}).annotate({ identifier: "CorpPermissionPresets" })
+/**
+ * Пресет `tool_filter` (§3.2, R-P8 Hub): значение — **объект** `{tools: […]}`, а не строка.
+ * Элементы `tools` — имена инструментов и шаблоны `fnmatch` (`whoami`, `get_*`, `*`).
+ */
+const PermissionToolFilterPreset = Schema.Struct({
+  tools: Schema.mutable(Schema.Array(Schema.String)),
+}).annotate({ identifier: "CorpPermissionToolFilterPreset" })
 
-export const PermissionModel = Schema.Union([PermissionHeaderGroups, PermissionPresets]).annotate({
-  identifier: "CorpPermissionModel",
-  discriminator: "kind",
-})
+const PermissionToolFilter = Schema.Struct({
+  kind: Schema.Literal("tool_filter"),
+  presets: Schema.Record(Schema.String, PermissionToolFilterPreset),
+}).annotate({ identifier: "CorpPermissionToolFilter" })
+
+/**
+ * Модель `consent` (§3.2): состав прав выбирается на экране согласия целевой системы, клиент
+ * показывает только имена пресетов. Значение пресета клиентом не читается, поэтому его форма не
+ * ограничивается: сузить её значило бы снова отказываться от карточки из-за поля, которое не нужно
+ * ни для показа, ни для подключения (S-V14, D-26).
+ */
+const PermissionConsent = Schema.Struct({
+  kind: Schema.Literal("consent"),
+  presets: Schema.Record(Schema.String, Schema.Unknown),
+}).annotate({ identifier: "CorpPermissionConsent" })
+
+export const PermissionModel = Schema.Union([PermissionHeaderGroups, PermissionToolFilter, PermissionConsent]).annotate(
+  {
+    identifier: "CorpPermissionModel",
+    discriminator: "kind",
+  },
+)
 export type PermissionModel = Schema.Schema.Type<typeof PermissionModel>
 
 export const Connection = Schema.Struct({
@@ -106,6 +127,17 @@ export const Connection = Schema.Struct({
 }).annotate({ identifier: "CorpConnection" })
 export type Connection = Schema.Schema.Type<typeof Connection>
 
+/**
+ * Карточка каталога после разбора по S-V14.
+ *
+ * Обязательно только **ядро** (`alias`, `title`, `mode`, `mcp_url`) — поля, без которых карточку
+ * нельзя ни показать, ни подключить. Всё остальное необязательно: неразобранное поле трактуется как
+ * отсутствующее, а зависящая от него часть интерфейса становится недоступной.
+ *
+ * `permission_model` хранится **дословно, как пришло от Hub** (S-V3): вид, которого эта версия
+ * клиента не понимает, обязан дожить до следующей версии неискажённым. Разобранная форма модели
+ * вычисляется отдельно — `parsePermissionModel`.
+ */
 export const CatalogServer = Schema.Struct({
   alias: Schema.String,
   title: Schema.String,
@@ -113,10 +145,10 @@ export const CatalogServer = Schema.Struct({
   owner: Schema.optional(Schema.String),
   contact: Schema.optional(Schema.String),
   docs_url: Schema.optional(Schema.String),
-  status: ServerStatus,
+  status: Schema.optional(ServerStatus),
   mode: ServerMode,
   mcp_url: Schema.String,
-  permission_model: Schema.optional(PermissionModel),
+  permission_model: Schema.optional(Schema.Unknown),
   auth_kind: Schema.optional(Schema.String),
   connection: Schema.optional(Connection),
 }).annotate({ identifier: "CorpCatalogServer" })
@@ -127,6 +159,140 @@ export const Catalog = Schema.Struct({
   servers: Schema.mutable(Schema.Array(CatalogServer)),
 }).annotate({ identifier: "CorpCatalog" })
 export type Catalog = Schema.Schema.Type<typeof Catalog>
+
+/** Отброшенный элемент списочного ответа Hub: `alias` — если удалось прочитать (S-V14 п.5). */
+export const Dropped = Schema.Struct({
+  alias: Schema.optional(Schema.String),
+  reason: Schema.String,
+}).annotate({ identifier: "CorpDropped" })
+export type Dropped = Schema.Schema.Type<typeof Dropped>
+
+// --- S-V14: трёхуровневый разбор списочных ответов Hub ---
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+/** Непустая строка ядра карточки: `null`, пустая строка и любой другой тип — не разобрано. */
+function coreString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined
+}
+
+/** Необязательная строка: неразобранное значение трактуется как отсутствующее (S-V14 п.3). */
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function decode<S extends Schema.Codec<any, any, never, never>>(schema: S, value: unknown): S["Type"] | undefined {
+  const decoded = Schema.decodeUnknownOption(schema)(value)
+  return Option.isSome(decoded) ? decoded.value : undefined
+}
+
+/**
+ * Разбор модели прав (§3.2, S-V9).
+ *
+ * `undefined` означает «клиент этой модели не понял»: поле отсутствует, вид неизвестен либо форма
+ * не совпала с контрактом. Карточка при этом остаётся в витрине — недоступным становится ровно
+ * экран прав (S-V14 п.3, D-27).
+ */
+export function parsePermissionModel(value: unknown): PermissionModel | undefined {
+  if (value === undefined || value === null) return undefined
+  return decode(PermissionModel, value)
+}
+
+export type ServerResult = { ok: true; server: CatalogServer } | { ok: false; alias?: string; reason: string }
+
+/**
+ * Разбор одной карточки каталога (S-V14 п.2–4).
+ *
+ * Ядро — `alias`, `title`, `mode`, `mcp_url`; список закрыт и расширению без отдельного решения
+ * спецификации не подлежит. Всё остальное деградирует. Неизвестные поля карточки (`auth_methods`
+ * и любые будущие) игнорируются и причиной отказа не являются.
+ */
+export function parseCatalogServer(value: unknown): ServerResult {
+  const raw = record(value)
+  if (!raw) return { ok: false, reason: "server" }
+  const alias = coreString(raw["alias"])
+  const title = typeof raw["title"] === "string" ? raw["title"] : undefined
+  const mode = decode(ServerMode, raw["mode"])
+  const mcpUrl = coreString(raw["mcp_url"])
+  if (alias === undefined) return { ok: false, reason: "alias" }
+  if (title === undefined) return { ok: false, alias, reason: "title" }
+  if (mode === undefined) return { ok: false, alias, reason: "mode" }
+  if (mcpUrl === undefined) return { ok: false, alias, reason: "mcp_url" }
+
+  const description = optionalString(raw["description"])
+  const owner = optionalString(raw["owner"])
+  const contact = optionalString(raw["contact"])
+  const docsUrl = optionalString(raw["docs_url"])
+  const status = decode(ServerStatus, raw["status"])
+  const authKind = optionalString(raw["auth_kind"])
+  const connection = raw["connection"] === undefined ? undefined : decode(Connection, raw["connection"])
+
+  return {
+    ok: true,
+    server: {
+      alias,
+      title,
+      mode,
+      mcp_url: mcpUrl,
+      ...(description === undefined ? {} : { description }),
+      ...(owner === undefined ? {} : { owner }),
+      ...(contact === undefined ? {} : { contact }),
+      ...(docsUrl === undefined ? {} : { docs_url: docsUrl }),
+      ...(status === undefined ? {} : { status }),
+      ...(authKind === undefined ? {} : { auth_kind: authKind }),
+      // Дословно: разбирается модель отдельно, а в кэш и наружу уходит исходное значение Hub (S-V3).
+      ...(raw["permission_model"] === undefined ? {} : { permission_model: raw["permission_model"] }),
+      ...(connection === undefined ? {} : { connection }),
+    },
+  }
+}
+
+export interface ParsedCatalog {
+  version: string
+  servers: CatalogServer[]
+  dropped: Dropped[]
+}
+
+/**
+ * Разбор ответа `GET /api/catalog` (S-V14 п.1–2).
+ *
+ * `undefined` — нарушен **конверт** (тело не объект, нет `version`, `servers` не массив): только это
+ * даёт `hub_invalid_response` и оставляет кэш нетронутым (S-V2, AC-160). Неразобранная карточка
+ * отбрасывается поодиночке, остальные принимаются.
+ *
+ * `version` принимается строкой и числом (живой Hub отдаёт `1`): версия каталога нигде не
+ * разбирается по составу, а отказ целого экрана из-за её формы — тот самый класс дефектов, который
+ * закрывает S-V14.
+ */
+export function parseCatalog(value: unknown): ParsedCatalog | undefined {
+  const raw = record(value)
+  if (!raw) return undefined
+  const version = raw["version"]
+  if (typeof version !== "string" && typeof version !== "number") return undefined
+  const servers = raw["servers"]
+  if (!Array.isArray(servers)) return undefined
+
+  const accepted: CatalogServer[] = []
+  const dropped: Dropped[] = []
+  for (const entry of servers) {
+    const parsed = parseCatalogServer(entry)
+    if (parsed.ok) accepted.push(parsed.server)
+    else
+      dropped.push(
+        parsed.alias === undefined ? { reason: parsed.reason } : { alias: parsed.alias, reason: parsed.reason },
+      )
+  }
+  return { version: String(version), servers: accepted, dropped }
+}
+
+export interface ParsedConnections {
+  items: MyConnection[]
+  dropped: Dropped[]
+}
 
 export const Me = Schema.Struct({
   user_id: Schema.String,
@@ -149,6 +315,48 @@ export type MyConnection = Schema.Schema.Type<typeof MyConnection>
 
 export const MyConnections = Schema.mutable(Schema.Array(MyConnection))
 
+/**
+ * Разбор ответа `GET /api/me/connections` (S-V14 п.6).
+ *
+ * Ядро элемента — `alias` (непустая строка) и `status` (известное значение); неразобранный элемент
+ * отбрасывается, остальные применяются. `undefined` — тело не массив (нарушен конверт).
+ */
+export function parseMyConnections(value: unknown): ParsedConnections | undefined {
+  if (!Array.isArray(value)) return undefined
+  const items: MyConnection[] = []
+  const dropped: Dropped[] = []
+  for (const entry of value) {
+    const raw = record(entry)
+    if (!raw) {
+      dropped.push({ reason: "connection" })
+      continue
+    }
+    const alias = coreString(raw["alias"])
+    if (alias === undefined) {
+      dropped.push({ reason: "alias" })
+      continue
+    }
+    const status = decode(ConnectionStatus, raw["status"])
+    if (status === undefined) {
+      dropped.push({ alias, reason: "status" })
+      continue
+    }
+    const preset = optionalString(raw["preset"])
+    const groups = decode(Schema.mutable(Schema.Array(Schema.String)), raw["groups"])
+    const createdAt = optionalString(raw["created_at"])
+    const updatedAt = optionalString(raw["updated_at"])
+    items.push({
+      alias,
+      status,
+      ...(preset === undefined ? {} : { preset }),
+      ...(groups === undefined ? {} : { groups }),
+      ...(createdAt === undefined ? {} : { created_at: createdAt }),
+      ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+    })
+  }
+  return { items, dropped }
+}
+
 export const PermissionsUpdate = Schema.Struct({
   alias: Schema.String,
   status: ConnectionStatus,
@@ -164,11 +372,16 @@ export const DisconnectResult = Schema.Struct({
 
 // --- Кэш каталога на диске (S-V3) ---
 
+/**
+ * Файл кэша (S-V3). Карточки хранятся как есть, без схемы: разбор при чтении выполняет тот же
+ * `parseCatalogServer`, что и ответ Hub, поэтому кэш, записанный другой версией клиента, не
+ * отбрасывается целиком из-за одной карточки и не теряет дословный `permission_model`.
+ */
 export const CatalogCacheFile = Schema.Struct({
   hub_url: Schema.String,
   fetched_at: Schema.Number,
   version: Schema.String,
-  servers: Schema.mutable(Schema.Array(CatalogServer)),
+  servers: Schema.mutable(Schema.Array(Schema.Unknown)),
 }).annotate({ identifier: "CorpCatalogCacheFile" })
 export type CatalogCacheFile = Schema.Schema.Type<typeof CatalogCacheFile>
 
@@ -267,6 +480,8 @@ export const CatalogView = Schema.Struct({
   stale: Schema.Boolean,
   servers: Schema.mutable(Schema.Array(CatalogCard)),
   hub_error: Schema.optional(Code),
+  /** Карточки, отброшенные разбором (S-V14 п.5): `alias` — если удалось прочитать, `reason` — поле. */
+  dropped: Schema.optional(Schema.mutable(Schema.Array(Dropped))),
 }).annotate({ identifier: "CorpCatalogView" })
 export type CatalogView = Schema.Schema.Type<typeof CatalogView>
 

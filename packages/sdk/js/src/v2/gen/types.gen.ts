@@ -2249,14 +2249,25 @@ export type CorpPermissionHeaderGroups = {
   always?: Array<string>
 }
 
-export type CorpPermissionPresets = {
-  kind: "consent" | "tool_filter"
+export type CorpPermissionToolFilterPreset = {
+  tools: Array<string>
+}
+
+export type CorpPermissionToolFilter = {
+  kind: "tool_filter"
   presets: {
-    [key: string]: string
+    [key: string]: CorpPermissionToolFilterPreset
   }
 }
 
-export type CorpPermissionModel = CorpPermissionHeaderGroups | CorpPermissionPresets
+export type CorpPermissionConsent = {
+  kind: "consent"
+  presets: {
+    [key: string]: unknown
+  }
+}
+
+export type CorpPermissionModel = CorpPermissionHeaderGroups | CorpPermissionToolFilter | CorpPermissionConsent
 
 export type CorpCatalogCard = {
   alias: string
@@ -2280,6 +2291,11 @@ export type CorpCatalogCard = {
   hub_url?: string
 }
 
+export type CorpDropped = {
+  alias?: string
+  reason: string
+}
+
 export type CorpCatalogView = {
   version: string
   source: "hub" | "cache"
@@ -2300,6 +2316,7 @@ export type CorpCatalogView = {
     | "unauthorized"
     | "not_found"
     | "invalid_request"
+  dropped?: Array<CorpDropped>
 }
 
 export type CorpConnectorResult = {

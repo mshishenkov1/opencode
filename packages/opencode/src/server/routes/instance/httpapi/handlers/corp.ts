@@ -243,6 +243,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const known = new Set(servers.map((server) => server.alias))
       const cards: CorpSchema.CatalogCard[] = servers.map((server) => {
         const local = statuses[server.alias]
+        const permissions = CorpSchema.parsePermissionModel(server.permission_model)
         const card = CorpStatus.compute({
           alias: server.alias,
           server,
@@ -258,10 +259,12 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           ...(server.owner === undefined ? {} : { owner: server.owner }),
           ...(server.contact === undefined ? {} : { contact: server.contact }),
           ...(server.docs_url === undefined ? {} : { docs_url: server.docs_url }),
-          server_status: server.status,
+          ...(server.status === undefined ? {} : { server_status: server.status }),
           mode: server.mode,
           mcp_url: server.mcp_url,
-          ...(server.permission_model === undefined ? {} : { permission_model: server.permission_model }),
+          // Наружу уходит разобранная модель прав; непонятый вид — как отсутствующий, экран прав
+          // блокируется с причиной (S-V9, S-V14 п.3). Дословное значение остаётся в кэше.
+          ...(permissions === undefined ? {} : { permission_model: permissions }),
           ...(server.connection === undefined ? {} : { connection_status: server.connection.status }),
           ...(server.connection?.preset === undefined ? {} : { preset: server.connection.preset }),
           status: card.status,
@@ -309,6 +312,18 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const hub = CorpHub.make({ hubUrl: url, key: corpApiKey })
       const fresh = yield* Effect.promise(() => hub.catalog())
       if (fresh.ok) {
+        const dropped = fresh.dropped ?? []
+        if (dropped.length > 0) {
+          // S-V14 п.5: отброшенные карточки не исчезают молча. В лог уходят только alias и путь к
+          // полю — ни тела ответа Hub, ни ключа провайдера, ни `poll_secret`.
+          yield* Effect.logWarning("corp catalog: cards dropped", {
+            count: dropped.length,
+            cards: dropped.map((entry) => ({
+              ...(entry.alias === undefined ? {} : { alias: entry.alias }),
+              field: entry.reason,
+            })),
+          })
+        }
         yield* Effect.promise(() =>
           CorpCatalogCache.write({
             hubUrl: url,
@@ -323,6 +338,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           cached_at: now,
           stale: false,
           servers: yield* toCards(url, fresh.data.servers, false),
+          ...(dropped.length === 0 ? {} : { dropped }),
         }
         // Записи других инстансов старше окна свежести больше не нужны — memo не растёт бесконечно.
         for (const [entry, value] of memo) if (now - value.at >= CATALOG_MEMO_MS) memo.delete(entry)

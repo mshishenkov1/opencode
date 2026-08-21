@@ -45,10 +45,22 @@ export async function read(hubUrl: string, dataDir?: string): Promise<Entry | un
   if (Option.isNone(decoded)) return undefined
   const value = decoded.value
   if (value.hub_url !== hubUrl) return undefined
-  return { hubUrl: value.hub_url, fetchedAt: value.fetched_at, version: value.version, servers: value.servers }
+  // Карточки кэша проходят тот же поэлементный разбор, что и ответ Hub (S-V14): файл, записанный
+  // другой версией клиента, не отбрасывается целиком из-за одной непонятой карточки.
+  const servers: CorpSchema.CatalogServer[] = []
+  for (const entry of value.servers) {
+    const server = CorpSchema.parseCatalogServer(entry)
+    if (server.ok) servers.push(server.server)
+  }
+  return { hubUrl: value.hub_url, fetchedAt: value.fetched_at, version: value.version, servers }
 }
 
-/** Перезаписывает кэш; права файла — `0o600`. Ошибка записи не считается фатальной. */
+/**
+ * Перезаписывает кэш; права файла — `0o600`. Ошибка записи не считается фатальной.
+ *
+ * Пишутся только карточки, **принятые** разбором (S-V3, S-V14): отброшенные не сохраняются и не
+ * «оживают» из кэша. `permission_model` каждой карточки уходит на диск дословно, как пришёл от Hub.
+ */
 export async function write(entry: Entry, dataDir?: string): Promise<void> {
   const file = fileFor(entry.hubUrl, dataDir)
   const body: CorpSchema.CatalogCacheFile = {

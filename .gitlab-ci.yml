@@ -40,7 +40,7 @@ stages: [checks, build]
     # которых в slim-образе bun нет (на ubuntu-раннере GitHub они есть штатно).
     # git нужен самим тестам (реестр правок вызывает git diff/log), а в образе bun его нет:
     # раннер клонирует репозиторий вспомогательным образом, внутри задания git отсутствует.
-    - apt-get update -qq && apt-get install -y --no-install-recommends python3 make g++ git >/dev/null
+    - apt-get update -qq && apt-get install -y --no-install-recommends python3 make g++ git zip >/dev/null
     - bun install --frozen-lockfile
   cache:
     key: "bun-$CI_COMMIT_REF_SLUG"
@@ -94,9 +94,12 @@ build-cli:
       - TARGET: ["linux-x64", "win32-x64"]
   script:
     - bun run corp/build.ts --targets "$TARGET"
-    # Дымовая проверка только для сборки под ОС раннера (S-B7, S-Q8).
+    # Дымовая проверка только для сборки под ОС раннера (S-B7, S-Q8) и только
+    # когда задан адрес Hub: без него сборка ванильная (S-C6) и `corp status`
+    # закономерно отвечает «корпоративный режим не настроен». Адрес задаётся
+    # переменной CORP_HUB_URL в Settings → CI/CD → Variables проекта.
     - |
-      if [ "$TARGET" = "linux-x64" ]; then
+      if [ "$TARGET" = "linux-x64" ] && [ -n "${CORP_HUB_URL:-}" ]; then
         BIN="$PWD/packages/opencode/dist/opencode-linux-x64/bin/opencode"
         "$BIN" --version
         HOME_DIR="$(mktemp -d)"

@@ -1,5 +1,5 @@
 # Критерии приёмки I-4: корпоративный форк OpenCode
-# Спецификация: corp/docs/spec.md (ревизия 1.6)
+# Спецификация: corp/docs/spec.md (ревизия 1.7)
 # Формат: id, rule (правила спецификации), type (unit|integration|manual|ci), given/when/then.
 # Все HTTP-обращения к Hub в автотестах — только к мокам, без сети.
 #
@@ -27,6 +27,21 @@
 # остаются в силе для случая, когда email известен. Требуемое поведение AC-127..AC-131 на момент
 # ревизии в коде отсутствует. Подробности — блок «Ревизия 1.4» в начале spec.md.
 
+# Ревизия 1.7 (2026-08-21): ИЗМЕНЕНИЕ КОНТРАКТА по BUG-I4-008 (critical). Hub ввёл третью модель прав
+# permission_model.kind: tool_filter (пресеты readonly/readwrite, значение пресета — объект
+# {tools:[имя или шаблон]}); схема форка описывает presets как Record<string,string>, карточка tag
+# разбор не проходит, и по прежней редакции S-V2 отбрасывался весь ответ GET /api/catalog: витрина
+# пуста, «Hub returned an unexpected response», хотя Hub отвечает 200. Это второй случай класса
+# (BUG-I1-002 — обязательный email), поэтому изменено само правило разбора: новое правило S-V14
+# (ядро карточки alias/title/mode/mcp_url отбрасывает карточку, всё остальное деградирует, ответ
+# целиком отбрасывается только при нарушении конверта version/servers), переформулировано S-V9
+# (экран прав по видам модели, включая неизвестный), уточнены §3.2, §3.3, S-V1, S-V2, S-V3, S-V12,
+# S-I1, S-Q2, S-Q4; решения D-26, D-27, D-28.
+# Переформулирован AC-40 (карточка без alias отбрасывается, остальные принимаются — прежняя проверка
+# «весь ответ отброшен» перенесена на нарушенный конверт, AC-160). Добавлены AC-154…AC-167.
+# Требуемое поведение AC-154…AC-167 на момент ревизии в коде отсутствует.
+# Подробности — блок «Ревизия 1.7» в начале spec.md.
+#
 # Ревизия 1.6 (2026-08-21): ИЗМЕНЕНИЕ КОНТРАКТА по живой проверке раздачи Desktop. Корпоративная сборка
 # использовала идентичность ванильного апстрима: corp/build.ts переводил канал latest в десктопный prod,
 # а prod в packages/desktop/electron-builder.config.ts — это appId ai.opencode.desktop и
@@ -403,11 +418,16 @@ criteria:
       таймаут запроса 5 с; карточки разобраны в модель
 
   - id: AC-40
-    rule: [S-V2]
+    rule: [S-V2, S-V14]
     type: unit
-    given: мок Hub GET /api/catalog отвечает 200 телом без обязательного поля alias
+    given: >
+      мок Hub GET /api/catalog отвечает 200 телом с корректным конвертом, в servers — одна карточка
+      без обязательного поля alias
     when: вызван клиент Hub
-    then: ответ отброшен целиком, возвращена ошибка hub_invalid_response, кэш не перезаписан
+    then: >
+      карточка без alias отброшена и пользователю не показывается; ошибки hub_invalid_response нет,
+      остальные карточки ответа приняты и записаны в кэш (отбрасывание всего ответа при нарушенном
+      конверте — AC-160)
     negative: true
 
   - id: AC-41
@@ -546,9 +566,12 @@ criteria:
   - id: AC-58
     rule: [S-V7, D-5]
     type: unit
-    given: карточка tag, mode=native, permission_model.kind=consent
+    given: >
+      карточка native-коннектора (alias=native_srv, mode=native, permission_model.kind=consent);
+      ревизия 1.7: alias tag в этом критерии заменён, потому что в действующем каталоге Hub tag —
+      mode=facade с моделью прав tool_filter (AC-164), а проверяемое поведение относится к mode=native
     when: выполнено «Подключить»
-    then: патч конфига не содержит ключа oauth; далее вызван POST /mcp/tag/auth/authenticate
+    then: патч конфига не содержит ключа oauth; далее вызван POST /mcp/native_srv/auth/authenticate
 
   - id: AC-59
     rule: [S-V7]
@@ -606,7 +629,7 @@ criteria:
   - id: AC-65
     rule: [S-V9]
     type: unit
-    given: подключённый native-сервер tag
+    given: подключённый native-сервер (alias=native_srv, mode=native)
     when: выбран другой пресет
     then: >
       локальный oauth.scope не появляется и не меняется; вызван PUT прав в Hub;
@@ -1429,6 +1452,161 @@ criteria:
       проверены CFBundleIdentifier, CFBundleName и наличие/содержимое app-update.yml; шаг падает при
       чужом appId, чужом имени приложения или фиде, отличном от адреса из CORP_DESKTOP_UPDATE_URL
 
+  # ------------------------------------------- ревизия 1.7: модель прав tool_filter и устойчивость разбора (BUG-I4-008)
+
+  - id: AC-154
+    rule: [S-V14, S-V2]
+    type: unit
+    given: >
+      мок Hub GET /api/catalog отвечает живой карточкой tag: alias=tag, title="ТЭГ (Mattermost)",
+      status=beta, mode=facade, mcp_url="https://hub.test/mcp/tag", auth_kind=oauth2,
+      permission_model={kind:"tool_filter", presets:{readonly:{tools:["whoami","get_*","list_*"]},
+      readwrite:{tools:["*"]}}}
+    when: вызван клиент Hub и открыта витрина
+    then: >
+      ошибки hub_invalid_response нет; карточка ТЭГ показана в витрине со своими действиями;
+      permission_model доступен карточке без потерь — kind=tool_filter, presets.readonly.tools
+      содержит все четыре элемента в исходном порядке, presets.readwrite.tools = ["*"]
+
+  - id: AC-155
+    rule: [S-V9]
+    type: unit
+    given: >
+      в каталоге две карточки: tag с permission_model.kind=tool_filter
+      (presets.readonly.tools=["whoami","get_*"], presets.readwrite.tools=["*"]) и карточка с
+      permission_model.kind=consent (presets={default:{}})
+    when: для каждой из них открыт экран прав
+    then: >
+      для tool_filter показаны пресеты readonly и readwrite (имена ключей presets в порядке ответа
+      Hub), для выбранного пресета — список его tools как есть ("whoami", "get_*"); раздела групп и
+      списка always нет, отдельные инструменты не отмечаются; для consent показаны только имена
+      пресетов без состава прав; ни в одном случае клиент не формирует заголовок групп
+
+  - id: AC-156
+    rule: [S-V9, S-V14, D-27]
+    type: unit
+    given: карточка каталога с permission_model={kind:"quota_tiers", tiers:[…]} — вид клиенту неизвестен
+    when: открыта витрина
+    then: >
+      карточка показана, счётчик коннекторов её учитывает; действия «Подключить», «Отключить» и
+      «Открыть в Hub» доступны; действие «Права» видно, но заблокировано, рядом показана причина
+      (модель прав не поддерживается этой версией приложения, правами можно управлять в Hub);
+      запрос PUT /api/me/connections/<alias>/permissions не отправляется
+    negative: true
+
+  - id: AC-157
+    rule: [S-V9, S-V14]
+    type: unit
+    given: карточка каталога, у которой permission_model отсутствует или не разобран
+    when: открыта витрина
+    then: >
+      поведение совпадает с AC-156: карточка показана, «Права» заблокировано с той же причиной,
+      подключение выполняется с пресетом readonly по умолчанию
+    negative: true
+
+  - id: AC-158
+    rule: [S-V14, S-V3]
+    type: unit
+    given: >
+      GET /api/catalog вернул конверт с тремя карточками: gitlab (валидна), карточка без alias,
+      tag с permission_model.kind=tool_filter
+    when: вызван клиент Hub и открыта витрина
+    then: >
+      ошибки hub_invalid_response нет; показаны две карточки — gitlab и tag; карточка без alias не
+      показана; кэш перезаписан ровно этими двумя принятыми карточками
+
+  - id: AC-159
+    rule: [S-V14]
+    type: unit
+    given: >
+      GET /api/catalog вернул четыре карточки: без alias, с alias но без title, с mode="proxy"
+      (значения нет в перечислении), и одну полностью валидную
+    when: вызван клиент Hub
+    then: >
+      первые три карточки отброшены и пользователю не показываются, четвёртая принята и показана;
+      ошибки hub_invalid_response нет
+    negative: true
+
+  - id: AC-160
+    rule: [S-V14, S-V2]
+    type: unit
+    given: >
+      GET /api/catalog вернул 200 с нарушенным конвертом (нет поля version либо servers не массив)
+    when: вызван клиент Hub
+    then: >
+      возвращена ошибка hub_invalid_response, кэш не перезаписан, витрина показывает состояние
+      «Hub недоступен» по S-V3
+    negative: true
+
+  - id: AC-161
+    rule: [S-V12, S-V14]
+    type: integration
+    given: GET /api/catalog вернул корректный конверт с двумя карточками, обе отброшены по ядру
+    when: открыта витрина
+    then: >
+      показано состояние «Каталог не разобран» с числом отброшенных карточек и действием «Обновить»;
+      текст отличается от «Каталог пуст» (Hub ответил servers:[]) и от «Hub недоступен»
+    negative: true
+
+  - id: AC-162
+    rule: [S-V14]
+    type: unit
+    given: >
+      карточка tag содержит поле auth_methods (способы подключения ревизии 3 Hub) и произвольное
+      неизвестное поле верхнего уровня, а её connection содержит неизвестное вложенное поле
+    when: вызван клиент Hub
+    then: карточка принята и показана полностью; неизвестные поля не влияют ни на приём, ни на действия
+
+  - id: AC-163
+    rule: [S-V14]
+    type: unit
+    given: карточка со status="sunset" (значения нет в перечислении beta|ga|deprecated)
+    when: открыта витрина
+    then: >
+      карточка показана без бейджа состояния, статус и действия вычислены по S-V6 так, как если бы
+      поля status не было; карточка не отброшена
+    negative: true
+
+  - id: AC-164
+    rule: [S-V7, D-28]
+    type: unit
+    given: карточка tag, mode=facade, permission_model.kind=tool_filter
+    when: выполнено «Подключить» с пресетом по умолчанию
+    then: >
+      Config.updateGlobal получил патч с oauth.scope="tag:readonly" — scope определяется режимом
+      facade, а не видом модели прав; далее вызван POST /mcp/tag/auth/authenticate
+
+  - id: AC-165
+    rule: [S-V14, S-V1]
+    type: unit
+    given: в ответе Hub одна карточка отброшена по ядру, две приняты
+    when: выполнен GET /corp/catalog
+    then: >
+      ответ содержит две карточки и dropped с одним элементом, в котором указаны alias (если он
+      читался) и причина — путь к полю; в лог записано предупреждение с alias и путём к полю;
+      ни тело ответа Hub целиком, ни ключ провайдера, ни poll_secret в лог не попадают
+
+  - id: AC-166
+    rule: [S-I1, S-I3, S-I5]
+    type: unit
+    given: словари packages/app/src/i18n/en.ts и ru.ts
+    when: выполнен тест словарей
+    then: >
+      ключи corp.connectors.permissionsUnavailable, corp.connectors.toolsPreview,
+      corp.connectors.partial и corp.empty.unparsed есть в обоих словарях, значения не совпадают
+      между ru.ts и en.ts, захардкоженных строк для этих текстов в коде нет
+
+  - id: AC-167
+    rule: [S-Q2, S-Q4]
+    type: unit
+    given: тесты клиента Hub и витрины
+    when: тесты выполнены
+    then: >
+      покрыты: живое тело карточки tag с tool_filter и auth_methods; карточка с неизвестным kind;
+      карточка без alias рядом с валидными; карточка без title и с mode вне перечисления;
+      нарушенный конверт; элемент GET /api/me/connections без alias; экран прав по всем четырём
+      строкам таблицы S-V9; каталог, у которого отброшены все карточки
+
 # ---------------------------------------------------------------- карта покрытия правил
 coverage:
   S-C1: [AC-01, AC-02]
@@ -1456,19 +1634,20 @@ coverage:
   S-A11a: [AC-33, AC-35, AC-122, AC-130, AC-136, AC-137]
   S-A12: [AC-36, AC-37]
   S-A13: [AC-127, AC-128, AC-129, AC-130, AC-131]
-  S-V1: [AC-38]
-  S-V2: [AC-39, AC-40, AC-41, AC-127, AC-128]
-  S-V3: [AC-42, AC-43, AC-44, AC-45, AC-46, AC-47]
+  S-V1: [AC-38, AC-165]
+  S-V2: [AC-39, AC-40, AC-41, AC-127, AC-128, AC-154, AC-160]
+  S-V3: [AC-42, AC-43, AC-44, AC-45, AC-46, AC-47, AC-158]
   S-V4: [AC-48]
   S-V5: [AC-49]
   S-V6: [AC-50, AC-51, AC-52, AC-53, AC-54, AC-55, AC-56]
-  S-V7: [AC-57, AC-58, AC-59, AC-60, AC-61]
+  S-V7: [AC-57, AC-58, AC-59, AC-60, AC-61, AC-164]
   S-V8: [AC-62, AC-63]
-  S-V9: [AC-64, AC-65, AC-66, AC-67]
+  S-V9: [AC-64, AC-65, AC-66, AC-67, AC-155, AC-156, AC-157]
   S-V10: [AC-68]
   S-V11: [AC-69]
-  S-V12: [AC-45, AC-48, AC-70]
+  S-V12: [AC-45, AC-48, AC-70, AC-161]
   S-V13: [AC-71, AC-72]
+  S-V14: [AC-40, AC-154, AC-156, AC-157, AC-158, AC-159, AC-160, AC-161, AC-162, AC-163, AC-165]
   S-T1: [AC-73]
   S-T2: [AC-74]
   S-T3: [AC-75]
@@ -1490,11 +1669,11 @@ coverage:
   S-D7: [AC-90]
   S-D8: [AC-91]
   S-D9: [AC-92]
-  S-I1: [AC-93, AC-124, AC-125]
+  S-I1: [AC-93, AC-124, AC-125, AC-166]
   S-I2: [AC-94, AC-95, AC-123]
-  S-I3: [AC-93, AC-96]
+  S-I3: [AC-93, AC-96, AC-166]
   S-I4: [AC-97]
-  S-I5: [AC-98, AC-99]
+  S-I5: [AC-98, AC-99, AC-166]
   S-B1: [AC-100]
   S-B2: [AC-101, AC-102]
   S-B3: [AC-103, AC-143, AC-144]
@@ -1508,9 +1687,9 @@ coverage:
   S-B11: [AC-145, AC-146, AC-147, AC-148, AC-149]
   S-B12: [AC-139, AC-142, AC-150, AC-151]
   S-Q1: [AC-113]
-  S-Q2: [AC-114]
+  S-Q2: [AC-114, AC-167]
   S-Q3: [AC-115]
-  S-Q4: [AC-116]
+  S-Q4: [AC-116, AC-167]
   S-Q5: [AC-117]
   S-Q6: [AC-118, AC-132, AC-133]
   S-Q7: [AC-119]
@@ -1524,7 +1703,8 @@ negative_scenarios:
   oauth_rejected: [AC-59, AC-60]
   permissions_cancelled: [AC-66]
   cache_expired: [AC-44, AC-46]
-  invalid_hub_response: [AC-23, AC-40]
+  invalid_hub_response: [AC-23, AC-160]
+  catalog_partial_parse: [AC-40, AC-156, AC-157, AC-158, AC-159, AC-161, AC-163]
   user_email_unknown: [AC-127, AC-128, AC-129, AC-130, AC-131]
   login_session_errors: [AC-21, AC-22, AC-26, AC-30, AC-32]
   vanilla_mode: [AC-04, AC-09, AC-10, AC-102, AC-124, AC-125, AC-126]

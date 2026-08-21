@@ -153,3 +153,27 @@ describe("tui/corp/state — подписи каталога для /mcps (AC-71
     expect(CorpState.POLL_INTERVAL_MS).toBe(2000)
   })
 })
+
+/**
+ * Текст ревизии 1.7 в словаре TUI (S-I4, S-I5; AC-166).
+ *
+ * Экран прав TUI не открывается, когда вид модели прав неизвестен или не разобран (S-V9, строка 4):
+ * причина называется текстом из словаря, а не строкой в коде.
+ */
+describe("tui/corp/i18n — недоступный экран прав (AC-166)", () => {
+  test("AC-166: ключ connectors.permissionsUnavailable есть в обоих языках и переведён", () => {
+    const key = "connectors.permissionsUnavailable" as CorpI18n.Key
+    expect(CorpI18n.dictionaries.ru[key]).toBeString()
+    expect(CorpI18n.dictionaries.en[key]).toBeString()
+    expect(CorpI18n.dictionaries.ru[key]).not.toBe("")
+    expect(CorpI18n.dictionaries.en[key]).not.toBe("")
+    expect(CorpI18n.dictionaries.ru[key]).not.toBe(CorpI18n.dictionaries.en[key])
+  })
+
+  test("AC-166: витрина TUI берёт причину из словаря, а не из литерала", () => {
+    const source = fs.readFileSync(path.join(TUI_SRC, "component/corp/dialog-connectors.tsx"), "utf8")
+    expect(source).toContain("connectors.permissionsUnavailable")
+    expect(source).not.toContain(CorpI18n.dictionaries.ru["connectors.permissionsUnavailable"])
+    expect(source).not.toContain(CorpI18n.dictionaries.en["connectors.permissionsUnavailable"])
+  })
+})

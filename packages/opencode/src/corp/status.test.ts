@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import type * as CorpSchema from "./schema"
+import * as CorpSchema from "./schema"
 import * as CorpStatus from "./status"
+import { liveTagCard } from "../../test/fixture/corp-hub-live"
 
 /**
  * Правило вычисления статуса карточки витрины (S-V6, S-V11, S-Q9; AC-49…AC-56, AC-61, AC-69, AC-121).
@@ -238,5 +239,53 @@ describe("corp/status — пресеты и scope (AC-57, AC-58, AC-61)", () => 
 
   test("AC-58: для mode=native scope не задаётся", () => {
     expect(CorpStatus.oauthScope({ alias: "tag", mode: "native" }, "readonly")).toBeUndefined()
+  })
+})
+
+/**
+ * Неизвестное значение `status` карточки (S-V14 п.3; AC-163).
+ *
+ * Карточка приходит из разбора живого тела Hub, у которого значение `status` заменено на `sunset` —
+ * значения нет в перечислении `beta|ga|deprecated`. Такое поле деградирует, а не отбрасывает карточку.
+ */
+describe("corp/status — неизвестное состояние карточки (AC-163)", () => {
+  const sunset = () => {
+    const card = liveTagCard()
+    card["status"] = "sunset"
+    const parsed = CorpSchema.parseCatalog({ version: 1, servers: [card] })
+    if (!parsed || parsed.servers.length !== 1) throw new Error("карточка не должна отбрасываться")
+    return parsed.servers[0]!
+  }
+
+  test("AC-163: карточка со status=sunset не отброшена и бейджа состояния не получает", () => {
+    const server = sunset()
+    expect(server.alias).toBe("tag")
+    // Поле не разобрано — значит его как будто нет: ни бейджа «устаревший», ни другого состояния.
+    expect(server.status).toBeUndefined()
+
+    const card = CorpStatus.compute({ alias: server.alias, server, configured: false, stale: false })
+    expect(card.deprecated).toBe(false)
+    expect(card.status).toBe("not_connected")
+    expect(card.actions).toEqual(["connect", "open_hub"])
+  })
+
+  test("AC-163: правила S-V6 применяются так, как если бы поля status не было", () => {
+    const server = sunset()
+    const withoutStatus: CorpSchema.CatalogServer = { ...server }
+    delete (withoutStatus as { status?: unknown }).status
+
+    for (const local of ["connected", "failed", undefined] as const) {
+      const input = { alias: server.alias, configured: true, stale: false, ...(local ? { local } : {}) }
+      expect(CorpStatus.compute({ ...input, server })).toEqual(CorpStatus.compute({ ...input, server: withoutStatus }))
+    }
+  })
+
+  test("AC-163: карточка со status=deprecated бейдж по-прежнему получает", () => {
+    const card = liveTagCard()
+    card["status"] = "deprecated"
+    const parsed = CorpSchema.parseCatalog({ version: 1, servers: [card] })
+    const server = parsed!.servers[0]!
+    expect(server.status).toBe("deprecated")
+    expect(CorpStatus.compute({ alias: server.alias, server, configured: true, stale: false }).deprecated).toBe(true)
   })
 })

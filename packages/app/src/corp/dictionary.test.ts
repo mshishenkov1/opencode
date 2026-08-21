@@ -108,3 +108,50 @@ describe("корп-экраны Desktop/web (AC-85, AC-98)", () => {
     expect(routes).toEqual(["/", "/:dir", "/", "/session/:id?", "/new-session"])
   })
 })
+
+/**
+ * Ключи ревизии 1.7 (S-I1, S-I3, S-I5; AC-166): экран прав недоступен, состав среза инструментов,
+ * предупреждение о неполном каталоге и четвёртое пустое состояние витрины.
+ */
+const REVISION_17_KEYS = [
+  "corp.connectors.permissionsUnavailable",
+  "corp.connectors.toolsPreview",
+  "corp.connectors.partial",
+  "corp.empty.unparsed",
+]
+
+describe("i18n corp.* — тексты устойчивого разбора каталога (AC-166)", () => {
+  test("AC-166: четыре новых ключа есть в en.ts и ru.ts, значения не совпадают", () => {
+    for (const key of REVISION_17_KEYS) {
+      const enValue = (en as Record<string, string>)[key]
+      const ruValue = (ru as Record<string, string>)[key]
+      expect(enValue, key).toBeString()
+      expect(ruValue, key).toBeString()
+      expect(enValue, key).not.toBe("")
+      expect(ruValue, key).not.toBe("")
+      expect(ruValue, key).not.toBe(enValue)
+    }
+  })
+
+  test("AC-166: тексты витрины подставляются из словаря, а не захардкожены в коде", () => {
+    const source = fs.readFileSync(path.join(APP_SRC, "components/corp/dialog-connectors.tsx"), "utf8")
+    for (const key of REVISION_17_KEYS) {
+      // Ключ используется экраном...
+      expect(source, key).toContain(key)
+      // ...а его тексты в исходнике не встречаются ни на одном языке.
+      expect(source, key).not.toContain((ru as Record<string, string>)[key]!)
+      expect(source, key).not.toContain((en as Record<string, string>)[key]!)
+    }
+  })
+
+  test("AC-166: пустое состояние «Каталог не разобран» отличается текстом от «Каталог пуст»", () => {
+    for (const dict of [en, ru] as Record<string, string>[]) {
+      expect(dict["corp.empty.unparsed"]).not.toBe(dict["corp.connectors.empty"])
+      expect(dict["corp.empty.unparsed"]).not.toBe(dict["corp.connectors.hubDown"])
+      // Число отброшенных карточек — часть текста (S-V12).
+      expect(dict["corp.empty.unparsed"]).toContain("{{dropped}}")
+      expect(dict["corp.connectors.partial"]).toContain("{{dropped}}")
+      expect(dict["corp.connectors.toolsPreview"]).toContain("{{preset}}")
+    }
+  })
+})

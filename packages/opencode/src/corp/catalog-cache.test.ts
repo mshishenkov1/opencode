@@ -4,7 +4,8 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import * as CatalogCache from "./catalog-cache"
-import type * as CorpSchema from "./schema"
+import * as CorpSchema from "./schema"
+import { liveCatalogBody, liveTagCard } from "../../test/fixture/corp-hub-live"
 
 /**
  * Кэш каталога (S-V3, S-Q5; AC-42…AC-47, AC-117).
@@ -134,5 +135,88 @@ describe("corp/catalog-cache (AC-42…AC-47, AC-117)", () => {
     await fs.writeFile(path.join(dir, "corp"), "занято")
     await CatalogCache.write({ hubUrl: HUB, fetchedAt: 1, version: "v1", servers: [] }, dir)
     expect(await CatalogCache.read(HUB, dir)).toBeUndefined()
+  })
+})
+
+/**
+ * Кэш и терпимый разбор каталога (S-V3, S-V14; AC-40, AC-158, AC-168).
+ *
+ * Кэш пишется тем же путём, что и корп-роут витрины: ответ Hub разбирается `parseCatalog`, и на диск
+ * уходит ровно то, что разбор принял. Тело каталога — живое (`test/fixture/corp-hub-live.ts`).
+ */
+describe("corp/catalog-cache — принятые карточки и дословная модель прав (AC-40, AC-158, AC-168)", () => {
+  const gitlab = {
+    alias: "gitlab",
+    title: "GitLab",
+    owner: "Платформа",
+    status: "ga",
+    mode: "facade",
+    mcp_url: "https://hub.test/mcp/gitlab",
+    permission_model: { kind: "header_groups", groups: [{ id: "read", title: "Чтение", preset: "readonly" }] },
+  }
+
+  test("AC-158, AC-40: в кэш попадают только принятые карточки, отброшенная не сохраняется", async () => {
+    const dir = await dataDir()
+    const parsed = CorpSchema.parseCatalog({
+      version: 1,
+      servers: [gitlab, { title: "Без alias", mode: "facade", mcp_url: "https://hub.test/mcp/x" }, liveTagCard()],
+    })
+    if (!parsed) throw new Error("конверт должен быть разобран")
+    expect(parsed.dropped).toEqual([{ reason: "alias" }])
+
+    await CatalogCache.write({ hubUrl: HUB, fetchedAt: 42, version: parsed.version, servers: parsed.servers }, dir)
+    const entry = await CatalogCache.read(HUB, dir)
+
+    expect(entry?.servers.map((server) => server.alias)).toEqual(["gitlab", "tag"])
+    // Отброшенная карточка не «оживает» из кэша ни при чтении, ни в самом файле.
+    const raw = JSON.parse(await fs.readFile(CatalogCache.fileFor(HUB, dir), "utf8"))
+    expect(raw.servers).toHaveLength(2)
+    expect(JSON.stringify(raw)).not.toContain("Без alias")
+  })
+
+  test("AC-168: версия каталога числом сохраняется в кэше строкой", async () => {
+    const dir = await dataDir()
+    const parsed = CorpSchema.parseCatalog(liveCatalogBody())
+    if (!parsed) throw new Error("конверт должен быть разобран")
+
+    await CatalogCache.write({ hubUrl: HUB, fetchedAt: 42, version: parsed.version, servers: parsed.servers }, dir)
+    const raw = JSON.parse(await fs.readFile(CatalogCache.fileFor(HUB, dir), "utf8"))
+    expect(raw.version).toBe("1")
+    expect(await CatalogCache.read(HUB, dir).then((entry) => entry?.version)).toBe("1")
+  })
+
+  test("AC-158: модель прав неизвестного вида хранится в кэше дословно", async () => {
+    const dir = await dataDir()
+    const quota = { kind: "quota_tiers", tiers: [{ id: "basic", calls: 100 }], note: "форма следующей версии" }
+    const card = liveTagCard()
+    card["permission_model"] = quota
+    const parsed = CorpSchema.parseCatalog({ version: 1, servers: [card] })
+    if (!parsed) throw new Error("конверт должен быть разобран")
+
+    await CatalogCache.write({ hubUrl: HUB, fetchedAt: 42, version: parsed.version, servers: parsed.servers }, dir)
+
+    // Иначе следующая версия приложения увидела бы обеднённый кэш вместо исходных данных Hub (S-V3).
+    const raw = JSON.parse(await fs.readFile(CatalogCache.fileFor(HUB, dir), "utf8"))
+    expect(raw.servers[0].permission_model).toEqual(quota)
+    const entry = await CatalogCache.read(HUB, dir)
+    expect(entry?.servers[0]!.permission_model).toEqual(quota)
+    expect(entry?.servers.map((server) => server.alias)).toEqual(["tag"])
+  })
+
+  test("AC-158: живая модель tool_filter переживает запись и чтение кэша без потерь", async () => {
+    const dir = await dataDir()
+    const parsed = CorpSchema.parseCatalog(liveCatalogBody())
+    if (!parsed) throw new Error("конверт должен быть разобран")
+
+    await CatalogCache.write({ hubUrl: HUB, fetchedAt: 42, version: parsed.version, servers: parsed.servers }, dir)
+    const entry = await CatalogCache.read(HUB, dir)
+
+    expect(entry?.servers[0]!.permission_model).toEqual(liveTagCard()["permission_model"])
+    const model = CorpSchema.parsePermissionModel(entry?.servers[0]!.permission_model)
+    if (model?.kind !== "tool_filter") throw new Error("ожидалась модель tool_filter")
+    expect(model.presets["readonly"]!.tools).toEqual(
+      (liveTagCard()["permission_model"] as { presets: Record<string, { tools: string[] }> }).presets["readonly"]!
+        .tools,
+    )
   })
 })

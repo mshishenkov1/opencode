@@ -22,7 +22,7 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Global } from "@opencode-ai/core/global"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Logger } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse, HttpRouter } from "effect/unstable/http"
 import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi"
 import { AccountTest } from "../../test/fake/account"
@@ -30,6 +30,7 @@ import { NpmTest } from "../../test/fake/npm"
 import { testInstanceStoreLayer } from "../../test/fixture/fixture"
 import { testEffect } from "../../test/lib/effect"
 import * as CorpCatalogCache from "./catalog-cache"
+import { liveCatalogBody, liveTagCard } from "../../test/fixture/corp-hub-live"
 
 /**
  * Оркестрация действий витрины и входа через корп-роуты локального HTTP-сервера
@@ -83,8 +84,12 @@ interface HubRequest {
 interface HubMock {
   url: string
   requests: HubRequest[]
-  /** Ответ `/api/catalog`: `undefined` — 502 (Hub недоступен). */
-  catalog?: { version: string; servers: unknown[] }
+  /**
+   * Ответ `/api/catalog`: `undefined` — 502 (Hub недоступен).
+   * Тип намеренно свободный: тесты S-V14 подают живую форму конверта (`version` числом) и заведомо
+   * нарушенные конверты.
+   */
+  catalog?: unknown
   /** Ответ `PUT /api/me/connections/:alias/permissions`. */
   permissions: (alias: string, body: any) => Response
   /** Ответ `DELETE /api/me/connections/:alias`. */
@@ -251,10 +256,25 @@ const workspaceRoutingLayer = Layer.succeed(
   WorkspaceRoutingMiddleware,
   WorkspaceRoutingMiddleware.of((effect) =>
     Effect.suspend(() =>
-      effect.pipe(Effect.provideService(WorkspaceRouteContext, WorkspaceRouteContext.of({ directory: state.directory }))),
+      effect.pipe(
+        Effect.provideService(WorkspaceRouteContext, WorkspaceRouteContext.of({ directory: state.directory })),
+      ),
     ),
   ),
 )
+
+/** Записи журнала сервера за время запроса — для проверки диагностики отброшенных карточек (S-V14 п.5). */
+const logs: { level: string; text: string }[] = []
+const captureLogger = Logger.make<unknown, void>((options) => {
+  // Записи сервера бывают любой формы (в том числе циклической) — журнал теста не должен ронять запрос.
+  let text: string
+  try {
+    text = JSON.stringify(options.message) ?? String(options.message)
+  } catch {
+    text = String(options.message)
+  }
+  logs.push({ level: String(options.logLevel), text })
+})
 
 const served = HttpRouter.serve(
   HttpApiBuilder.layer(TestHttpApi).pipe(
@@ -267,6 +287,7 @@ const served = HttpRouter.serve(
     Layer.provide(mcpLayer),
     Layer.provide(authLayer),
     Layer.provide(configLayer),
+    Layer.provide(Logger.layer([captureLogger])),
   ),
   { disableListenLog: true, disableLogger: true },
 ).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(infra))
@@ -318,6 +339,7 @@ beforeEach(async () => {
   process.env["OPENCODE_CORP_HUB_URL"] = hub.url
   await fs.rm(browserLog, { force: true })
 
+  logs.length = 0
   state = {
     hub,
     key: KEY,
@@ -370,7 +392,7 @@ const connectRoute = (alias: string) => CorpPaths.connect.replace(":alias", alia
 const disconnectRoute = (alias: string) => CorpPaths.disconnect.replace(":alias", alias)
 const permissionsRoute = (alias: string) => CorpPaths.permissions.replace(":alias", alias)
 
-const body = <A,>(response: { json: Effect.Effect<unknown, any, any> }) => response.json as Effect.Effect<A, any, any>
+const body = <A>(response: { json: Effect.Effect<unknown, any, any> }) => response.json as Effect.Effect<A, any, any>
 
 // --- Подключение (S-V7) ---
 
@@ -726,6 +748,132 @@ describe("вход — отмена сессии и открытие брауз�
 
       // Повторная отмена безопасна: сессии уже нет.
       expect((yield* body<{ cancelled: boolean }>(yield* del(route))).cancelled).toBe(false)
+    }),
+  )
+})
+
+// --- Терпимый разбор каталога через корп-роут (S-V14; AC-160, AC-161, AC-165, AC-168) ---
+
+describe("витрина — устойчивость разбора каталога (AC-160, AC-161, AC-165, AC-168)", () => {
+  /** Карточка живого Hub с адресом мока: ядро то же, форма полей — снятая с живого стенда. */
+  const liveCard = (url: string) => ({ ...liveTagCard(), mcp_url: `${url}/mcp/tag` })
+  const withoutAlias = { title: "Без alias", mode: "facade", mcp_url: "https://hub.test/mcp/x" }
+  const brokenMode = { alias: "gitlab", title: "GitLab", mode: "proxy", mcp_url: "https://hub.test/mcp/gitlab" }
+
+  it.live("AC-165: GET /corp/catalog отдаёт принятые карточки и dropped, а в лог уходит alias с полем", () =>
+    Effect.gen(function* () {
+      state.hub.catalog = {
+        version: 1,
+        servers: [liveCard(state.hub.url), withoutAlias, brokenMode, { ...FACADE, mcp_url: `${state.hub.url}/mcp/g` }],
+      }
+
+      const response = yield* get(`${CorpPaths.catalog}`)
+      const view = yield* body<{
+        servers: { alias: string }[]
+        dropped?: { alias?: string; reason: string }[]
+        hub_error?: string
+      }>(response)
+
+      expect(view.hub_error).toBeUndefined()
+      expect(view.servers.map((server) => server.alias)).toEqual(["tag", FACADE.alias])
+      expect(view.dropped).toEqual([{ reason: "alias" }, { alias: "gitlab", reason: "mode" }])
+
+      const warnings = logs.filter((entry) => entry.text.includes("cards dropped"))
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]!.level).toBe("Warn")
+      // В журнале — alias и путь к полю; тела ответа Hub, ключа и poll_secret там нет (S-V14 п.5).
+      expect(warnings[0]!.text).toContain("gitlab")
+      expect(warnings[0]!.text).toContain("mode")
+      const journal = logs.map((entry) => entry.text).join("\n")
+      expect(journal).not.toContain(KEY)
+      expect(journal).not.toContain("secret-do-not-leak")
+      expect(journal).not.toContain("mcp_url")
+      expect(journal).not.toContain(liveTagCard()["description"] as string)
+    }),
+  )
+
+  it.live("AC-161: все карточки отброшены — витрина получает пустой список и число отброшенных", () =>
+    Effect.gen(function* () {
+      state.hub.catalog = { version: 1, servers: [withoutAlias, brokenMode] }
+
+      const view = yield* body<{
+        servers: unknown[]
+        dropped?: unknown[]
+        hub_error?: string
+        source: string
+      }>(yield* get(`${CorpPaths.catalog}`))
+
+      // Отличие от «Hub недоступен»: ответ пришёл, источник — Hub, ошибки нет.
+      expect(view.source).toBe("hub")
+      expect(view.hub_error).toBeUndefined()
+      expect(view.servers).toEqual([])
+      // Отличие от «Каталог пуст»: карточки были, но ни одна не разобрана.
+      expect(view.dropped).toHaveLength(2)
+    }),
+  )
+
+  it.live("AC-161: Hub ответил servers:[] — «Каталог пуст», поля dropped в ответе нет", () =>
+    Effect.gen(function* () {
+      state.hub.catalog = { version: 1, servers: [] }
+
+      const view = yield* body<{ servers: unknown[]; dropped?: unknown[]; hub_error?: string }>(
+        yield* get(`${CorpPaths.catalog}`),
+      )
+
+      expect(view.servers).toEqual([])
+      expect(view.dropped).toBeUndefined()
+      expect(view.hub_error).toBeUndefined()
+    }),
+  )
+
+  it.live("AC-168: живой конверт с version числом принимается, наружу и в кэш уходит строка", () =>
+    Effect.gen(function* () {
+      const live = liveCatalogBody()
+      live["servers"] = [liveCard(state.hub.url)]
+      expect(live["version"]).toBe(1)
+      state.hub.catalog = live
+
+      const view = yield* body<{ version: string; source: string; servers: { alias: string; mode: string }[] }>(
+        yield* get(`${CorpPaths.catalog}`),
+      )
+
+      expect(view.source).toBe("hub")
+      expect(view.version).toBe("1")
+      expect(view.servers.map((server) => server.alias)).toEqual(["tag"])
+
+      const cached = yield* Effect.promise(() => CorpCatalogCache.read(state.hub.url))
+      expect(cached?.version).toBe("1")
+      expect(cached?.servers.map((server) => server.alias)).toEqual(["tag"])
+
+      // `catalog_version` статуса читается из того же кэша (S-A11).
+      const status = yield* body<{ catalog_version?: string }>(yield* get(CorpPaths.status))
+      expect(status.catalog_version).toBe("1")
+    }),
+  )
+
+  it.live("AC-160: нарушенный конверт — hub_invalid_response, кэш не перезаписан", () =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        CorpCatalogCache.write({
+          hubUrl: state.hub.url,
+          fetchedAt: Date.now(),
+          version: "кэш до сбоя",
+          servers: [{ alias: "tag", title: "ТЭГ", mode: "facade", mcp_url: `${state.hub.url}/mcp/tag` }],
+        }),
+      )
+      // Конверт нарушен: `version` недопустимого типа, карточка при этом валидна.
+      state.hub.catalog = { version: null, servers: [liveCard(state.hub.url)] }
+
+      const view = yield* body<{ hub_error?: string; source: string; version: string; servers: { alias: string }[] }>(
+        yield* get(`${CorpPaths.catalog}`),
+      )
+
+      expect(view.hub_error).toBe("hub_invalid_response")
+      // Витрина ведёт себя как при недоступном Hub: карточки — из кэша, который не перезаписан.
+      expect(view.source).toBe("cache")
+      expect(view.version).toBe("кэш до сбоя")
+      const cached = yield* Effect.promise(() => CorpCatalogCache.read(state.hub.url))
+      expect(cached?.version).toBe("кэш до сбоя")
     }),
   )
 })

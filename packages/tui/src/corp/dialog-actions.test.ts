@@ -108,3 +108,82 @@ describe("tui/corp — предикат применён ко всем клав�
     )
   })
 })
+
+/**
+ * Экран прав TUI по таблице S-V9 (AC-155, AC-156, AC-157).
+ *
+ * `presetOptions` берётся из исходника диалога и исполняется как есть, подписи — через подставленный
+ * `t`. Пустой список опций — единственное, на чём держится строка 4 таблицы: экран прав не
+ * открывается, а `PUT /api/me/connections/<alias>/permissions` не отправляется.
+ */
+describe("tui/corp — экран прав по видам модели прав (S-V9, AC-155, AC-156, AC-157)", () => {
+  function extractPresetOptions() {
+    const start = source.indexOf("export function presetOptions(")
+    expect(start, "функция presetOptions(model) не найдена в диалоге витрины").toBeGreaterThan(-1)
+    const open = source.lastIndexOf("{", source.indexOf("\n", start))
+    let depth = 0
+    for (let at = open; at < source.length; at++) {
+      if (source[at] === "{") depth += 1
+      else if (source[at] === "}") {
+        depth -= 1
+        if (depth === 0)
+          return new Function("t", "model", source.slice(open + 1, at)) as (
+            t: (key: string) => string,
+            model: unknown,
+          ) => { value: string; title: string; description?: string }[]
+      }
+    }
+    throw new Error("presetOptions не закрыт")
+  }
+
+  const presetOptions = extractPresetOptions()
+  const t = (key: string) => `t(${key})`
+
+  test("AC-155, строка 1: header_groups — readonly/readwrite с раскрытым составом групп", () => {
+    const options = presetOptions(t, {
+      kind: "header_groups",
+      groups: [
+        { id: "read", title: "Чтение", preset: "readonly" },
+        { id: "write", title: "Запись", preset: "readwrite" },
+      ],
+      always: ["gitlab_search"],
+    })
+    expect(options.map((option) => option.value)).toEqual(["readonly", "readwrite"])
+    expect(options[0]!.title).toBe("t(preset.readonly)")
+    expect(options[0]!.description).toContain("Чтение (readonly)")
+    expect(options[0]!.description).toContain("gitlab_search")
+  })
+
+  test("AC-155, строка 2: tool_filter — имена пресетов Hub и их tools как есть", () => {
+    const options = presetOptions(t, {
+      kind: "tool_filter",
+      presets: { readonly: { tools: ["whoami", "get_*"] }, readwrite: { tools: ["*"] } },
+    })
+    expect(options.map((option) => option.value)).toEqual(["readonly", "readwrite"])
+    expect(options.map((option) => option.title)).toEqual(["readonly", "readwrite"])
+    expect(options[0]!.description).toBe("whoami, get_*")
+    expect(options[1]!.description).toBe("*")
+  })
+
+  test("AC-155, строка 3: consent — только имена пресетов, без состава прав", () => {
+    const options = presetOptions(t, { kind: "consent", presets: { default: { note: "экран согласия" } } })
+    expect(options).toEqual([{ value: "default", title: "default" }])
+  })
+
+  test("AC-156, AC-157, строка 4: непонятая модель прав не даёт ни одного пресета", () => {
+    // Карточка с неизвестным `kind` доходит до экрана без модели: корп-роут отдаёт наружу только
+    // разобранную модель, непонятый вид становится отсутствующим (S-V14 п.3, проверено в
+    // `packages/opencode/src/corp/hub.test.ts` и `connectors.test.ts`).
+    expect(presetOptions(t, undefined)).toEqual([])
+  })
+
+  test("AC-156: при пустом списке пресетов экран не открывается и PUT не отправляется", () => {
+    const handler = source.slice(source.indexOf("async function openPermissions("))
+    const guard = handler.slice(handler.indexOf("presetOptions"), handler.indexOf("const preset = await"))
+    expect(guard).toContain("options.length === 0")
+    expect(guard).toContain('t("connectors.permissionsUnavailable")')
+    expect(guard).toContain("return")
+    // Запрос прав идёт строго после выбора пресета из непустого списка.
+    expect(handler.indexOf("sdk.client.corp.permissions")).toBeGreaterThan(handler.indexOf("const preset = await"))
+  })
+})

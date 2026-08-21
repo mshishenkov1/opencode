@@ -1,5 +1,5 @@
 # Критерии приёмки I-4: корпоративный форк OpenCode
-# Спецификация: corp/docs/spec.md (ревизия 1.7)
+# Спецификация: corp/docs/spec.md (ревизия 1.8)
 # Формат: id, rule (правила спецификации), type (unit|integration|manual|ci), given/when/then.
 # Все HTTP-обращения к Hub в автотестах — только к мокам, без сети.
 #
@@ -42,6 +42,19 @@
 # Требуемое поведение AC-154…AC-167 на момент ревизии в коде отсутствует.
 # Подробности — блок «Ревизия 1.7» в начале spec.md.
 #
+# Ревизия 1.8 (2026-08-21): ИСПРАВЛЕНИЕ КОНТРАКТА по спорному п.1 S-V14. Сверка с источником истины на
+# стороне Hub (спека Hub R-C1 «version (целое ≥ 1)» и R-A3, src/hub/catalog.py::parse_catalog с
+# проверкой isinstance(version, int) и Catalog.version: int, роут api_catalog, catalog.yaml version: 1,
+# живой стенд GET /api/catalog -> {"version": 1, ...}) показала: Hub свой контракт не нарушает, а
+# «version — строка» было ошибкой спецификации форка. S-V14 п.1: version принимается числом или
+# строкой и нормализуется к строке (D-29); п.6: конверт GET /api/me/connections — массив верхнего
+# уровня, тело не массив -> hub_invalid_response. AC-160 УСИЛЕН: обе прежние проверки сохранены
+# дословно, добавлен третий случай отказа (version недопустимого типа). Исправлена фикстура AC-154
+# (auth_kind живой карточки tag — user_token, а не oauth2; «все четыре элемента» -> «все три»);
+# проверяемое поведение AC-154 не изменено. Добавлены AC-168 и AC-169. Существующие ID не менялись,
+# не переименовывались и не ослаблялись. Требуемое поведение AC-168, AC-169 на момент ревизии в коде
+# отсутствует. Подробности — блок «Ревизия 1.8» в начале spec.md.
+#
 # Ревизия 1.6 (2026-08-21): ИЗМЕНЕНИЕ КОНТРАКТА по живой проверке раздачи Desktop. Корпоративная сборка
 # использовала идентичность ванильного апстрима: corp/build.ts переводил канал latest в десктопный prod,
 # а prod в packages/desktop/electron-builder.config.ts — это appId ai.opencode.desktop и
@@ -77,7 +90,7 @@
 # Требуемое поведение AC-132, AC-133, AC-135, AC-136, AC-137 на момент ревизии в коде отсутствует.
 # Подробности — блок «Ревизия 1.5» в начале spec.md.
 
-version: 1.5
+version: 1.8
 spec: corp/docs/spec.md
 criteria:
 
@@ -1459,14 +1472,14 @@ criteria:
     type: unit
     given: >
       мок Hub GET /api/catalog отвечает живой карточкой tag: alias=tag, title="ТЭГ (Mattermost)",
-      status=beta, mode=facade, mcp_url="https://hub.test/mcp/tag", auth_kind=oauth2,
+      status=beta, mode=facade, mcp_url="https://hub.test/mcp/tag", auth_kind=user_token,
       permission_model={kind:"tool_filter", presets:{readonly:{tools:["whoami","get_*","list_*"]},
       readwrite:{tools:["*"]}}}
     when: вызван клиент Hub и открыта витрина
     then: >
       ошибки hub_invalid_response нет; карточка ТЭГ показана в витрине со своими действиями;
       permission_model доступен карточке без потерь — kind=tool_filter, presets.readonly.tools
-      содержит все четыре элемента в исходном порядке, presets.readwrite.tools = ["*"]
+      содержит все три элемента в исходном порядке, presets.readwrite.tools = ["*"]
 
   - id: AC-155
     rule: [S-V9]
@@ -1531,11 +1544,12 @@ criteria:
     rule: [S-V14, S-V2]
     type: unit
     given: >
-      GET /api/catalog вернул 200 с нарушенным конвертом (нет поля version либо servers не массив)
+      GET /api/catalog вернул 200 с нарушенным конвертом — по одному случаю на каждый: нет поля
+      version; servers не массив; version недопустимого типа (null, true, объект, массив)
     when: вызван клиент Hub
     then: >
-      возвращена ошибка hub_invalid_response, кэш не перезаписан, витрина показывает состояние
-      «Hub недоступен» по S-V3
+      в каждом случае возвращена ошибка hub_invalid_response, кэш не перезаписан, витрина показывает
+      состояние «Hub недоступен» по S-V3
     negative: true
 
   - id: AC-161
@@ -1607,6 +1621,33 @@ criteria:
       нарушенный конверт; элемент GET /api/me/connections без alias; экран прав по всем четырём
       строкам таблицы S-V9; каталог, у которого отброшены все карточки
 
+  # ------------------------------------------- ревизия 1.8: тип version в конверте каталога (диспут по S-V14 п.1)
+
+  - id: AC-168
+    rule: [S-V14, S-V2, D-29]
+    type: unit
+    given: >
+      GET /api/catalog вернул живую форму конверта Hub — {"version": 1, "servers": [<валидная
+      карточка>]}, где version число, а не строка; тот же тест повторён с {"version": "1", …}
+    when: вызван клиент Hub и открыта витрина
+    then: >
+      в обоих случаях ошибки hub_invalid_response нет, карточка показана, кэш перезаписан;
+      значение version отдано наружу (/corp/catalog, catalog_version в /corp/status) и записано в
+      кэш строкой "1" — форма пришедшего значения на состав витрины не влияет
+
+  - id: AC-169
+    rule: [S-V14, S-V2]
+    type: unit
+    given: >
+      GET /api/me/connections вернул 200 телом, не являющимся JSON-массивом (объект-конверт
+      {"connections": […]} и строка)
+    when: вызван клиент Hub
+    then: >
+      в каждом случае возвращена ошибка hub_invalid_response; ответ с массивом верхнего уровня,
+      один элемент которого не разобран по ядру, ошибки не даёт — этот элемент отброшен, остальные
+      применены (S-V14 п.6)
+    negative: true
+
 # ---------------------------------------------------------------- карта покрытия правил
 coverage:
   S-C1: [AC-01, AC-02]
@@ -1635,7 +1676,7 @@ coverage:
   S-A12: [AC-36, AC-37]
   S-A13: [AC-127, AC-128, AC-129, AC-130, AC-131]
   S-V1: [AC-38, AC-165]
-  S-V2: [AC-39, AC-40, AC-41, AC-127, AC-128, AC-154, AC-160]
+  S-V2: [AC-39, AC-40, AC-41, AC-127, AC-128, AC-154, AC-160, AC-168, AC-169]
   S-V3: [AC-42, AC-43, AC-44, AC-45, AC-46, AC-47, AC-158]
   S-V4: [AC-48]
   S-V5: [AC-49]
@@ -1647,7 +1688,7 @@ coverage:
   S-V11: [AC-69]
   S-V12: [AC-45, AC-48, AC-70, AC-161]
   S-V13: [AC-71, AC-72]
-  S-V14: [AC-40, AC-154, AC-156, AC-157, AC-158, AC-159, AC-160, AC-161, AC-162, AC-163, AC-165]
+  S-V14: [AC-40, AC-154, AC-156, AC-157, AC-158, AC-159, AC-160, AC-161, AC-162, AC-163, AC-165, AC-168, AC-169]
   S-T1: [AC-73]
   S-T2: [AC-74]
   S-T3: [AC-75]
@@ -1703,7 +1744,7 @@ negative_scenarios:
   oauth_rejected: [AC-59, AC-60]
   permissions_cancelled: [AC-66]
   cache_expired: [AC-44, AC-46]
-  invalid_hub_response: [AC-23, AC-160]
+  invalid_hub_response: [AC-23, AC-160, AC-169]
   catalog_partial_parse: [AC-40, AC-156, AC-157, AC-158, AC-159, AC-161, AC-163]
   user_email_unknown: [AC-127, AC-128, AC-129, AC-130, AC-131]
   login_session_errors: [AC-21, AC-22, AC-26, AC-30, AC-32]

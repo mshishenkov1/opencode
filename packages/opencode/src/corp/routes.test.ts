@@ -26,6 +26,13 @@ describe("корп-роуты — набор маршрутов (AC-14, AC-38)",
     expect(CorpPaths.disconnect).toBe("/corp/connectors/:alias/disconnect")
     expect(CorpPaths.permissions).toBe("/corp/connectors/:alias/permissions")
   })
+
+  test("AC-175: «Убрать из списка» — отдельный маршрут DELETE /corp/connectors/:alias", () => {
+    // Ревизия 1.9 (S-V17): действие удаляет саму запись коннектора, а не подчинённый ресурс,
+    // и потому не совпадает ни с «Отключить», ни с «Правами».
+    expect(CorpPaths.forget).toBe("/corp/connectors/:alias")
+    expect(CorpPaths.forget).not.toBe(CorpPaths.disconnect)
+  })
 })
 
 describe("корп-роуты — ошибки (AC-09, AC-22)", () => {
@@ -122,6 +129,10 @@ describe("корп-роуты — схемы ответов (AC-14, AC-15)", () 
           title: "GitLab",
           status: "not_connected",
           actions: ["connect", "open_hub"],
+          // Ревизия 1.9 (S-V15, S-V16): состояние карточки и признак «подключение состоялось»
+          // отдаются наружу как обязательные поля — оболочка их не домысливает (S-T10).
+          state: "never",
+          ever_connected: false,
           deprecated: false,
           blocked: true,
           configured: false,
@@ -130,6 +141,96 @@ describe("корп-роуты — схемы ответов (AC-14, AC-15)", () 
       hub_error: "hub_unavailable",
     }
     expect(Option.isSome(decode(CorpSchema.CatalogView, view))).toBe(true)
+  })
+
+  test("AC-38: карточка без state или без ever_connected схемой не принимается", () => {
+    // Обязательность этих полей и есть то, что не даёт оболочке завести вторую копию правила
+    // S-V16 и домыслить состояние по `actions` и `status` (S-T10).
+    const card = {
+      alias: "gitlab",
+      title: "GitLab",
+      status: "not_connected",
+      actions: ["connect", "open_hub"],
+      state: "never",
+      ever_connected: false,
+      deprecated: false,
+      blocked: false,
+      configured: false,
+    }
+    const view = (server: Record<string, unknown>) => ({
+      version: "1",
+      source: "hub",
+      stale: false,
+      servers: [server],
+    })
+    expect(Option.isSome(decode(CorpSchema.CatalogView, view(card)))).toBe(true)
+
+    for (const missing of ["state", "ever_connected"]) {
+      const broken: Record<string, unknown> = { ...card }
+      delete broken[missing]
+      expect(Option.isNone(decode(CorpSchema.CatalogView, view(broken))), missing).toBe(true)
+    }
+
+    // Состояние — одно из пяти значений таблицы S-V16, чужое значение не принимается.
+    expect(Option.isNone(decode(CorpSchema.CatalogView, view({ ...card, state: "почти_подключён" })))).toBe(true)
+  })
+
+  test("AC-38: набор действий карточки пополнен значением forget, прежние сохранены (S-V16)", () => {
+    for (const action of ["connect", "reconnect", "disconnect", "forget", "permissions", "open_hub"]) {
+      const decoded = decode(CorpSchema.CatalogView, {
+        version: "1",
+        source: "hub",
+        stale: false,
+        servers: [
+          {
+            alias: "gitlab",
+            title: "GitLab",
+            status: "not_connected",
+            actions: [action],
+            state: "never",
+            ever_connected: false,
+            deprecated: false,
+            blocked: false,
+            configured: false,
+          },
+        ],
+      })
+      expect(Option.isSome(decoded), action).toBe(true)
+    }
+  })
+
+  test("AC-180: ответ connect несёт класс ошибки подключения (S-V19)", () => {
+    for (const errorClass of ["token_rejected", "method_unavailable", "hub_unreachable", "unknown"]) {
+      const decoded = decode(CorpSchema.ConnectorResult, {
+        alias: "gitlab",
+        status: "needs_auth",
+        error: "denied",
+        error_class: errorClass,
+      })
+      expect(Option.isSome(decoded), errorClass).toBe(true)
+    }
+    // Чужой класс схемой не принимается: их ровно четыре (S-V19).
+    expect(
+      Option.isNone(
+        decode(CorpSchema.ConnectorResult, { alias: "gitlab", status: "needs_auth", error_class: "просто_ошибка" }),
+      ),
+    ).toBe(true)
+  })
+
+  test("AC-175, AC-176: ответ «Убрать из списка» описан схемой с removed и необязательным hub_error", () => {
+    const ok = decode(CorpSchema.ForgetResult, { alias: "gitlab", status: "not_connected", removed: true })
+    expect(Option.isSome(ok)).toBe(true)
+
+    const hubDown = decode(CorpSchema.ForgetResult, {
+      alias: "gitlab",
+      status: "not_connected",
+      removed: true,
+      hub_error: "hub_unavailable",
+    })
+    if (Option.isNone(hubDown)) throw new Error("ожидался разбор")
+    // Локальные шаги выполнены и не откачены — это и означает removed:true рядом с hub_error.
+    expect(hubDown.value.removed).toBe(true)
+    expect(hubDown.value.hub_error).toBe("hub_unavailable")
   })
 
   test("AC-48: состояние «Требуется вход» выражается hub_error=unauthorized и пустым списком", () => {

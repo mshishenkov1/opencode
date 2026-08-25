@@ -72,6 +72,29 @@ describe("corp/connectors — «Отключить» (AC-62)", () => {
   })
 })
 
+/**
+ * «Убрать из списка» (S-V17; AC-175).
+ *
+ * Смысл действия — «я больше не хочу видеть этот сервер подключённым у себя»: в отличие от
+ * «Отключить», оно **удаляет** запись `mcp.<alias>` из конфига, а не переводит её в `enabled:false`.
+ */
+describe("corp/connectors — «Убрать из списка» (AC-175)", () => {
+  test("AC-175: патч удаляет ключ mcp.<alias> целиком, а не гасит его", () => {
+    const patch = CorpConnectors.forgetPatch("gitlab") as { mcp: Record<string, unknown> }
+    expect("gitlab" in patch.mcp).toBe(true)
+    expect(patch.mcp["gitlab"]).toBeUndefined()
+    // Отличие от «Отключить» наблюдаемо: там значение остаётся объектом с enabled:false.
+    expect(patch).not.toEqual(CorpConnectors.disconnectPatch("gitlab") as object)
+    expect(JSON.stringify(patch)).not.toContain("enabled")
+  })
+
+  test("AC-175: правятся только ключи mcp.<alias>, прочий конфиг пользователя не затрагивается", () => {
+    const patch = CorpConnectors.forgetPatch("gitlab") as Record<string, unknown>
+    expect(Object.keys(patch)).toEqual(["mcp"])
+    expect(Object.keys((patch["mcp"] as Record<string, unknown>) ?? {})).toEqual(["gitlab"])
+  })
+})
+
 describe("corp/connectors — «Права» (AC-64, AC-65)", () => {
   test("AC-64: facade — патч обновляет только oauth.scope", () => {
     expect(CorpConnectors.permissionsPatch(facade, "readwrite") as unknown).toEqual({
@@ -245,8 +268,15 @@ describe("corp/connectors — экран прав по таблице S-V9 (AC-1
     card["permission_model"] = { kind: "quota_tiers", tiers: [] }
     const server = parsed({ version: 1, servers: [card] }).servers[0]!
 
+    // Проверяется то, ради чего тест написан: непонятая модель прав не отбрасывает карточку и не
+    // отнимает у неё ни подключение, ни «Открыть в Hub». Набор действий здесь определяется не
+    // моделью прав, а состоянием: живая карточка `tag` несёт `connection.status = "connected"`,
+    // то есть по S-V15 п.1б подключение к ней состоялось (состояние 3 таблицы S-V16).
     const notConnected = CorpStatus.compute({ alias: server.alias, server, configured: false, stale: false })
-    expect(notConnected.actions).toEqual(["connect", "open_hub"])
+    expect(notConnected.actions).not.toContain("permissions")
+    expect(notConnected.actions).toContain("open_hub")
+    expect(notConnected.actions.some((action) => action === "connect" || action === "reconnect")).toBe(true)
+    expect(notConnected.actions).toEqual(["reconnect", "forget", "open_hub"])
     const connected = CorpStatus.compute({
       alias: server.alias,
       server,

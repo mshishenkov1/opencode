@@ -30,6 +30,7 @@ import { NpmTest } from "../../test/fake/npm"
 import { testInstanceStoreLayer } from "../../test/fixture/fixture"
 import { testEffect } from "../../test/lib/effect"
 import * as CorpCatalogCache from "./catalog-cache"
+import * as CorpConnections from "./connections"
 import { liveCatalogBody, liveTagCard } from "../../test/fixture/corp-hub-live"
 
 /**
@@ -298,6 +299,7 @@ const it = testEffect(served)
 
 const tmpDirs: string[] = []
 let previousGlobalConfig: string
+let previousGlobalData: string
 let previousPath: string | undefined
 let previousBrowser: string | undefined
 let browserLog: string
@@ -331,6 +333,10 @@ beforeEach(async () => {
   )
   previousGlobalConfig = Global.Path.config
   ;(Global.Path as { config: string }).config = globalDir
+  // Ревизия 1.9: витрина пишет признак «подключение состоялось» в `Global.Path.data/corp`
+  // (S-V15 п.2) — каталог данных тоже временный, настоящий профиль пользователя не задействуется.
+  previousGlobalData = Global.Path.data
+  ;(Global.Path as { data: string }).data = await tmp("corp-data-")
   previousPath = process.env["PATH"]
   process.env["PATH"] = `${stubDir}${path.delimiter}${previousPath ?? ""}`
   // На linux пакет `open` предпочитает встроенный `xdg-open`, который открывает `$BROWSER`.
@@ -355,6 +361,7 @@ beforeEach(async () => {
 afterEach(() => {
   state.hub.stop()
   ;(Global.Path as { config: string }).config = previousGlobalConfig
+  ;(Global.Path as { data: string }).data = previousGlobalData
   if (previousPath === undefined) delete process.env["PATH"]
   else process.env["PATH"] = previousPath
   if (previousBrowser === undefined) delete process.env["BROWSER"]
@@ -391,6 +398,8 @@ const get = (route: string) => HttpClientRequest.get(route).pipe(HttpClient.exec
 const connectRoute = (alias: string) => CorpPaths.connect.replace(":alias", alias)
 const disconnectRoute = (alias: string) => CorpPaths.disconnect.replace(":alias", alias)
 const permissionsRoute = (alias: string) => CorpPaths.permissions.replace(":alias", alias)
+/** «Убрать из списка» (S-V17): DELETE самой записи коннектора, а не подчинённого ресурса. */
+const forgetRoute = (alias: string) => CorpPaths.forget.replace(":alias", alias)
 
 const body = <A>(response: { json: Effect.Effect<unknown, any, any> }) => response.json as Effect.Effect<A, any, any>
 
@@ -660,6 +669,253 @@ describe("оркестрация витрины — «Права» (AC-64, AC-65
 })
 
 // --- Каталог: memo и протухший кэш (S-V3, S-V6) ---
+
+// --- «Убрать из списка» и признак «подключение состоялось» (S-V15, S-V17) ---
+
+/** Признак «подключение состоялось» с диска (S-V15 п.2) — тот же файл, что читает витрина. */
+const everConnected = (alias: string) =>
+  Effect.promise(async () => {
+    const { entry } = await CorpConnections.read(state.hub.url)
+    return CorpConnections.has(entry, alias)
+  })
+
+/** Карточка витрины по alias — то, что оболочка получает из `GET /corp/catalog`. */
+const cardOf = (alias: string) =>
+  Effect.gen(function* () {
+    const response = yield* get(CorpPaths.catalog)
+    const view = yield* body<{
+      servers: {
+        alias: string
+        status: string
+        actions: string[]
+        state: string
+        ever_connected: boolean
+        error?: string
+        error_class?: string
+      }[]
+    }>(response)
+    return view.servers.find((server) => server.alias === alias)!
+  })
+
+describe("оркестрация витрины — «Убрать из списка» (AC-175, AC-176, AC-188)", () => {
+  it.live("AC-175: локальные шаги, удаление ключа mcp.<alias> и DELETE подключения в Hub — по порядку", () =>
+    Effect.gen(function* () {
+      // Посторонние ключи конфига пользователя, которые действие трогать не имеет права (S-C7).
+      yield* Effect.promise(() =>
+        fs.writeFile(
+          path.join(Global.Path.config, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            autoupdate: false,
+            mcp: { "keep-alias": { type: "remote", url: "https://keep.test/mcp", enabled: false } },
+          }),
+        ),
+      )
+      yield* post(connectRoute(FACADE.alias), {})
+      expect(yield* everConnected(FACADE.alias)).toBe(true)
+      state.calls = []
+      state.hub.requests.length = 0
+
+      const response = yield* del(forgetRoute(FACADE.alias))
+      const result = yield* body<{ alias: string; status: string; removed: boolean; hub_error?: string }>(response)
+
+      expect(result).toEqual({ alias: FACADE.alias, status: "not_connected", removed: true })
+      // Шаги 1: те же локальные шаги, что у «Отключить».
+      expect(state.calls).toEqual([`removeAuth:${FACADE.alias}`, `disconnect:${FACADE.alias}`])
+      // Шаг 2: ключ удалён целиком, а не переведён в enabled:false.
+      const config = yield* Effect.promise(() => globalConfig())
+      expect(FACADE.alias in (config.mcp ?? {})).toBe(false)
+      // Прочие ключи пользователя не изменены.
+      expect(config.autoupdate).toBe(false)
+      expect(config.mcp["keep-alias"]).toEqual({ type: "remote", url: "https://keep.test/mcp", enabled: false })
+      // Шаг 3: признак «подключение состоялось» снят.
+      expect(yield* everConnected(FACADE.alias)).toBe(false)
+      // Шаг 4: подключение снято и в Hub.
+      expect(state.hub.requests.filter((request) => request.method === "DELETE").map((request) => request.path)).toEqual(
+        [`/api/me/connections/${FACADE.alias}`],
+      )
+    }),
+  )
+
+  it.live("AC-175: карточка после «Убрать из списка» — «Не подключён» и остаётся в витрине", () =>
+    Effect.gen(function* () {
+      yield* post(connectRoute(FACADE.alias), {})
+      yield* del(forgetRoute(FACADE.alias))
+      state.statuses = {}
+
+      const card = yield* cardOf(FACADE.alias)
+      expect(card.state).toBe("never")
+      expect(card.ever_connected).toBe(false)
+      expect(card.actions).toEqual(["connect", "open_hub"])
+      expect(card.actions).not.toContain("disconnect")
+      expect(card.actions).not.toContain("forget")
+    }),
+  )
+
+  it.live("AC-176: недоступный Hub не откатывает локальные шаги — hub_error рядом с removed:true", () =>
+    Effect.gen(function* () {
+      yield* post(connectRoute(FACADE.alias), {})
+      // Hub недоступен на шаге 4: соединения нет вовсе (тот же наблюдаемый исход, что у таймаута).
+      state.hub.stop()
+      state.calls = []
+
+      const response = yield* del(forgetRoute(FACADE.alias))
+      const result = yield* body<{ status: string; removed: boolean; hub_error?: string }>(response)
+
+      expect(result.removed).toBe(true)
+      expect(result.hub_error).toBe("hub_unavailable")
+      // Локальные шаги выполнены и не откачены.
+      expect(state.calls).toEqual([`removeAuth:${FACADE.alias}`, `disconnect:${FACADE.alias}`])
+      const config = yield* Effect.promise(() => globalConfig())
+      expect(FACADE.alias in (config.mcp ?? {})).toBe(false)
+      expect(yield* everConnected(FACADE.alias)).toBe(false)
+    }),
+  )
+
+  it.live("AC-176: без ключа magnit_prod шаг обращения к Hub пропускается, локальные — выполняются", () =>
+    Effect.gen(function* () {
+      yield* post(connectRoute(FACADE.alias), {})
+      state.key = undefined
+      state.hub.requests.length = 0
+
+      const response = yield* del(forgetRoute(FACADE.alias))
+      const result = yield* body<{ removed: boolean }>(response)
+
+      expect(result.removed).toBe(true)
+      expect(state.hub.requests.filter((request) => request.method === "DELETE")).toEqual([])
+      const config = yield* Effect.promise(() => globalConfig())
+      expect(FACADE.alias in (config.mcp ?? {})).toBe(false)
+    }),
+  )
+
+  it.live("AC-188: «Отключить» признак не снимает, «Убрать из списка» — снимает", () =>
+    Effect.gen(function* () {
+      yield* post(connectRoute(FACADE.alias), {})
+      expect(yield* everConnected(FACADE.alias)).toBe(true)
+
+      yield* post(disconnectRoute(FACADE.alias))
+      // Пользователь отключил то, что у него работало: признак остаётся (S-V15 п.3, AC-178).
+      expect(yield* everConnected(FACADE.alias)).toBe(true)
+      const disconnected = yield* cardOf(FACADE.alias)
+      expect(disconnected.ever_connected).toBe(true)
+      expect(disconnected.state).toBe("disconnected")
+      expect(disconnected.actions).toEqual(["reconnect", "forget", "open_hub"])
+      expect(disconnected.actions).not.toContain("disconnect")
+
+      yield* del(forgetRoute(FACADE.alias))
+      expect(yield* everConnected(FACADE.alias)).toBe(false)
+    }),
+  )
+
+  it.live("AC-188: признак выставляется и по записи подключения Hub, без локальной истории", () =>
+    Effect.gen(function* () {
+      state.hub.catalog = catalogOf(
+        [{ alias: FACADE.alias, connection: { status: "connected", preset: "readonly" } }],
+        state.hub.url,
+      )
+
+      const card = yield* cardOf(FACADE.alias)
+      expect(card.ever_connected).toBe(true)
+      // И тот же признак остался на диске — следующее открытие витрины его уже не потеряет.
+      expect(yield* everConnected(FACADE.alias)).toBe(true)
+    }),
+  )
+})
+
+// --- Классы ошибок подключения (S-V19) ---
+
+describe("оркестрация витрины — классы ошибок подключения (AC-172, AC-180…AC-183)", () => {
+  /** Неудачная авторизация с заданным текстом ошибки MCP-OAuth. */
+  const failWith = (message: string) => {
+    state.addStatus = { status: "needs_auth" }
+    state.authenticate = () => ({ status: "failed", error: message })
+  }
+
+  it.live("AC-180: отказ авторизации даёт token_rejected во всех трёх видах, секретов в ответе нет", () =>
+    Effect.gen(function* () {
+      for (const message of [
+        "OAuth error: invalid_grant",
+        "MCP proxy responded 401 Unauthorized",
+        'jsonrpc error: {"data":{"reason":"needs_reauth"}}',
+      ]) {
+        failWith(message)
+        const response = yield* post(connectRoute(FACADE.alias), {})
+        const result = yield* body<{ error?: string; error_class?: string }>(response)
+        expect(result.error_class, message).toBe("token_rejected")
+        const text = JSON.stringify(result)
+        expect(text, message).not.toContain(KEY)
+        expect(text, message).not.toContain("secret-do-not-leak")
+      }
+    }),
+  )
+
+  it.live("AC-181: отказ регистрации клиента даёт method_unavailable", () =>
+    Effect.gen(function* () {
+      state.addStatus = { status: "needs_auth" }
+      state.authenticate = () => ({ status: "needs_client_registration", error: "dynamic client registration failed" })
+
+      const response = yield* post(connectRoute(FACADE.alias), {})
+      const result = yield* body<{ error_class?: string }>(response)
+      expect(result.error_class).toBe("method_unavailable")
+    }),
+  )
+
+  it.live("AC-181: карточки нет в каталоге — подключать этим способом нечем", () =>
+    Effect.gen(function* () {
+      const response = yield* post(connectRoute("нет-такого-alias"), {})
+      const result = yield* body<{ hub_error?: string; error_class?: string }>(response)
+      expect(result.hub_error).toBe("not_found")
+      expect(result.error_class).toBe("method_unavailable")
+    }),
+  )
+
+  it.live("AC-182: сеть и Hub дают hub_unreachable", () =>
+    Effect.gen(function* () {
+      for (const message of ["fetch failed: ETIMEDOUT", "connect ECONNREFUSED 127.0.0.1:8080", "HTTP 502 Bad Gateway"]) {
+        failWith(message)
+        const response = yield* post(connectRoute(FACADE.alias), {})
+        const result = yield* body<{ error_class?: string }>(response)
+        expect(result.error_class, message).toBe("hub_unreachable")
+      }
+    }),
+  )
+
+  it.live("AC-183: неотнесённая ошибка получает unknown, но объяснение и код остаются", () =>
+    Effect.gen(function* () {
+      failWith("непонятная ошибка сервера коннектора")
+      const response = yield* post(connectRoute(FACADE.alias), {})
+      const result = yield* body<{ error?: string; error_class?: string }>(response)
+      expect(result.error_class).toBe("unknown")
+      expect(result.error).toContain("непонятная ошибка сервера коннектора")
+    }),
+  )
+
+  it.live("AC-172: после неудачи запись конфига осталась, признак не выставлен, «Отключить» нет", () =>
+    Effect.gen(function* () {
+      failWith("OAuth error: invalid_grant")
+
+      const response = yield* post(connectRoute(FACADE.alias), {})
+      const result = yield* body<{ status: string; error?: string; error_class?: string }>(response)
+      expect(result.error_class).toBe("token_rejected")
+
+      // Шаг 4 S-V7: запись `mcp.<alias>` остаётся — повтор в один клик.
+      const config = yield* Effect.promise(() => globalConfig())
+      expect(config.mcp[FACADE.alias].url).toBe(`${state.hub.url}/mcp/${FACADE.alias}`)
+      // Признак «подключение состоялось» не выставлен: попытка не удалась.
+      expect(yield* everConnected(FACADE.alias)).toBe(false)
+
+      const card = yield* cardOf(FACADE.alias)
+      expect(card.ever_connected).toBe(false)
+      expect(card.state).toBe("failed")
+      expect(card.actions).toEqual(["connect", "open_hub"])
+      // Слово «Отключить» на карточке не появляется ни в каком виде.
+      expect(JSON.stringify(card)).not.toContain("disconnect")
+      expect(JSON.stringify(card)).not.toContain("forget")
+      // Объяснение ошибки у карточки есть — «ошибки без объяснения» не существует (D-32).
+      expect(["token_rejected", "method_unavailable", "hub_unreachable", "unknown"]).toContain(card.error_class)
+    }),
+  )
+})
 
 describe("витрина — каталог по инстансам и протухший кэш (S-V3, S-V6)", () => {
   it.live("S-V3: memo каталога не отдаёт второму рабочему каталогу карточки первого", () =>

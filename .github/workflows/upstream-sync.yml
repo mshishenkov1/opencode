@@ -1,0 +1,107 @@
+# Автосинхронизация с ванильным OpenCode (anomalyco/opencode).
+# Раз в сутки проверяет свежий релиз upstream; если корп-ветка его ещё не содержит —
+# создаёт ветку sync/<тег>, мержит и открывает PR. Конфликт разрешается руками:
+# workflow открывает issue со списком конфликтующих файлов (обычно это точки-крючки
+# из corp/patches.md — всё остальное у нас аддитивно и сливается чисто).
+name: upstream-sync
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег upstream (пусто = последний релиз)"
+        required: false
+
+env:
+  UPSTREAM: anomalyco/opencode
+  CORP_BRANCH: corp/i4-sso-connectors
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CORP_BRANCH }}
+          fetch-depth: 0
+
+      - name: Определить целевой тег upstream
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || '' }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Целевой тег: $TAG"
+
+      - name: Забрать upstream и проверить, нужен ли мерж
+        id: need
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.tag.outputs.tag }}'
+          git remote add upstream "https://github.com/$UPSTREAM.git"
+          git fetch --quiet upstream "refs/tags/$TAG:refs/tags/$TAG"
+          if git merge-base --is-ancestor "$TAG" HEAD; then
+            echo "Тег $TAG уже в корп-ветке — делать нечего."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Слить тег в ветку sync/<тег>
+        if: steps.need.outputs.needed == 'true'
+        id: merge
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.tag.outputs.tag }}'
+          git config user.name "upstream-sync[bot]"
+          git config user.email "upstream-sync@users.noreply.github.com"
+          git switch -c "sync/$TAG"
+          # Каждый корп-коммит обязан начинаться с "corp: " — merge-коммит тоже.
+          if git merge --no-ff "$TAG" -m "corp: слить upstream $TAG"; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U > /tmp/conflicts.txt
+            git merge --abort
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Открыть PR (чистый мерж)
+        if: steps.need.outputs.needed == 'true' && steps.merge.outputs.clean == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.tag.outputs.tag }}'
+          git push origin "sync/$TAG"
+          gh pr create \
+            --base "$CORP_BRANCH" \
+            --head "sync/$TAG" \
+            --title "corp: синхронизация с upstream $TAG" \
+            --body "$(printf 'Автоматический мерж upstream **%s** в `%s`.\n\nМерж чистый — конфликтов нет. Корп-CI прогонит проверки на этом PR; зелёный прогон = можно сливать.\n\n🤖 Создано workflow `upstream-sync`.' "$TAG" "$CORP_BRANCH")"
+
+      - name: Открыть issue (конфликты)
+        if: steps.need.outputs.needed == 'true' && steps.merge.outputs.clean == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.tag.outputs.tag }}'
+          if gh issue list --state open --search "in:title $TAG" --json title --jq '.[].title' | grep -qF "$TAG"; then
+            echo "Issue про $TAG уже открыт — не дублирую."
+            exit 0
+          fi
+          gh issue create \
+            --title "corp: конфликт синхронизации с upstream $TAG" \
+            --body "$(printf 'Мерж **%s** в `%s` конфликтует. Файлы:\n\n```\n%s\n```\n\nОжидаемо конфликтуют только точки-крючки из `corp/patches.md`. Разрешить руками:\n\n```\ngit fetch upstream --tags\ngit switch -c sync/%s %s\ngit merge %s   # разрешить, закоммитить с префиксом corp:\n```\n\n🤖 Создано workflow `upstream-sync`.' "$TAG" "$CORP_BRANCH" "$(cat /tmp/conflicts.txt)" "$TAG" "$CORP_BRANCH" "$TAG")"

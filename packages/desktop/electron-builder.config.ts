@@ -159,6 +159,14 @@ function getConfig() {
       return {
         ...base,
         appId,
+        // corp: свой каталог кеша обновлений (S-B13, S-B9 п. «д», D-34). `updaterCacheDirName` в
+        // `app-update.yml` electron-builder вычисляет как
+        // `sanitizeFileName(metadata.name).toLowerCase() + "-updater"` (F42) — то есть из поля
+        // `name` пакета, а не из appId и не из productName. С upstream-значением
+        // `@opencode-ai/desktop` корпоративная сборка искала обновление там же, где его кладёт
+        // ванильная (`~/Library/Caches/@opencode-aidesktop-updater`). Прочие поля `extraMetadata`
+        // (desktopName из getBase) сохраняются, ветки dev/beta/prod не затрагиваются.
+        extraMetadata: { ...base.extraMetadata, name: "opencode-magnit-desktop" },
         artifactName: "opencode-magnit-desktop-${os}-${arch}.${ext}",
         productName: "OpenCode Magnit",
         protocols: { name: "OpenCode Magnit", schemes: ["opencode"] },

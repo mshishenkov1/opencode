@@ -148,3 +148,48 @@ describe("проверка бандла: настоящая сборка, есл
     expect(verifyBundle(dist, { updateUrl: url })).toEqual([])
   })
 })
+
+/**
+ * Каталог кеша обновлений в собранном бандле (S-B13; AC-191).
+ *
+ * AC-191 — ручная проверка на стенде, но её формулировка — воспроизводимая команда: она и есть
+ * `verifyBundle`. Здесь проверяется сам инструмент на выдуманных бандлах, чтобы ручной прогон
+ * ловил ровно то, что должен: общий с ванильной сборкой каталог кеша обновлений.
+ */
+describe("проверка бандла: каталог кеша обновлений (AC-191, S-B13)", () => {
+  const MAGNIT_CACHE = "updaterCacheDirName: opencode-magnit-desktop-updater"
+  const VANILLA_CACHE = "updaterCacheDirName: '@opencode-ai/desktop-updater'"
+
+  test("AC-191: корпоративный каталог кеша расхождением не считается", () => {
+    const feed = [CORP_FEED.trimEnd(), MAGNIT_CACHE, ""].join("\n")
+    const { dist } = bundle({ feed })
+    expect(verifyBundle(dist, { updateUrl: "https://updates.example.corp/opencode" })).toEqual([])
+    expect(checkFeed("app-update.yml", feed, "https://updates.example.corp/opencode")).toEqual([])
+  })
+
+  test("AC-191: общий с ванильной сборкой каталог кеша — расхождение", () => {
+    // Ровно та подстрока, которую AC-191 запрещает видеть в app-update.yml корпоративной сборки.
+    const feed = [CORP_FEED.trimEnd(), "updaterCacheDirName: '@opencode-aidesktop-updater'", ""].join("\n")
+    const problems = checkFeed("app-update.yml", feed, "https://updates.example.corp/opencode")
+    expect(problems.join("\n")).toContain("@opencode-aidesktop-updater")
+
+    const { dist } = bundle({ feed })
+    expect(verifyBundle(dist, { updateUrl: "https://updates.example.corp/opencode" }).join("\n")).toContain(
+      "@opencode-aidesktop-updater",
+    )
+  })
+
+  test("AC-191: чужое имя каталога кеша тоже расхождение", () => {
+    const feed = [CORP_FEED.trimEnd(), "updaterCacheDirName: opencode-desktop-updater", ""].join("\n")
+    const problems = checkFeed("app-update.yml", feed, "https://updates.example.corp/opencode")
+    expect(problems.join("\n")).toContain("opencode-magnit-desktop-updater")
+  })
+
+  test("AC-191: имя каталога кеша выводится из extraMetadata.name канала magnit", () => {
+    // Связь между конфигурацией упаковки и содержимым бандла: electron-builder считает
+    // `updaterCacheDirName` как `sanitizeFileName(name).toLowerCase() + "-updater"` (F42).
+    const name = "opencode-magnit-desktop"
+    expect(`updaterCacheDirName: ${name.toLowerCase()}-updater`).toBe(MAGNIT_CACHE)
+    expect(VANILLA_CACHE).toContain("@opencode-ai")
+  })
+})

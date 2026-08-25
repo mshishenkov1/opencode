@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test"
+import path from "node:path"
 
 /**
  * Рантайм корпоративной сборки Desktop: выключенный апдейтер, унаследованное состояние и пункт меню
@@ -342,5 +343,81 @@ describe("включённый апдейтер берёт внутренний 
 
     const configured = logs.find((line) => line.message === "auto updater configured")
     expect(configured!.data).toMatchObject({ channel: "latest" })
+  })
+})
+
+/**
+ * Заголовок окна — из имени сборки канала (S-B15, S-Q11; AC-197, AC-198, AC-199).
+ *
+ * Прежде в `createMainWindow` стоял литерал `title: "OpenCode"`, одинаковый у всех каналов, а
+ * таблица имён сборок жила в другом файле и с заголовком связана не была: корпоративная сборка
+ * донашивала заголовок ванильной. Источник имени теперь один — `APP_NAMES[CHANNEL]` рядом с
+ * разбором канала, и его же читает `app.setName` (D-33).
+ */
+describe("заголовок окна — имя сборки канала (AC-197, AC-198, AC-199)", () => {
+  /** Константы главного процесса вместе с таблицей имён и функцией имени сборки. */
+  async function names(env: { channel?: string; isPackaged?: boolean }) {
+    const module = (await constants(env)) as unknown as {
+      CHANNEL: string
+      APP_NAMES: Record<string, string>
+      appName: (packaged?: boolean) => string
+    }
+    return module
+  }
+
+  test("AC-197: упакованный канал magnit даёт заголовок «OpenCode Magnit»", async () => {
+    const module = await names({ channel: "magnit", isPackaged: true })
+    expect(module.appName()).toBe("OpenCode Magnit")
+    // То же значение, что APP_NAMES[CHANNEL] и productName канала (S-B10).
+    expect(module.appName()).toBe(module.APP_NAMES[module.CHANNEL]!)
+    expect(module.appName()).not.toBe("OpenCode")
+  })
+
+  test("AC-198: все четыре канала берут имя из одной таблицы", async () => {
+    const expected = { dev: "OpenCode Dev", beta: "OpenCode Beta", prod: "OpenCode", magnit: "OpenCode Magnit" }
+    for (const [channel, title] of Object.entries(expected)) {
+      const module = await names({ channel, isPackaged: true })
+      expect(module.appName(), channel).toBe(title)
+      expect(module.APP_NAMES[channel], channel).toBe(title)
+    }
+  })
+
+  test("AC-198: неупакованный запуск сохраняет прежнее поведение разработки", async () => {
+    for (const channel of ["dev", "beta", "prod", "magnit"]) {
+      const module = await names({ channel, isPackaged: false })
+      expect(module.appName(), channel).toBe("OpenCode Dev")
+    }
+    // Незаданный канал — тоже dev (AC-141), заголовок с ним согласован.
+    const unset = await names({ isPackaged: true })
+    expect(unset.appName()).toBe("OpenCode Dev")
+  })
+
+  test("AC-199: в windows.ts нет литерала «OpenCode» в качестве значения title", async () => {
+    const file = path.join(import.meta.dirname, "windows.ts")
+    const source = await Bun.file(file).text()
+    expect(source).toContain("title: appName()")
+    // Ни одного строкового литерала в поле title — ни «OpenCode», ни любого другого имени сборки.
+    expect(source).not.toMatch(/\btitle:\s*["'`]/)
+    // И самого имени сборки в файле нет — оно приходит только из таблицы имён (S-B15).
+    expect(source).not.toContain("OpenCode Magnit")
+    expect(source).not.toContain("OpenCode Dev")
+  })
+
+  test("AC-198, AC-199: второй копии разбора канала и второй таблицы имён в главном процессе нет", async () => {
+    const dir = import.meta.dirname
+    const table = /APP_NAMES\s*[:=]/
+    const files = ["index.ts", "windows.ts"]
+    for (const name of files) {
+      const source = await Bun.file(path.join(dir, name)).text()
+      const code = source
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("*"))
+        .join("\n")
+      // Таблица объявлена только в constants.ts; остальные файлы её импортируют.
+      expect(code.match(table) === null || code.includes('from "./constants"'), name).toBe(true)
+      expect(code, name).not.toContain("process.env.OPENCODE_CHANNEL")
+    }
+    const declared = await Bun.file(path.join(dir, "constants.ts")).text()
+    expect(declared).toMatch(/export const APP_NAMES/)
   })
 })

@@ -149,6 +149,71 @@ describe("electron-builder.config.ts — ванильные каналы не и
   })
 })
 
+/**
+ * Каталог кеша обновлений (S-B13, S-Q10; AC-189, AC-190, AC-192).
+ *
+ * `updaterCacheDirName` в `app-update.yml` electron-builder вычисляет из поля `name` пакета
+ * (`sanitizeFileName(name).toLowerCase() + "-updater"`), а не из `appId` и не из `productName`.
+ * С upstream-значением `@opencode-ai/desktop` корпоративная сборка искала обновление там же, где
+ * его кладёт ванильная (`~/Library/Caches/@opencode-aidesktop-updater`).
+ */
+describe("каталог кеша обновлений канала magnit (AC-189, AC-190, AC-192)", () => {
+  test("AC-189: канал magnit получает собственное имя пакета и сохраняет desktopName из getBase()", async () => {
+    const config = await packaging({ OPENCODE_CHANNEL: "magnit" })
+    expect(config.extraMetadata?.name).toBe("opencode-magnit-desktop")
+    expect(config.extraMetadata?.desktopName).toBe("ai.opencode.desktop.magnit.desktop")
+    // Имя каталога кеша, которое из этого получит electron-updater.
+    expect(`${String(config.extraMetadata?.name).toLowerCase()}-updater`).toBe("opencode-magnit-desktop-updater")
+    expect(String(config.extraMetadata?.name)).not.toContain("@opencode-ai")
+  })
+
+  test("AC-189: прочие проверки идентичности канала magnit продолжают выполняться", async () => {
+    const config = await packaging({ OPENCODE_CHANNEL: "magnit" })
+    expect(config.appId).toBe("ai.opencode.desktop.magnit")
+    expect(config.productName).toBe("OpenCode Magnit")
+    expect(config.artifactName).toBe("opencode-magnit-desktop-${os}-${arch}.${ext}")
+    expect(config.rpm?.packageName).toBe("opencode-magnit")
+    expect(config.protocols).toEqual({ name: "OpenCode Magnit", schemes: ["opencode"] })
+    expect(JSON.stringify(config)).not.toContain("opencode-desktop.desktop")
+  })
+
+  test("AC-190, AC-192: extraMetadata ванильных каналов не изменён — поля name в нём нет", async () => {
+    for (const channel of ["dev", "beta", "prod"]) {
+      const config = await packaging({ OPENCODE_CHANNEL: channel })
+      const appId = { dev: "ai.opencode.desktop.dev", beta: "ai.opencode.desktop.beta", prod: "ai.opencode.desktop" }[
+        channel
+      ]!
+      // Ровно upstream-значение: только desktopName, вычисленный из appId канала.
+      expect(config.extraMetadata, channel).toEqual({ desktopName: `${appId}.desktop` })
+      expect(config.extraMetadata, channel).not.toHaveProperty("name")
+    }
+  })
+
+  test("AC-190: правка ограничена веткой magnit — имя пакета ванильных каналов остаётся upstream", async () => {
+    for (const channel of ["dev", "beta", "prod"]) {
+      const config = await packaging({ OPENCODE_CHANNEL: channel })
+      expect(JSON.stringify(config), channel).not.toContain("opencode-magnit-desktop")
+    }
+  })
+
+  test("AC-192: случаи каталога кеша добавлены к покрытию AC-152, прежние случаи сохранены", () => {
+    // Требование AC-192 — про состав самого теста: новые случаи живут рядом с прежними, а не
+    // вместо них. Проверяется по этому же файлу.
+    const own = fs.readFileSync(path.join(DESKTOP, "electron-builder.config.corp.test.ts"), "utf8")
+    for (const marker of [
+      // Прежние случаи AC-152: каналы, неизвестное значение, незаданная переменная, обе ветки фида.
+      "AC-152: с CORP_DESKTOP_UPDATE_URL ветка magnit получает generic-фид",
+      "AC-152: без переменной блока publish в ветке magnit нет вовсе",
+      "AC-140: сборка Desktop с неизвестным каналом не создаёт артефакт",
+      "AC-141: незаданная переменная означает dev во всех местах разбора",
+      // Новые случаи ревизии 1.9.
+      "AC-189: канал magnit получает собственное имя пакета",
+      "AC-190, AC-192: extraMetadata ванильных каналов не изменён",
+    ])
+      expect(own, marker).toContain(marker)
+  })
+})
+
 describe("канал сборки: неизвестное значение и умолчание (AC-140, AC-141)", () => {
   /**
    * Места разбора канала запускаются отдельным процессом: `bun -e` даёт наблюдаемый код выхода

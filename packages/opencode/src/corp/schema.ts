@@ -1,5 +1,5 @@
 import { Option, Schema } from "effect"
-import { Code } from "./errors"
+import { Code, ErrorClass as ConnectErrorClass } from "./errors"
 
 /**
  * Схемы корпоративного слоя (§3 спецификации).
@@ -510,6 +510,11 @@ export const ConnectorResult = Schema.Struct({
   alias: Schema.String,
   status: CardStatus,
   error: Schema.optional(Schema.String),
+  /**
+   * Класс ошибки подключения (S-V19): что показать пользователю и что ему предложить сделать.
+   * `error` (код S-A5) он не заменяет — тот отвечает на другой вопрос.
+   */
+  error_class: Schema.optional(ConnectErrorClass),
   hub_error: Schema.optional(Code),
 }).annotate({ identifier: "CorpConnectorResult" })
 export type ConnectorResult = Schema.Schema.Type<typeof ConnectorResult>
@@ -525,3 +530,6 @@ export type PermissionsResult = Schema.Schema.Type<typeof PermissionsResult>
 
 /** Код ошибки Hub в ответах корп-роутов (S-A5). */
 export const HubErrorCode = Code
+
+/** Класс ошибки подключения в ответах корп-роутов (S-V19). */
+export const ConnectErrorClassCode = ConnectErrorClass

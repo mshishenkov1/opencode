@@ -5,7 +5,7 @@ import * as CorpCatalogCache from "@/corp/catalog-cache"
 import * as CorpConfig from "@/corp/config"
 import * as CorpConnections from "@/corp/connections"
 import * as CorpConnectors from "@/corp/connectors"
-import type * as CorpErrors from "@/corp/errors"
+import * as CorpErrors from "@/corp/errors"
 import * as CorpHub from "@/corp/hub"
 import * as CorpLogin from "@/corp/login"
 import * as CorpSchema from "@/corp/schema"
@@ -482,7 +482,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const url = yield* requireHub()
       const alias = ctx.params.alias
       const { server } = yield* serverFor(url, alias)
-      if (!server) return { alias, status: "unavailable" as const, hub_error: "not_found" as const }
+      if (!server)
+        return {
+          alias,
+          status: "unavailable" as const,
+          hub_error: "not_found" as const,
+          // S-V19: карточки нет — значит нет ни `mcp_url`, ни режима, подключать этим способом нечем.
+          error_class: CorpErrors.connectErrorClass({ code: "not_found" }),
+        }
 
       const preset = ctx.payload.preset ?? CorpStatus.DEFAULT_PRESET
       const patch = CorpConnectors.connectPatch(server, preset)
@@ -496,8 +503,18 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         .authenticate(alias)
         .pipe(Effect.catch((error) => Effect.succeed({ status: "failed" as const, error: String(error) })))
       if (status.status === "failed" || status.status === "needs_client_registration") {
-        // Шаг 4: запись mcp.<alias> остаётся, чтобы повтор был в один клик.
-        return { alias, status: yield* cardFor(url, alias), error: status.error }
+        // Шаг 4: запись mcp.<alias> остаётся, чтобы повтор был в один клик. Признак «подключение
+        // состоялось» (S-V15) при этом не выставляется — попытка не удалась.
+        // S-V19: ошибка не остаётся необъяснённой — класс определяется всегда, в том числе `unknown`.
+        return {
+          alias,
+          status: yield* cardFor(url, alias),
+          error: status.error,
+          error_class: CorpErrors.connectErrorClass({
+            local: status.status,
+            ...(status.error === undefined ? {} : { message: String(status.error) }),
+          }),
+        }
       }
       return { alias, status: yield* cardFor(url, alias) }
     })

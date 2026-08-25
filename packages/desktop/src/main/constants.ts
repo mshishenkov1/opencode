@@ -23,3 +23,25 @@ export const UPDATE_URL = (rawUpdateUrl ?? "").trim()
 // corp: без адреса обновлений апдейтер выключен целиком — он не должен обращаться ни к каким
 // релизам, в том числе к релизам ванильного апстрима (S-B11, AC-146).
 export const UPDATER_ENABLED = app.isPackaged && CHANNEL !== "dev" && !!UPDATE_URL
+
+// corp: имена сборок каналов (S-B10, S-B15). Таблица живёт рядом с каналом, чтобы её видели все
+// потребители идентичности: `app.setName` в главном процессе и заголовок окна. Второй копии
+// таблицы и второго разбора канала не заводится — именно расхождение копий дало «OpenCode Dev»
+// в раздаче (BUG-I4-003) и ярлык «DEV» в заголовке (D-33).
+export const APP_NAMES: Record<Channel, string> = {
+  dev: "OpenCode Dev",
+  beta: "OpenCode Beta",
+  prod: "OpenCode",
+  magnit: "OpenCode Magnit",
+}
+
+/**
+ * corp: заголовок окна и имя приложения (S-B15).
+ *
+ * Неупакованный запуск сохраняет прежнее поведение разработки — `OpenCode Dev`, как и `app.setName`
+ * (F40). Значения совпадают с `productName` конфигурации упаковки (S-B10), поэтому заголовок окна
+ * и имя приложения разойтись не могут.
+ */
+export function appName(packaged: boolean = app.isPackaged): string {
+  return packaged ? APP_NAMES[CHANNEL] : APP_NAMES.dev
+}

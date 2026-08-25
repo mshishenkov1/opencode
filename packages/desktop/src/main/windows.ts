@@ -6,6 +6,7 @@ import { app, BrowserWindow, dialog, net, nativeImage, nativeTheme, protocol } f
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { TitlebarTheme } from "../preload/types"
+import { appName } from "./constants"
 import { exportDebugLogs, write as writeLog } from "./logging"
 import { getStore } from "./store"
 import { PINCH_ZOOM_ENABLED_KEY } from "./store-keys"
@@ -131,7 +132,10 @@ export function createMainWindow() {
     height: state.height,
     show: false,
     autoHideMenuBar: true,
-    title: "OpenCode",
+    // corp: заголовок окна — имя сборки текущего канала (S-B15, D-33). Прежде здесь был литерал
+    // "OpenCode", одинаковый у всех каналов (F44), а таблица имён жила в другом файле и с
+    // заголовком связана не была: корпоративная сборка донашивала заголовок ванильной.
+    title: appName(),
     icon: iconPath(),
     backgroundColor: backgroundColor ?? defaultBackgroundColor(),
     ...(process.platform === "darwin"

@@ -13,7 +13,7 @@ import contextMenu from "electron-context-menu"
 
 import type { ServerReadyData } from "../preload/types"
 import { checkAppExists, resolveAppPath } from "./apps"
-import { CHANNEL } from "./constants"
+import { appName, CHANNEL } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
 import { forwardInitializationFailure } from "./initialization"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
@@ -42,12 +42,8 @@ import { migrate } from "./migrate"
 // corp: канал `magnit` — корпоративная раздача (S-B10). Собственный appId означает собственный
 // каталог пользовательских данных (userData = <appData>/<appId>), собственную блокировку
 // единственного экземпляра и совместную работу с установленным ванильным OpenCode (S-B12).
-const APP_NAMES: Record<string, string> = {
-  dev: "OpenCode Dev",
-  beta: "OpenCode Beta",
-  prod: "OpenCode",
-  magnit: "OpenCode Magnit",
-}
+// Таблица имён сборок переехала в `./constants` (S-B15): её же читает заголовок окна, и второй
+// копии заводить нельзя.
 const APP_IDS: Record<string, string> = {
   dev: "ai.opencode.desktop.dev",
   beta: "ai.opencode.desktop.beta",
@@ -131,7 +127,7 @@ const main = Effect.gen(function* () {
     process.env.XDG_STATE_HOME = join(root, "state")
     return root
   })()
-  app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
+  app.setName(appName())
   app.setAppUserModelId(appId)
   app.setPath(
     "userData",

@@ -9,6 +9,7 @@
 declare global {
   const OPENCODE_CORP_HUB_URL: string
   const OPENCODE_CORP_CONFIG: string
+  const OPENCODE_CORP_CLI_UPDATE_URL: string
 }
 
 function present(value: string | undefined): string | undefined {
@@ -42,6 +43,25 @@ export const CorpConfigBuild = present(typeof OPENCODE_CORP_CONFIG === "string" 
  */
 export function corpHubUrl(override?: string): string | undefined {
   return normalizeHubUrl(override) ?? normalizeHubUrl(process.env["OPENCODE_CORP_HUB_URL"]) ?? CorpHubUrlBuild
+}
+
+/**
+ * Адрес внутреннего источника обновлений CLI из build-константы (S-B14, D-34).
+ *
+ * Имя и обработка — по образцу `CORP_HUB_URL` и `CORP_DESKTOP_UPDATE_URL`: хвостовые `/` обрезаются,
+ * пустое значение означает «адрес не задан». Значение не задано — `opencode upgrade` не делает ни
+ * одного сетевого запроса и говорит, что обновление выполняется централизованно.
+ */
+export const CorpCliUpdateUrlBuild = normalizeHubUrl(
+  typeof OPENCODE_CORP_CLI_UPDATE_URL === "string" ? OPENCODE_CORP_CLI_UPDATE_URL : undefined,
+)
+
+/**
+ * Действующий адрес источника обновлений CLI (S-B14): переменная окружения выше build-константы —
+ * тот же порядок, что у адреса Hub (S-C5).
+ */
+export function corpCliUpdateUrl(): string | undefined {
+  return normalizeHubUrl(process.env["OPENCODE_CORP_CLI_UPDATE_URL"]) ?? CorpCliUpdateUrlBuild
 }
 
 /** Корпоративные возможности включены, если известен адрес Hub (S-C5). */

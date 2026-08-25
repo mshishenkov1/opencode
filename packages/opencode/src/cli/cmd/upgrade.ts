@@ -3,6 +3,9 @@ import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { Installation } from "../../installation"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+// corp: явный апгрейд в корпоративной сборке ходит только на внутренний адрес либо не ходит
+// никуда вовсе (S-B14). Ванильная сборка этой ветки не видит: plan() отдаёт "upstream" (S-C6).
+import * as CorpUpgrade from "../../corp/upgrade"
 
 export const UpgradeCommand = {
   command: "upgrade [target]",
@@ -25,6 +28,53 @@ export const UpgradeCommand = {
     UI.println(UI.logo("  "))
     UI.empty()
     prompts.intro("Upgrade")
+
+    // corp (S-B14): в корпоративной сборке источник обновлений — только внутренний адрес.
+    // Ни определение версии, ни установка не идут в публичные реестры и на api.github.com,
+    // а без адреса не выполняется ни одного сетевого запроса и не запускается ни один
+    // менеджер пакетов. Ванильная сборка сюда не заходит.
+    const corp = CorpUpgrade.plan()
+    if (corp.mode === "disabled") {
+      prompts.log.error(CorpUpgrade.DISABLED_MESSAGE)
+      prompts.outro("Done")
+      process.exitCode = 1
+      return
+    }
+    if (corp.mode === "internal") {
+      let target = args.target?.replace(/^v/, "")
+      if (target === undefined) {
+        const latest = await CorpUpgrade.latest(corp.url)
+        if (!latest.ok) {
+          // Запасного публичного источника нет: молчаливый откат на api.github.com — тот самый
+          // путь, которым ванильный артефакт попадал в корпоративную сборку (D-34).
+          prompts.log.error(CorpUpgrade.sourceErrorMessage(corp.url, latest.error))
+          prompts.outro("Done")
+          process.exitCode = 1
+          return
+        }
+        target = latest.data
+      }
+      if (InstallationVersion === target) {
+        prompts.log.warn(`opencode upgrade skipped: ${target} is already installed`)
+        prompts.outro("Done")
+        return
+      }
+      prompts.log.info(`From ${InstallationVersion} → ${target}`)
+      const spinner = prompts.spinner()
+      spinner.start("Upgrading...")
+      const installed = await CorpUpgrade.install(corp.url, target)
+      if (!installed.ok) {
+        spinner.stop("Upgrade failed", 1)
+        prompts.log.error(CorpUpgrade.sourceErrorMessage(corp.url, installed.error))
+        prompts.outro("Done")
+        process.exitCode = 1
+        return
+      }
+      spinner.stop("Upgrade complete")
+      prompts.outro("Done")
+      return
+    }
+
     const detectedMethod = await Installation.method()
     const method = (args.method as Installation.Method) ?? detectedMethod
     if (method === "unknown") {

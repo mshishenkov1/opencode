@@ -130,10 +130,21 @@ const desktopChannel = channel === "latest" || channel === "magnit" ? "magnit" :
  */
 const desktopUpdateUrl = process.env["CORP_DESKTOP_UPDATE_URL"]?.trim().replace(/\/+$/, "")
 
+/**
+ * Адрес внутреннего источника обновлений CLI (S-B14, D-34). Без него явный `opencode upgrade` в
+ * корпоративной сборке не делает ни одного сетевого запроса и говорит, что обновление выполняется
+ * централизованно: молчаливый уход на релизы `anomalyco/opencode` — тот же путь, которым ванильный
+ * артефакт попадал в корпоративную сборку.
+ */
+const cliUpdateUrl = process.env["CORP_CLI_UPDATE_URL"]?.trim().replace(/\/+$/, "")
+
 console.log(`версия сборки: ${version}`)
 console.log(`канал сборки: ${channel}${desktopChannel === channel ? "" : ` (Desktop: ${desktopChannel})`}`)
 if (!hubUrl) console.warn("CORP_HUB_URL не задан — собирается ванильная сборка (S-C6)")
 else console.log(`адрес Hub: ${hubUrl}`)
+if (hubUrl && !cliUpdateUrl)
+  console.warn("CORP_CLI_UPDATE_URL не задан — явный `opencode upgrade` будет отказывать (S-B14)")
+else if (cliUpdateUrl) console.log(`источник обновлений CLI: ${cliUpdateUrl}`)
 
 const env = {
   ...process.env,
@@ -142,6 +153,8 @@ const env = {
   // CORP_HUB_URL читают бандлеры бинарника и встроенного сервера, VITE_… — сборка веб-UI:
   // vite не видит `define` бандлера и берёт только переменные с префиксом VITE_ (S-C2, S-I2).
   ...(hubUrl ? { CORP_HUB_URL: hubUrl, VITE_OPENCODE_CORP_HUB_URL: hubUrl } : {}),
+  // CORP_CLI_UPDATE_URL читают бандлеры бинарника и встроенного сервера (S-B14).
+  ...(cliUpdateUrl ? { CORP_CLI_UPDATE_URL: cliUpdateUrl } : {}),
 }
 
 const artifacts: { name: string; file: string }[] = []

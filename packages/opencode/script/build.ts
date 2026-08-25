@@ -58,6 +58,10 @@ const corpDefine: Record<string, string> = {}
 {
   const hubUrl = process.env["CORP_HUB_URL"]?.trim().replace(/\/+$/, "")
   if (hubUrl) corpDefine["OPENCODE_CORP_HUB_URL"] = JSON.stringify(hubUrl)
+  // corp: внутренний источник обновлений CLI (S-B14). Без переменной константа не определяется —
+  // тогда `opencode upgrade` в корп-сборке никуда не ходит и говорит об этом (D-34).
+  const cliUpdateUrl = process.env["CORP_CLI_UPDATE_URL"]?.trim().replace(/\/+$/, "")
+  if (cliUpdateUrl) corpDefine["OPENCODE_CORP_CLI_UPDATE_URL"] = JSON.stringify(cliUpdateUrl)
   const corpConfigPath = path.resolve(dir, "../../corp/config/opencode.corp.json")
   if (fs.existsSync(corpConfigPath)) {
     const text = fs.readFileSync(corpConfigPath, "utf8").trim()

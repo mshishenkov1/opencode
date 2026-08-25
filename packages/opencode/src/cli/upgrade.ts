@@ -30,11 +30,13 @@ export async function upgrade() {
     return
   }
 
-  const method = await Installation.method()
+  // Определение способа установки нужно только апстримному пути: у внутреннего источника и версия,
+  // и артефакт берутся с одного адреса, а менеджеры пакетов ведут в публичные реестры (S-B14).
+  const method = corp.mode === "internal" ? undefined : await Installation.method()
   const latest =
     corp.mode === "internal"
       ? await CorpUpgrade.latest(corp.url).then((result) => (result.ok ? result.data : undefined))
-      : await Installation.latest(method).catch(() => {})
+      : await Installation.latest(method!).catch(() => {})
   if (!latest) return
 
   if (Flag.OPENCODE_ALWAYS_NOTIFY_UPDATE) {
@@ -77,7 +79,7 @@ export async function upgrade() {
     return
   }
 
-  if (method === "unknown") return
+  if (method === undefined || method === "unknown") return
   await Installation.upgrade(method, latest)
     .then(() =>
       GlobalBus.emit("event", {

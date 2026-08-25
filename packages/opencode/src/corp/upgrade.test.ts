@@ -175,8 +175,17 @@ describe("corp/upgrade — план команды по сборке (AC-193, AC
   })
 
   test("AC-199: перечень запрещённых хостов объявлен модулем и совпадает с перечнем теста", () => {
-    for (const host of ["api.github.com", "registry.npmjs.org", "formulae.brew.sh", "community.chocolatey.org", "raw.githubusercontent.com"])
-      expect(CorpUpgrade.FORBIDDEN_HOSTS, host).toContain(host)
+    // Перечень модуля — кортеж литералов; сравниваем его как обычный список строк, чтобы
+    // отсутствующий хост давал падение теста с именем хоста, а не ошибку типов.
+    const declared: string[] = [...CorpUpgrade.FORBIDDEN_HOSTS]
+    for (const host of [
+      "api.github.com",
+      "registry.npmjs.org",
+      "formulae.brew.sh",
+      "community.chocolatey.org",
+      "raw.githubusercontent.com",
+    ])
+      expect(declared, host).toContain(host)
   })
 })
 

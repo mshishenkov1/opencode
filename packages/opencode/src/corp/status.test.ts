@@ -410,7 +410,9 @@ describe("corp/status — таблица S-V16 покрыта построчно
       const label = `строка ${row}, ${JSON.stringify(input)}`
       expect(card.state, label).toBe(state)
       seen.add(card.state)
-      const expected =
+      // Тип ожидания — то же множество `CardAction`, что у карточки: опечатка в имени действия
+      // становится ошибкой типов, а не молча непроходящей проверкой.
+      const expected: CorpSchema.CardAction[] =
         state === "connected"
           ? ["permissions", "disconnect", "open_hub"]
           : state === "lost" || state === "disconnected"

@@ -912,7 +912,9 @@ describe("оркестрация витрины — классы ошибок п
       expect(JSON.stringify(card)).not.toContain("disconnect")
       expect(JSON.stringify(card)).not.toContain("forget")
       // Объяснение ошибки у карточки есть — «ошибки без объяснения» не существует (D-32).
-      expect(["token_rejected", "method_unavailable", "hub_unreachable", "unknown"]).toContain(card.error_class)
+      const errorClass = card.error_class
+      if (errorClass === undefined) throw new Error("карточка осталась без класса ошибки подключения (S-V19, D-32)")
+      expect(["token_rejected", "method_unavailable", "hub_unreachable", "unknown"]).toContain(errorClass)
     }),
   )
 })

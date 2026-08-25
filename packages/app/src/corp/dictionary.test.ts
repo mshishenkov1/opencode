@@ -198,7 +198,10 @@ describe("i18n corp.* — состояния карточки и классы о
   })
 
   test("AC-187: те же тексты есть в словаре TUI", async () => {
-    const tui = (await import("../../../tui/src/corp/i18n")) as {
+    // Спецификатор собирается переменной по той же причине, что в `channel.test.ts`: словарь TUI
+    // лежит вне `include` пакета `app`, и статический импорт ломает `tsgo -b`.
+    const specifier = "../../../tui/src/corp/i18n"
+    const tui = (await import(specifier)) as {
       dictionaries: { ru: Record<string, string>; en: Record<string, string> }
     }
     /** Ключ TUI получается из ключа Desktop снятием префикса `corp.` (S-I4). */

@@ -542,6 +542,44 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       }
     })
 
+    /**
+     * S-V17 «Убрать из списка».
+     *
+     * Смысл действия — «я больше не хочу видеть этот сервер подключённым у себя»: оно доводит до
+     * конца отключение и **удаляет** запись `mcp.<alias>` из конфига, чего «Отключить» не делает.
+     * Отказ Hub на последнем, необязательном шаге локальные шаги не откатывает: локальное состояние
+     * пользователя приведено в порядок в любом случае (AC-176).
+     */
+    const forget = Effect.fn("CorpHttpApi.forget")(function* (ctx: { params: { alias: string } }) {
+      const url = yield* requireHub()
+      const alias = ctx.params.alias
+      // Шаг 1: те же локальные шаги, что у S-V8.
+      yield* mcpSvc.removeAuth(alias)
+      yield* mcpSvc.disconnect(alias).pipe(Effect.catch(() => Effect.void))
+      // Шаг 2: ключ `mcp.<alias>` удаляется целиком; прочий конфиг пользователя не трогается (S-C7).
+      yield* configSvc.updateGlobal(CorpConnectors.forgetPatch(alias))
+      // Шаг 3: признак «подключение состоялось» снимается — единственный способ его снять (S-V15 п.3).
+      const connections = yield* readConnections(url)
+      const without = CorpConnections.forget(connections, alias)
+      if (without) yield* Effect.promise(() => CorpConnections.write(without))
+      yield* dropMemo(url)
+
+      // Шаг 4 необязателен: без ключа и при недоступном Hub он пропускается, а не откатывает шаги 1–3.
+      const key = yield* corpKey()
+      let hubError: CorpErrors.Code | undefined
+      if (key) {
+        const hub = CorpHub.make({ hubUrl: url, key })
+        const removed = yield* Effect.promise(() => hub.removeConnection(alias))
+        if (!removed.ok) hubError = removed.code
+      }
+      return {
+        alias,
+        status: "not_connected" as const,
+        removed: true,
+        ...(hubError === undefined ? {} : { hub_error: hubError }),
+      }
+    })
+
     const permissions = Effect.fn("CorpHttpApi.permissions")(function* (ctx: {
       params: { alias: string }
       payload: { preset: string; groups?: string[] }
@@ -599,6 +637,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       .handle("catalog", catalog)
       .handle("connect", connect)
       .handle("disconnect", disconnect)
+      .handle("forget", forget)
       .handle("permissions", permissions)
   }),
 )

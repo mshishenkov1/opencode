@@ -40,6 +40,18 @@ export function disconnectPatch(alias: string): ConfigV1.Info {
 }
 
 /**
+ * Патч для «Убрать из списка» (S-V17, шаг 2): ключ `mcp.<alias>` **удаляется** целиком, а не
+ * переводится в `enabled:false`. В этом и есть разница с «Отключить» (D-31): пользователь просит
+ * убрать сервер у себя, а не отложить его до следующего раза.
+ *
+ * `Config.updateGlobal` применяет патч через `patchJsonc` (F21): значение `undefined` по пути
+ * `mcp.<alias>` удаляет свойство и не трогает остальные ключи конфига пользователя (S-C7).
+ */
+export function forgetPatch(alias: string): ConfigV1.Info {
+  return { mcp: { [alias]: undefined } } as unknown as ConfigV1.Info
+}
+
+/**
  * Патч для «Права» (S-V9): при `mode:"facade"` обновляется `mcp.<alias>.oauth.scope`.
  * Для `mode:"native"` локальный scope не меняется — возвращается `undefined`.
  */

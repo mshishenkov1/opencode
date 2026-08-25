@@ -30,6 +30,8 @@ import type {
   CorpConnectResponses,
   CorpDisconnectErrors,
   CorpDisconnectResponses,
+  CorpForgetErrors,
+  CorpForgetResponses,
   CorpLoginCancelErrors,
   CorpLoginCancelResponses,
   CorpLoginPollErrors,
@@ -1767,6 +1769,38 @@ export class Corp extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<CorpDisconnectResponses, CorpDisconnectErrors, ThrowOnError>({
       url: "/corp/connectors/{alias}/disconnect",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Forget connector
+   *
+   * Удаляет запись mcp.<alias> из конфига, снимает признак подключения и подключение в Hub.
+   */
+  public forget<ThrowOnError extends boolean = false>(
+    parameters: {
+      alias: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "alias" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<CorpForgetResponses, CorpForgetErrors, ThrowOnError>({
+      url: "/corp/connectors/{alias}",
       ...options,
       ...params,
     })

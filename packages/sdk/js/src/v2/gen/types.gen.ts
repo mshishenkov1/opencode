@@ -2283,7 +2283,9 @@ export type CorpCatalogCard = {
   connection_status?: "not_connected" | "connected" | "needs_reauth"
   preset?: string
   status: "connected" | "needs_auth" | "not_connected" | "unavailable"
-  actions: Array<"connect" | "reconnect" | "disconnect" | "permissions" | "open_hub">
+  actions: Array<"connect" | "reconnect" | "disconnect" | "forget" | "permissions" | "open_hub">
+  state: "never" | "failed" | "lost" | "disconnected" | "connected"
+  ever_connected: boolean
   deprecated: boolean
   blocked: boolean
   configured: boolean
@@ -2323,6 +2325,27 @@ export type CorpConnectorResult = {
   alias: string
   status: "connected" | "needs_auth" | "not_connected" | "unavailable"
   error?: string
+  error_class?: "token_rejected" | "method_unavailable" | "hub_unreachable" | "unknown"
+  hub_error?:
+    | "corp_disabled"
+    | "hub_unavailable"
+    | "hub_invalid_response"
+    | "login_expired"
+    | "forbidden"
+    | "invalid_team"
+    | "team_selection_not_required"
+    | "rate_limited"
+    | "litellm_unavailable"
+    | "litellm_invalid_response"
+    | "unauthorized"
+    | "not_found"
+    | "invalid_request"
+}
+
+export type CorpForgetResult = {
+  alias: string
+  status: "connected" | "needs_auth" | "not_connected" | "unavailable"
+  removed: boolean
   hub_error?:
     | "corp_disabled"
     | "hub_unavailable"
@@ -6039,6 +6062,40 @@ export type CorpDisconnectResponses = {
 }
 
 export type CorpDisconnectResponse = CorpDisconnectResponses[keyof CorpDisconnectResponses]
+
+export type CorpForgetData = {
+  body?: never
+  path: {
+    alias: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/connectors/{alias}"
+}
+
+export type CorpForgetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpForgetError = CorpForgetErrors[keyof CorpForgetErrors]
+
+export type CorpForgetResponses = {
+  /**
+   * Коннектор убран из списка
+   */
+  200: CorpForgetResult
+}
+
+export type CorpForgetResponse = CorpForgetResponses[keyof CorpForgetResponses]
 
 export type CorpPermissionsData = {
   body?: {

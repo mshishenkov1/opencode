@@ -1399,6 +1399,78 @@
         ]
       }
     },
+    "/corp/connectors/{alias}": {
+      "delete": {
+        "tags": ["corp"],
+        "operationId": "corp.forget",
+        "parameters": [
+          {
+            "name": "alias",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Коннектор убран из списка",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpForgetResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Удаляет запись mcp.<alias> из конфига, снимает признак подключения и подключение в Hub.",
+        "summary": "Forget connector",
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.forget({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/corp/connectors/{alias}/permissions": {
       "put": {
         "tags": ["corp"],
@@ -22216,8 +22288,15 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["connect", "reconnect", "disconnect", "permissions", "open_hub"]
+              "enum": ["connect", "reconnect", "disconnect", "forget", "permissions", "open_hub"]
             }
+          },
+          "state": {
+            "type": "string",
+            "enum": ["never", "failed", "lost", "disconnected", "connected"]
+          },
+          "ever_connected": {
+            "type": "boolean"
           },
           "deprecated": {
             "type": "boolean"
@@ -22235,7 +22314,17 @@
             "type": "string"
           }
         },
-        "required": ["alias", "title", "status", "actions", "deprecated", "blocked", "configured"],
+        "required": [
+          "alias",
+          "title",
+          "status",
+          "actions",
+          "state",
+          "ever_connected",
+          "deprecated",
+          "blocked",
+          "configured"
+        ],
         "additionalProperties": false
       },
       "CorpDropped": {
@@ -22334,6 +22423,10 @@
           "error": {
             "type": "string"
           },
+          "error_class": {
+            "type": "string",
+            "enum": ["token_rejected", "method_unavailable", "hub_unreachable", "unknown"]
+          },
           "hub_error": {
             "type": "string",
             "enum": [
@@ -22354,6 +22447,41 @@
           }
         },
         "required": ["alias", "status"],
+        "additionalProperties": false
+      },
+      "CorpForgetResult": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["connected", "needs_auth", "not_connected", "unavailable"]
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "hub_error": {
+            "type": "string",
+            "enum": [
+              "corp_disabled",
+              "hub_unavailable",
+              "hub_invalid_response",
+              "login_expired",
+              "forbidden",
+              "invalid_team",
+              "team_selection_not_required",
+              "rate_limited",
+              "litellm_unavailable",
+              "litellm_invalid_response",
+              "unauthorized",
+              "not_found",
+              "invalid_request"
+            ]
+          }
+        },
+        "required": ["alias", "status", "removed"],
         "additionalProperties": false
       },
       "CorpPermissionsResult": {

@@ -519,6 +519,20 @@ export const ConnectorResult = Schema.Struct({
 }).annotate({ identifier: "CorpConnectorResult" })
 export type ConnectorResult = Schema.Schema.Type<typeof ConnectorResult>
 
+/**
+ * Ответ «Убрать из списка» (S-V17, S-V1).
+ *
+ * `removed` — запись `mcp.<alias>` из конфига удалена и признак подключения снят; `hub_error`
+ * означает, что необязательный шаг обращения к Hub не выполнен, а локальные шаги 1–3 не откачены.
+ */
+export const ForgetResult = Schema.Struct({
+  alias: Schema.String,
+  status: CardStatus,
+  removed: Schema.Boolean,
+  hub_error: Schema.optional(Code),
+}).annotate({ identifier: "CorpForgetResult" })
+export type ForgetResult = Schema.Schema.Type<typeof ForgetResult>
+
 export const PermissionsResult = Schema.Struct({
   alias: Schema.String,
   status: CardStatus,

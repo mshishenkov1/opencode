@@ -50,6 +50,9 @@ export const CorpPaths = {
   catalog: "/corp/catalog",
   connect: "/corp/connectors/:alias/connect",
   disconnect: "/corp/connectors/:alias/disconnect",
+  // corp: «Убрать из списка» (S-V17) — DELETE самой записи, а не подчинённого ресурса: действие
+  // удаляет `mcp.<alias>` из конфига, чего «Отключить» не делает.
+  forget: "/corp/connectors/:alias",
   permissions: "/corp/connectors/:alias/permissions",
 } as const
 
@@ -149,6 +152,18 @@ export const CorpApi = HttpApi.make("corp")
             identifier: "corp.disconnect",
             summary: "Disconnect connector",
             description: "Снимает OAuth-токены, гасит MCP и снимает подключение в Hub.",
+          }),
+        ),
+        HttpApiEndpoint.delete("forget", CorpPaths.forget, {
+          params: { alias: Schema.String },
+          query: WorkspaceRoutingQuery,
+          success: described(CorpSchema.ForgetResult, "Коннектор убран из списка"),
+          error: CorpDisabledError,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "corp.forget",
+            summary: "Forget connector",
+            description: "Удаляет запись mcp.<alias> из конфига, снимает признак подключения и подключение в Hub.",
           }),
         ),
         HttpApiEndpoint.put("permissions", CorpPaths.permissions, {

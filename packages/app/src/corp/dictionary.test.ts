@@ -155,3 +155,92 @@ describe("i18n corp.* — тексты устойчивого разбора к�
     }
   })
 })
+
+/**
+ * Словари состояний карточки, классов ошибок подключения и отключённого апгрейда
+ * (S-I1, S-I3, S-I4, S-V19; AC-187).
+ *
+ * Ключи обязаны быть в обоих словарях Desktop/web, значения `ru` не равны значениям `en`, и те же
+ * тексты есть в словаре TUI: обе оболочки говорят пользователю одно и то же (S-T10).
+ */
+describe("i18n corp.* — состояния карточки и классы ошибок (AC-187)", () => {
+  /** Ключи, добавленные ревизией 1.9. */
+  const KEYS = [
+    "corp.connectors.connected",
+    "corp.connectors.retry",
+    "corp.connectors.forget",
+    "corp.connectors.forgetConfirm",
+    "corp.connectors.forgetHubFailed",
+    "corp.connectors.neverConnected",
+    "corp.connectors.lost",
+    "corp.connectors.disconnected",
+    "corp.error.connect.token_rejected",
+    "corp.error.connect.method_unavailable",
+    "corp.error.connect.hub_unreachable",
+    "corp.error.connect.unknown",
+    "corp.upgrade.disabled",
+  ] as const
+
+  const dictEn = en as Record<string, string>
+  const dictRu = ru as Record<string, string>
+
+  test("AC-187: все тринадцать ключей есть в en.ts и в ru.ts", () => {
+    for (const key of KEYS) {
+      expect(dictEn[key], `${key} отсутствует в en.ts`).toBeDefined()
+      expect(dictRu[key], `${key} отсутствует в ru.ts`).toBeDefined()
+      expect(String(dictEn[key]).trim().length, key).toBeGreaterThan(0)
+      expect(String(dictRu[key]).trim().length, key).toBeGreaterThan(0)
+    }
+  })
+
+  test("AC-187: значения ru не равны значениям en — перевод не забыт", () => {
+    for (const key of KEYS) expect(dictRu[key], key).not.toBe(dictEn[key])
+  })
+
+  test("AC-187: те же тексты есть в словаре TUI", async () => {
+    const tui = (await import("../../../tui/src/corp/i18n")) as {
+      dictionaries: { ru: Record<string, string>; en: Record<string, string> }
+    }
+    /** Ключ TUI получается из ключа Desktop снятием префикса `corp.` (S-I4). */
+    const tuiKey = (key: string) => key.replace(/^corp\./, "")
+    /** Сравнение по смыслу: регистр подписи действия и подстановки `{{…}}` у оболочек свои. */
+    const normalize = (value: string) =>
+      value
+        .replace(/\{\{[^}]+\}\}/g, "")
+        .replace(/[«»"“”:.,\s]+/g, " ")
+        .trim()
+        .toLowerCase()
+
+    for (const key of KEYS) {
+      const short = tuiKey(key)
+      expect(tui.dictionaries.ru[short], `${short} отсутствует в словаре TUI (ru)`).toBeDefined()
+      expect(tui.dictionaries.en[short], `${short} отсутствует в словаре TUI (en)`).toBeDefined()
+    }
+
+    // Тексты состояний и классов ошибок совпадают дословно: их читает пользователь, и расходиться
+    // между оболочками они не должны. Подписи действий и подтверждение — короче в терминале.
+    const sameText = [
+      "corp.connectors.connected",
+      "corp.connectors.neverConnected",
+      "corp.connectors.lost",
+      "corp.connectors.disconnected",
+      "corp.error.connect.token_rejected",
+      "corp.error.connect.method_unavailable",
+      "corp.error.connect.hub_unreachable",
+      "corp.upgrade.disabled",
+    ]
+    for (const key of sameText) {
+      expect(normalize(tui.dictionaries.ru[tuiKey(key)]!), key).toBe(normalize(dictRu[key]!))
+      expect(normalize(tui.dictionaries.en[tuiKey(key)]!), key).toBe(normalize(dictEn[key]!))
+    }
+  })
+
+  test("AC-187: у класса unknown есть свой текст — «ошибки без объяснения» не существует", () => {
+    for (const dict of [dictEn, dictRu]) {
+      const unknown = dict["corp.error.connect.unknown"]!
+      expect(unknown.trim().length).toBeGreaterThan(0)
+      // Текст называет ошибку с её кодом (S-V19, строка `unknown`).
+      expect(unknown).toContain("{{code}}")
+    }
+  })
+})

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
+import * as CorpStatus from "../../../opencode/src/corp/status"
 
 /**
  * Клавиши витрины TUI подчиняются набору действий карточки (S-T6, S-V6; AC-78, AC-116).
@@ -35,6 +36,9 @@ function extractAllows() {
 }
 
 const allows = extractAllows()
+
+/** Объявления клавиш витрины (`packages/tui/src/config/keybind.ts`). */
+const keybindSource = await Bun.file(path.resolve(import.meta.dirname, "../config/keybind.ts")).text()
 
 const card = (actions: string[]) => ({ actions })
 
@@ -185,5 +189,134 @@ describe("tui/corp — экран прав по видам модели прав
     expect(guard).toContain("return")
     // Запрос прав идёт строго после выбора пресета из непустого списка.
     expect(handler.indexOf("sdk.client.corp.permissions")).toBeGreaterThan(handler.indexOf("const preset = await"))
+  })
+})
+
+/**
+ * Паритет TUI по состояниям витрины (S-T10, S-V15, S-V16, S-V18; AC-185, AC-186).
+ *
+ * Набор действий обе оболочки получают из одного модуля `packages/opencode/src/corp/status.ts` и
+ * сами его не вычисляют — расхождение оболочек невозможно по построению, а не по договорённости.
+ * Поэтому здесь на вход подаются те же карточки, что в AC-170, AC-171, AC-173 и AC-177, и
+ * проверяется, что предикат клавиш витрины даёт на них ровно те действия, что и Desktop.
+ */
+describe("tui/corp — паритет состояний и клавиш с Desktop (S-T10; AC-185, AC-186)", () => {
+  const catalogServer = {
+    alias: "gitlab",
+    title: "GitLab",
+    status: "ga",
+    mode: "facade",
+    mcp_url: "https://hub.test/mcp/gitlab",
+  } as Parameters<typeof CorpStatus.compute>[0]["server"]
+
+  /** Те же входы, что у AC-170, AC-171, AC-173 и AC-177 — считает их общий модуль. */
+  const cards = {
+    never: CorpStatus.compute({ alias: "gitlab", server: catalogServer, configured: false, stale: false }),
+    failed: CorpStatus.compute({
+      alias: "gitlab",
+      server: catalogServer,
+      configured: true,
+      local: "needs_auth",
+      stale: false,
+    }),
+    lost: CorpStatus.compute({
+      alias: "gitlab",
+      server: catalogServer,
+      configured: true,
+      local: "failed",
+      localError: "connection refused",
+      everConnectedLocally: true,
+      stale: false,
+    }),
+    connected: CorpStatus.compute({
+      alias: "gitlab",
+      server: catalogServer,
+      configured: true,
+      local: "connected",
+      stale: false,
+    }),
+  }
+
+  test("AC-185: четыре состояния приходят из общего модуля и различаются набором действий", () => {
+    expect(cards.never.state).toBe("never")
+    expect(cards.failed.state).toBe("failed")
+    expect(cards.lost.state).toBe("lost")
+    expect(cards.connected.state).toBe("connected")
+    expect(cards.never.actions).toEqual(["connect", "open_hub"])
+    expect(cards.failed.actions).toEqual(["connect", "open_hub"])
+    expect(cards.lost.actions).toEqual(["reconnect", "forget", "open_hub"])
+    expect(cards.connected.actions).toEqual(["permissions", "disconnect", "open_hub"])
+  })
+
+  test("AC-186: клавиша d действует только в состоянии «Подключено»", () => {
+    expect(allows(cards.never, "disconnect")).toBe(false)
+    expect(allows(cards.failed, "disconnect")).toBe(false)
+    expect(allows(cards.lost, "disconnect")).toBe(false)
+    expect(allows(cards.connected, "disconnect")).toBe(true)
+  })
+
+  test("AC-186: клавиша x действует только в состоянии «Соединение потеряно»", () => {
+    expect(allows(cards.never, "forget")).toBe(false)
+    expect(allows(cards.failed, "forget")).toBe(false)
+    expect(allows(cards.lost, "forget")).toBe(true)
+    expect(allows(cards.connected, "forget")).toBe(false)
+  })
+
+  test("AC-185: enter доступен в состояниях 1–3 и недоступен у подключённого", () => {
+    expect(allows(cards.never, "connect")).toBe(true)
+    expect(allows(cards.failed, "connect")).toBe(true)
+    expect(allows(cards.lost, "connect")).toBe(true)
+    expect(allows(cards.connected, "connect")).toBe(false)
+    // «Права» — только у подключённого (S-V16, состояние 4).
+    expect(allows(cards.connected, "permissions")).toBe(true)
+    expect(allows(cards.lost, "permissions")).toBe(false)
+  })
+
+  test("AC-186: нажатие d вне состояния «Подключено» ничего не меняет и объясняет почему", () => {
+    const act = source.slice(source.indexOf("async function act("))
+    const guard = act.slice(0, act.indexOf("setBusy("))
+    // Подсказка показывается до выхода: молчаливое бездействие неотличимо от зависшего интерфейса.
+    expect(guard).toContain('t("connectors.notConnectedHint")')
+    expect(guard.indexOf('t("connectors.notConnectedHint")')).toBeLessThan(guard.indexOf("if (!allows(card, action)) return"))
+    // И само действие не выполняется: до вызова SDK дело не доходит.
+    expect(guard).toContain("if (!allows(card, action)) return")
+  })
+
+  test("AC-186: клавиши d и x объявлены и подчинены набору действий карточки", () => {
+    const text = keybindSource
+    expect(text).toContain('"dialog.corp.disconnect": keybind("d"')
+    expect(text).toContain('"dialog.corp.forget": keybind("x"')
+
+    const block = source.slice(source.indexOf("actions={["), source.indexOf("dialog.corp.refresh"))
+    const forget = block.slice(block.indexOf("dialog.corp.forget"))
+    expect(forget.slice(0, forget.indexOf("onTrigger"))).toContain('!allows(option?.value, "forget")')
+  })
+
+  test("AC-185: подпись enter — «Повторить» в состоянии 3 и «Подключить» в состояниях 1 и 2", () => {
+    const block = source.slice(source.indexOf("actions={["), source.indexOf("dialog.corp.disconnect"))
+    expect(block).toContain('includes("reconnect") ? t("connectors.retry") : t("connectors.connect")')
+    // Различие подписи опирается на набор действий общего модуля, а не на собственное правило.
+    expect(cards.lost.actions).toContain("reconnect")
+    expect(cards.never.actions).not.toContain("reconnect")
+    expect(cards.failed.actions).not.toContain("reconnect")
+  })
+
+  test("AC-185, S-V18: подключённая карточка помечена маркером, читаемым без цвета", () => {
+    const marker = source.slice(source.indexOf("const MARKER"), source.indexOf("function Status("))
+    expect(marker).toMatch(/connected:\s*"[^"\s]/)
+    // Маркер — символ, а не цвет: в монохромном терминале признак обязан читаться.
+    expect(source).toContain('card.state === "connected" ? MARKER.connected : MARKER.other')
+    // Ширина маркера одинакова у всех карточек — список не разъезжается.
+    const connected = marker.match(/connected:\s*"([^"]*)"/)![1]!
+    const other = marker.match(/other:\s*"([^"]*)"/)![1]!
+    expect(other.length).toBe(connected.length)
+    expect(other.trim()).toBe("")
+  })
+
+  test("AC-185: подписи состояний берутся из словаря TUI по состоянию карточки", () => {
+    const table = source.slice(source.indexOf("const STATE_KEY"), source.indexOf("const MARKER"))
+    expect(table).toContain('failed: "connectors.neverConnected"')
+    expect(table).toContain('lost: "connectors.lost"')
+    expect(table).toContain('disconnected: "connectors.disconnected"')
   })
 })

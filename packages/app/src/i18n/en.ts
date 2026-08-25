@@ -1090,6 +1090,16 @@ export const dict = {
     "This app version does not support the connector permission model — manage permissions in the Hub",
   "corp.connectors.toolsPreview": "Tools in the {{preset}} preset",
   "corp.connectors.partial": "Some catalog cards were not parsed and are hidden: {{dropped}}",
+  "corp.connectors.connected": "Connected",
+  "corp.connectors.retry": "Retry",
+  "corp.connectors.forget": "Remove from list",
+  "corp.connectors.forgetConfirm":
+    "Remove \u201c{{title}}\u201d from the list? The connector entry will be deleted from your config and the connection revoked in the Hub.",
+  "corp.connectors.forgetHubFailed":
+    "Removed locally, but the Hub did not respond \u2014 the connection may still exist on its side",
+  "corp.connectors.neverConnected": "Connection failed",
+  "corp.connectors.lost": "Connection lost",
+  "corp.connectors.disconnected": "Disconnected by you",
 
   "corp.empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
 
@@ -1117,4 +1127,14 @@ export const dict = {
   "corp.error.not_found": "Not found",
   "corp.error.invalid_request": "Invalid request",
   "corp.error.unknown": "Unknown error",
+
+  "corp.error.connect.token_rejected":
+    "Access was not confirmed: the Hub or the target system rejected your authorization",
+  "corp.error.connect.method_unavailable":
+    "This connector cannot be connected this way right now \u2014 it is resolved on the Hub side",
+  "corp.error.connect.hub_unreachable": "The Hub could not be reached; your settings are not at fault",
+  "corp.error.connect.unknown": "Connection failed: {{code}}",
+
+  "corp.upgrade.disabled":
+    "Corporate builds are updated centrally: get the new version from whoever distributes the build",
 }

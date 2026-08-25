@@ -988,6 +988,16 @@ export const dict = {
     "Модель прав не поддерживается этой версией приложения — правами можно управлять в Hub",
   "corp.connectors.toolsPreview": "Инструменты пресета {{preset}}",
   "corp.connectors.partial": "Часть карточек каталога не разобрана и не показана: {{dropped}}",
+  "corp.connectors.connected": "Подключено",
+  "corp.connectors.retry": "Повторить",
+  "corp.connectors.forget": "Убрать из списка",
+  "corp.connectors.forgetConfirm":
+    "Убрать «{{title}}» из списка? Запись коннектора будет удалена из вашего конфига, а подключение — снято в Hub.",
+  "corp.connectors.forgetHubFailed":
+    "Запись удалена локально, но Hub не ответил — подключение могло остаться на его стороне",
+  "corp.connectors.neverConnected": "Подключение не удалось",
+  "corp.connectors.lost": "Соединение потеряно",
+  "corp.connectors.disconnected": "Отключено вами",
 
   "corp.empty.unparsed": "Каталог не разобран: отброшены все карточки ({{dropped}})",
 
@@ -1015,4 +1025,13 @@ export const dict = {
   "corp.error.not_found": "Не найдено",
   "corp.error.invalid_request": "Некорректный запрос",
   "corp.error.unknown": "Неизвестная ошибка",
+
+  "corp.error.connect.token_rejected": "Доступ не подтверждён: Hub или целевая система не приняли вашу авторизацию",
+  "corp.error.connect.method_unavailable":
+    "Этим способом коннектор сейчас подключить нельзя — вопрос решается на стороне Hub",
+  "corp.error.connect.hub_unreachable": "Связаться с Hub не удалось, ваши настройки ни при чём",
+  "corp.error.connect.unknown": "Подключение не удалось: {{code}}",
+
+  "corp.upgrade.disabled":
+    "Обновление корпоративной сборки выполняется централизованно: новую версию нужно взять у распространителя сборки",
 }

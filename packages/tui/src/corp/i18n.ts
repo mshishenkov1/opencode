@@ -39,8 +39,18 @@ const ru = {
   "connectors.deprecated": "устаревший",
   "connectors.stale": "данные устарели, действия недоступны",
   "connectors.presetTitle": "Права коннектора",
-  "connectors.permissionsUnavailable": "Модель прав не поддерживается этой версией приложения — правами можно управлять в Hub",
+  "connectors.permissionsUnavailable":
+    "Модель прав не поддерживается этой версией приложения — правами можно управлять в Hub",
   "connectors.reauth": "Требуется повторная авторизация",
+  "connectors.connected": "Подключено",
+  "connectors.retry": "повторить",
+  "connectors.forget": "убрать из списка",
+  "connectors.forgetConfirm": "Убрать коннектор из списка? Запись будет удалена из конфига, подключение — снято в Hub",
+  "connectors.forgetHubFailed": "Запись удалена локально, но Hub не ответил",
+  "connectors.neverConnected": "Подключение не удалось",
+  "connectors.lost": "Соединение потеряно",
+  "connectors.disconnected": "Отключено вами",
+  "connectors.notConnectedHint": "Отключать нечего: подключения нет",
 
   "status.connected": "✓ Подключён",
   "status.needs_auth": "⚠ Требуется авторизация",
@@ -64,6 +74,15 @@ const ru = {
   "error.not_found": "Не найдено",
   "error.invalid_request": "Некорректный запрос",
   "error.unknown": "Неизвестная ошибка",
+
+  "error.connect.token_rejected": "Доступ не подтверждён: Hub или целевая система не приняли вашу авторизацию",
+  "error.connect.method_unavailable":
+    "Этим способом коннектор сейчас подключить нельзя — вопрос решается на стороне Hub",
+  "error.connect.hub_unreachable": "Связаться с Hub не удалось, ваши настройки ни при чём",
+  "error.connect.unknown": "Подключение не удалось",
+
+  "upgrade.disabled":
+    "Обновление корпоративной сборки выполняется централизованно: новую версию нужно взять у распространителя сборки",
 } as const
 
 export type Key = keyof typeof ru
@@ -100,8 +119,19 @@ const en: Record<Key, string> = {
   "connectors.deprecated": "deprecated",
   "connectors.stale": "data is stale, actions unavailable",
   "connectors.presetTitle": "Connector permissions",
-  "connectors.permissionsUnavailable": "This app version does not support the connector permission model — manage permissions in the Hub",
+  "connectors.permissionsUnavailable":
+    "This app version does not support the connector permission model — manage permissions in the Hub",
   "connectors.reauth": "Re-authorization required",
+  "connectors.connected": "Connected",
+  "connectors.retry": "retry",
+  "connectors.forget": "remove from list",
+  "connectors.forgetConfirm":
+    "Remove the connector from the list? The entry will be deleted from the config and the connection revoked in the Hub",
+  "connectors.forgetHubFailed": "Removed locally, but the Hub did not respond",
+  "connectors.neverConnected": "Connection failed",
+  "connectors.lost": "Connection lost",
+  "connectors.disconnected": "Disconnected by you",
+  "connectors.notConnectedHint": "Nothing to disconnect: there is no connection",
 
   "status.connected": "✓ Connected",
   "status.needs_auth": "⚠ Needs auth",
@@ -125,6 +155,14 @@ const en: Record<Key, string> = {
   "error.not_found": "Not found",
   "error.invalid_request": "Invalid request",
   "error.unknown": "Unknown error",
+
+  "error.connect.token_rejected": "Access was not confirmed: the Hub or the target system rejected your authorization",
+  "error.connect.method_unavailable":
+    "This connector cannot be connected this way right now — it is resolved on the Hub side",
+  "error.connect.hub_unreachable": "The Hub could not be reached; your settings are not at fault",
+  "error.connect.unknown": "Connection failed",
+
+  "upgrade.disabled": "Corporate builds are updated centrally: get the new version from whoever distributes the build",
 }
 
 export const dictionaries = { ru, en } as const
@@ -144,4 +182,13 @@ export function errorText(code: string | undefined): string {
   if (!code) return t("error.unknown")
   const key = `error.${code}` as Key
   return key in ru ? t(key) : code
+}
+
+/**
+ * Текст объяснения ошибки подключения по её классу (S-V19, S-T10).
+ * Класс определяется всегда, поэтому объяснение есть у любой ошибки — включая `unknown`.
+ */
+export function connectErrorText(errorClass: string | undefined): string {
+  const key = `error.connect.${errorClass ?? "unknown"}` as Key
+  return key in ru ? t(key) : t("error.connect.unknown")
 }

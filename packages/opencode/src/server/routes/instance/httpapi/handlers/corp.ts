@@ -3,6 +3,7 @@ import { Config } from "@/config/config"
 import { MCP } from "@/mcp"
 import * as CorpCatalogCache from "@/corp/catalog-cache"
 import * as CorpConfig from "@/corp/config"
+import * as CorpConnections from "@/corp/connections"
 import * as CorpConnectors from "@/corp/connectors"
 import type * as CorpErrors from "@/corp/errors"
 import * as CorpHub from "@/corp/hub"
@@ -238,9 +239,54 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return { statuses, configured: new Set(Object.keys(config.mcp ?? {})) }
     })
 
+    /**
+     * Признак «подключение состоялось» (S-V15).
+     *
+     * Читается один раз на построение витрины; повреждённый файл трактуется как отсутствующий и
+     * пишет предупреждение в лог, не мешая открыть витрину (S-V15 п.4, AC-179).
+     */
+    const readConnections = Effect.fnUntraced(function* (url: string) {
+      const result = yield* Effect.promise(() => CorpConnections.read(url))
+      if (result.corrupted)
+        yield* Effect.logWarning("corp connections: файл признака подключений нечитаем, считается отсутствующим", {
+          file: CorpConnections.fileFor(url),
+        })
+      return result.entry
+    })
+
+    /**
+     * Записывает наблюдения признака (S-V15 п.2): локальный `connected` и запись подключения Hub.
+     * `connected_at` первого наблюдения не меняется, повторные подключения файл не трогают.
+     */
+    const rememberConnections = Effect.fnUntraced(function* (
+      entry: CorpConnections.Entry,
+      observations: Iterable<string>,
+    ) {
+      const next = CorpConnections.remember(entry, observations)
+      if (!next) return entry
+      yield* Effect.promise(() => CorpConnections.write(next))
+      return next
+    })
+
     const toCards = Effect.fnUntraced(function* (url: string, servers: CorpSchema.CatalogServer[], stale: boolean) {
       const { statuses, configured } = yield* localState()
       const known = new Set(servers.map((server) => server.alias))
+
+      // S-V15: сначала фиксируем наблюдения этого построения витрины, потом считаем по ним карточки —
+      // иначе признак у только что подключённого сервера появился бы лишь со следующего открытия.
+      const observations: string[] = []
+      for (const server of servers)
+        if (
+          CorpConnections.observed({
+            ...(statuses[server.alias] === undefined ? {} : { local: statuses[server.alias]!.status }),
+            ...(server.connection === undefined ? {} : { connection: server.connection.status }),
+          })
+        )
+          observations.push(server.alias)
+      for (const alias of configured)
+        if (!known.has(alias) && statuses[alias]?.status === "connected") observations.push(alias)
+      const connections = yield* rememberConnections(yield* readConnections(url), observations)
+
       const cards: CorpSchema.CatalogCard[] = servers.map((server) => {
         const local = statuses[server.alias]
         const permissions = CorpSchema.parsePermissionModel(server.permission_model)
@@ -250,6 +296,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           configured: configured.has(server.alias),
           ...(local === undefined ? {} : { local: local.status }),
           ...(local && "error" in local ? { localError: local.error } : {}),
+          everConnectedLocally: CorpConnections.has(connections, server.alias),
           stale,
         })
         return {
@@ -269,6 +316,8 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           ...(server.connection?.preset === undefined ? {} : { preset: server.connection.preset }),
           status: card.status,
           actions: card.actions,
+          state: card.state,
+          ever_connected: card.everConnected,
           deprecated: card.deprecated,
           blocked: card.blocked,
           configured: configured.has(server.alias),
@@ -280,12 +329,20 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       for (const alias of configured) {
         if (known.has(alias)) continue
         const local = statuses[alias]
-        const card = CorpStatus.compute({ alias, configured: true, stale, ...(local ? { local: local.status } : {}) })
+        const card = CorpStatus.compute({
+          alias,
+          configured: true,
+          stale,
+          ...(local ? { local: local.status } : {}),
+          everConnectedLocally: CorpConnections.has(connections, alias),
+        })
         cards.push({
           alias,
           title: alias,
           status: card.status,
           actions: card.actions,
+          state: card.state,
+          ever_connected: card.everConnected,
           deprecated: false,
           blocked: card.blocked,
           configured: true,
@@ -398,12 +455,20 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const { server, stale } = yield* serverFor(url, alias)
       const { statuses, configured } = yield* localState()
       const local = statuses[alias]
+      // S-V15: наблюдение фиксируется и после отдельного действия — состояние карточки в ответе
+      // действия обязано совпадать с тем, что покажет следующее открытие витрины.
+      const observed = CorpConnections.observed({
+        ...(local === undefined ? {} : { local: local.status }),
+        ...(server?.connection === undefined ? {} : { connection: server.connection.status }),
+      })
+      const connections = yield* rememberConnections(yield* readConnections(url), observed ? [alias] : [])
       return CorpStatus.compute({
         alias,
         ...(server === undefined ? {} : { server }),
         configured: configured.has(alias),
         ...(local === undefined ? {} : { local: local.status }),
         ...(local && "error" in local ? { localError: local.error } : {}),
+        everConnectedLocally: CorpConnections.has(connections, alias),
         stale,
       }).status
     })

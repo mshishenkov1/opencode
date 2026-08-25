@@ -20,6 +20,12 @@ export interface Input {
   local?: LocalStatus
   /** Текст ошибки локального статуса `failed` / `needs_client_registration`. */
   localError?: string
+  /**
+   * Признак «подключение состоялось» из персистентного артефакта (S-V15 п.1а): локальный статус
+   * `connected` наблюдался в этом или в любом прошлом запуске. Доказательство по данным Hub
+   * (S-V15 п.1б) правило выводит само из `server.connection.status` — оно уже здесь.
+   */
+  everConnectedLocally?: boolean
   /** Каталог отдан из протухшего кэша (S-V3). */
   stale: boolean
 }
@@ -28,6 +34,10 @@ export interface Card {
   alias: string
   status: CorpSchema.CardStatus
   actions: CorpSchema.CardAction[]
+  /** Пользовательское состояние карточки (S-V16): им определяются и действия, и подпись. */
+  state: CorpSchema.CardState
+  /** Признак «подключение состоялось» (S-V15) с учётом обоих доказательств. */
+  everConnected: boolean
   /** Бейдж «устаревший» — независимо от статуса (S-V6). */
   deprecated: boolean
   /** Действия «Подключить»/«Переподключить»/«Права» заблокированы: каталог протух (S-V6, правило 2). */
@@ -38,54 +48,100 @@ export interface Card {
 
 const NEEDS_AUTH_LOCAL: ReadonlySet<string> = new Set(["needs_auth", "needs_client_registration"])
 
+/**
+ * Действия по состоянию (S-V16). Таблица здесь одна на обе оболочки: и TUI, и Desktop берут набор
+ * отсюда и сами его не вычисляют (S-T10), поэтому разойтись они не могут по построению.
+ *
+ * «Отключить» существует ровно в состоянии 4, «Убрать из списка» — ровно в состоянии 3.
+ */
+const ACTIONS: Record<CorpSchema.CardState, CorpSchema.CardAction[]> = {
+  // Состояние 1 «Не подключён» и состояние 2 «Подключение не удалось» отличаются только подписью
+  // и объяснением ошибки: убирать у них нечего, отключать тоже (D-31).
+  never: ["connect", "open_hub"],
+  failed: ["connect", "open_hub"],
+  // Состояние 3: подпись «Повторить» честно называет, что попытка уже была (S-V16).
+  lost: ["reconnect", "forget", "open_hub"],
+  disconnected: ["reconnect", "forget", "open_hub"],
+  // Состояние 4: кнопки «Подключить» нет — вместо неё явный признак «Подключено» (S-V18).
+  connected: ["permissions", "disconnect", "open_hub"],
+}
+
 export function compute(input: Input): Card {
   const deprecated = input.server?.status === "deprecated"
   const connection = input.server?.connection?.status
 
-  // Правило 1: alias отсутствует в каталоге, но есть в конфиге.
+  // S-V15 п.1: признак истинен по локальной истории (а) либо по записи подключения Hub (б).
+  // Запись `mcp.<alias>` в конфиге признаком не является — она появляется и у неудачной попытки.
+  const everConnected =
+    input.everConnectedLocally === true || connection === "connected" || connection === "needs_reauth"
+
+  // Правило 1: alias отсутствует в каталоге, но есть в конфиге. Ревизией 1.9 не затрагивается
+  // (AC-50): карточки в каталоге Hub нет вовсе, и заказчиком эта строка не оспаривалась.
   if (!input.server && input.configured) {
-    return { alias: input.alias, status: "unavailable", actions: ["disconnect", "open_hub"], deprecated, blocked: false }
+    return {
+      alias: input.alias,
+      status: "unavailable",
+      actions: ["disconnect", "open_hub"],
+      state: input.local === "connected" ? "connected" : everConnected ? "lost" : "never",
+      everConnected,
+      deprecated,
+      blocked: false,
+    }
   }
 
   // Правило 2 применяется поверх результата правил 3–7: блокируем действия, но статус считаем как обычно.
   const blocked = input.stale
 
+  // Столбец «Статус витрины» строк 3–7 таблицы S-V6 ревизией 1.9 не изменён.
   let status: CorpSchema.CardStatus
-  let actions: CorpSchema.CardAction[]
   let error: string | undefined
 
   if (input.local === "failed") {
     // Правило 3 (D-11): `failed` ближе к «недоступен», чем к «требуется авторизация».
     status = "unavailable"
-    actions = ["reconnect", "disconnect"]
     error = input.localError
   } else if ((input.local && NEEDS_AUTH_LOCAL.has(input.local)) || connection === "needs_reauth") {
     // Правило 4.
     status = "needs_auth"
-    actions = ["connect", "disconnect"]
     error = input.local === "needs_client_registration" ? input.localError : undefined
   } else if (input.local === "connected") {
     // Правило 5.
     status = "connected"
-    actions = ["permissions", "disconnect", "open_hub"]
   } else {
     // Правила 6 и 7 дают одинаковый результат; различие только в происхождении записи.
     status = "not_connected"
-    actions = ["connect", "open_hub"]
   }
+
+  // Состояние карточки (S-V16). Порядок проверок и есть таблица: сначала «Подключено» (оно
+  // определяется локальным статусом и признака не требует), затем разделение по признаку S-V15.
+  const state: CorpSchema.CardState =
+    input.local === "connected"
+      ? "connected"
+      : everConnected
+        ? // Состояние 3 при одном наборе действий имеет две подписи: «Отключено вами» — когда
+          // пользователь отключил сервер сам (S-V8 гасит запись конфига и её сохраняет),
+          // «Соединение потеряно» — когда связь сломалась сама. Запись конфига без локального
+          // статуса — тот же случай «отключено вами»: «Убрать из списка» её бы удалило (S-V17).
+          input.local === "disabled" || (input.local === undefined && input.configured)
+          ? "disconnected"
+          : "lost"
+        : input.local === "failed" || (input.local !== undefined && NEEDS_AUTH_LOCAL.has(input.local))
+          ? "failed"
+          : "never"
+
+  let actions: CorpSchema.CardAction[] = [...ACTIONS[state]]
 
   // Карточка `deprecated`: «Подключить» доступно только как переподключение уже настроенного alias.
   if (deprecated && !input.configured) actions = actions.filter((action) => action !== "connect")
 
-  // Правило 2 S-V6: на протухшем каталоге остаётся только «Открыть в Hub» и «Отключить».
-  // «Переподключить» — тот же путь S-V7 (запись конфига + authenticate) на данных протухшего кэша,
-  // поэтому блокируется вместе с «Подключить» и «Права».
+  // Правило 2 S-V6: на протухшем каталоге «Подключить», «Повторить» и «Права» заблокированы.
+  // «Убрать из списка» остаётся: она нужна пользователю именно тогда, когда Hub недоступен, и
+  // шаг обращения к Hub в ней необязателен (S-V16, S-V17 п.4).
   if (blocked)
     actions = actions.filter((action) => action !== "connect" && action !== "permissions" && action !== "reconnect")
 
-  return error === undefined
-    ? { alias: input.alias, status, actions, deprecated, blocked }
-    : { alias: input.alias, status, actions, deprecated, blocked, error }
+  const card: Card = { alias: input.alias, status, actions, state, everConnected, deprecated, blocked }
+  return error === undefined ? card : { ...card, error }
 }
 
 /** Поиск по подстроке без учёта регистра по `title`, `alias`, `description`, `owner` (S-V11). */

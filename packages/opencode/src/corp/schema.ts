@@ -390,8 +390,25 @@ export type CatalogCacheFile = Schema.Schema.Type<typeof CatalogCacheFile>
 export const CardStatus = Schema.Literals(["connected", "needs_auth", "not_connected", "unavailable"])
 export type CardStatus = Schema.Schema.Type<typeof CardStatus>
 
-export const CardAction = Schema.Literals(["connect", "reconnect", "disconnect", "permissions", "open_hub"])
+/**
+ * Действия карточки (S-V6, S-V16).
+ *
+ * Ревизия 1.9 добавила `forget` («Убрать из списка», S-V17) — действие с другим смыслом и другим
+ * результатом, чем `disconnect`: оно **удаляет** запись `mcp.<alias>` из конфига, тогда как
+ * «Отключить» её сохраняет ради повтора в один клик (D-31). Прежние значения сохранены.
+ */
+export const CardAction = Schema.Literals(["connect", "reconnect", "disconnect", "forget", "permissions", "open_hub"])
 export type CardAction = Schema.Schema.Type<typeof CardAction>
+
+/**
+ * Пользовательское состояние карточки (S-V16) — то, что различает не подпись, а набор действий.
+ *
+ * `never` — состояние 1 «Не подключён»; `failed` — состояние 2 «Подключение не удалось»;
+ * `lost` и `disconnected` — две подписи состояния 3 при одном наборе действий («Соединение
+ * потеряно» и «Отключено вами»); `connected` — состояние 4 «Подключено».
+ */
+export const CardState = Schema.Literals(["never", "failed", "lost", "disconnected", "connected"])
+export type CardState = Schema.Schema.Type<typeof CardState>
 
 // --- Ответы корп-роутов (S-A1, S-V1) ---
 
@@ -465,6 +482,10 @@ export const CatalogCard = Schema.Struct({
   preset: Schema.optional(Schema.String),
   status: CardStatus,
   actions: Schema.mutable(Schema.Array(CardAction)),
+  /** Состояние карточки по признаку «подключение состоялось» (S-V15, S-V16). */
+  state: CardState,
+  /** Признак «подключение состоялось» (S-V15): от него зависит набор действий. */
+  ever_connected: Schema.Boolean,
   deprecated: Schema.Boolean,
   blocked: Schema.Boolean,
   configured: Schema.Boolean,

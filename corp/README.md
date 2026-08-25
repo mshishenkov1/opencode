@@ -62,6 +62,22 @@ CORP_HUB_URL=https://hub.magnit.ru bun run corp/build.ts --desktop --skip-cli --
 
 Без `CORP_HUB_URL` скрипт печатает предупреждение и собирает ванильную сборку.
 
+### Источники обновлений
+
+Оба адреса приходят из окружения сборки и в репозитории не хранятся; без адреса обновление
+не выполняется вовсе — «нет адреса» означает «нет обновления», а не «спросить у апстрима» (D-24, D-34).
+
+| Переменная | Что задаёт | Без неё |
+|---|---|---|
+| `CORP_DESKTOP_UPDATE_URL` | фид автообновления Desktop (`publish` канала `magnit`, build-константа `OPENCODE_CORP_UPDATE_URL`) — S-B11 | `app-update.yml` в бандл не попадает, апдейтер выключен целиком |
+| `CORP_CLI_UPDATE_URL` | источник явного `opencode upgrade` (build-константа `OPENCODE_CORP_CLI_UPDATE_URL`) — S-B14 | `opencode upgrade` не делает ни одного сетевого запроса: печатает, что обновление выполняется централизованно, и завершается кодом `1` |
+
+Целевая версия CLI берётся из `GET <CORP_CLI_UPDATE_URL>/latest` (JSON `{version}`), артефакт — из
+`<CORP_CLI_UPDATE_URL>/<версия>/opencode-<os>-<arch>.zip`. `api.github.com`, `registry.npmjs.org`,
+`formulae.brew.sh`, `community.chocolatey.org` и `raw.githubusercontent.com` не участвуют ни на одном
+шаге. Каталог кеша обновлений Desktop у канала `magnit` свой — `opencode-magnit-desktop-updater`
+(S-B13): он выводится из `extraMetadata.name`, а не из `appId` или `productName`.
+
 ### Канал сборки (`--channel`)
 
 `--channel <канал>` (или env `OPENCODE_CHANNEL`) уходит в сборку как `OPENCODE_CHANNEL`.

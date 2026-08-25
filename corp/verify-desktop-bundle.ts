@@ -81,10 +81,27 @@ export function checkPlist(text: string): string[] {
   return problems
 }
 
-/** Расхождения конфигурации апдейтера: чужой фид (AC-149) и адрес не из переменной сборки (AC-153). */
+/** Каталог кеша обновлений ванильной сборки: выводится из `name` пакета `@opencode-ai/desktop` (F42). */
+const VANILLA_UPDATER_CACHE_DIR = "@opencode-aidesktop-updater"
+
+/** Каталог кеша обновлений канала `magnit` (S-B13): `sanitizeFileName(name) + "-updater"`. */
+const EXPECTED_UPDATER_CACHE_DIR = "opencode-magnit-desktop-updater"
+
+/**
+ * Расхождения конфигурации апдейтера: чужой фид (AC-149), адрес не из переменной сборки (AC-153)
+ * и общий с ванильной сборкой каталог кеша обновлений (AC-191, S-B13).
+ */
 export function checkFeed(file: string, text: string, updateUrl?: string): string[] {
   const problems: string[] = []
   const feed = readFeed(text)
+  // S-B13: общий каталог кеша означает, что корпоративная сборка ищет обновление там, где его
+  // кладёт ванильная. Отсутствие ключа проверкой не считается — его не было и в прежних бандлах;
+  // ловится ровно неправильное значение.
+  if (text.includes(VANILLA_UPDATER_CACHE_DIR))
+    problems.push(`${file}: каталог кеша обновлений ${VANILLA_UPDATER_CACHE_DIR} — общий с ванильной сборкой`)
+  const cacheDir = feed["updaterCacheDirName"]
+  if (cacheDir !== undefined && cacheDir !== EXPECTED_UPDATER_CACHE_DIR)
+    problems.push(`${file}: updaterCacheDirName ${cacheDir}, ожидался ${EXPECTED_UPDATER_CACHE_DIR}`)
   if (feed["provider"] === "github") problems.push(`${file}: provider github — фид ванильного апстрима`)
   if (feed["owner"] !== undefined) problems.push(`${file}: owner ${feed["owner"]} — фид ванильного апстрима`)
   if (/github\.com\/anomalyco|anomalyco/.test(text)) problems.push(`${file}: ссылка на anomalyco в конфигурации обновлений`)

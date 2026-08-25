@@ -490,6 +490,8 @@ export const CatalogCard = Schema.Struct({
   blocked: Schema.Boolean,
   configured: Schema.Boolean,
   error: Schema.optional(Schema.String),
+  /** Класс ошибки состояний 2 и 3 таблицы S-V16 (S-V19): по нему карточка выбирает объяснение. */
+  error_class: Schema.optional(ConnectErrorClass),
   hub_url: Schema.optional(Schema.String),
 }).annotate({ identifier: "CorpCatalogCard" })
 export type CatalogCard = Schema.Schema.Type<typeof CatalogCard>

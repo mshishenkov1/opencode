@@ -22310,6 +22310,10 @@
           "error": {
             "type": "string"
           },
+          "error_class": {
+            "type": "string",
+            "enum": ["token_rejected", "method_unavailable", "hub_unreachable", "unknown"]
+          },
           "hub_url": {
             "type": "string"
           }

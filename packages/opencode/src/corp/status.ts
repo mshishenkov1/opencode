@@ -1,3 +1,4 @@
+import * as CorpErrors from "./errors"
 import type * as CorpSchema from "./schema"
 
 /**
@@ -44,6 +45,11 @@ export interface Card {
   blocked: boolean
   /** Подпись карточки: текст ошибки локального статуса. */
   error?: string
+  /**
+   * Класс ошибки состояний 2 и 3 (S-V19): по нему карточка показывает объяснение и предлагаемое
+   * действие, не дожидаясь новой попытки подключения. У состояний без ошибки поля нет.
+   */
+  errorClass?: CorpErrors.ErrorClass
 }
 
 const NEEDS_AUTH_LOCAL: ReadonlySet<string> = new Set(["needs_auth", "needs_client_registration"])
@@ -141,7 +147,24 @@ export function compute(input: Input): Card {
     actions = actions.filter((action) => action !== "connect" && action !== "permissions" && action !== "reconnect")
 
   const card: Card = { alias: input.alias, status, actions, state, everConnected, deprecated, blocked }
-  return error === undefined ? card : { ...card, error }
+
+  // S-V19: неудачная попытка не оставляет пользователя без ответа на два вопроса — что пошло не так
+  // и что теперь делать. Класс считается и здесь, а не только в ответе `connect`: карточка обязана
+  // объяснять ошибку и после перезапуска приложения, когда свежей попытки не было.
+  const failedState = state === "failed" || state === "lost"
+  const errorClass =
+    failedState && (error !== undefined || input.local !== undefined)
+      ? CorpErrors.connectErrorClass({
+          ...(input.local === undefined ? {} : { local: input.local }),
+          ...(error === undefined ? {} : { message: error }),
+        })
+      : undefined
+
+  return {
+    ...card,
+    ...(error === undefined ? {} : { error }),
+    ...(errorClass === undefined ? {} : { errorClass }),
+  }
 }
 
 /** Поиск по подстроке без учёта регистра по `title`, `alias`, `description`, `owner` (S-V11). */

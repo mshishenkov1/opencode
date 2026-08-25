@@ -2,3 +2,13 @@
 [data-component="dialog-v2"] [data-slot="dialog-content"].corp-dialog-v2 [data-slot="dialog-body"] {
   padding: 0 4px 8px;
 }
+
+/*
+ * Бейдж «Подключено» (S-V18): то же средство и тот же размер, что бейдж «устаревший», цвет —
+ * успех темы. Признак обязан быть положительным и читаться в списке сразу, без наведения.
+ */
+[data-component="tag"].corp-tag-connected {
+  border-color: var(--border-success-base);
+  background: var(--surface-success-weak);
+  color: var(--text-on-success-base);
+}

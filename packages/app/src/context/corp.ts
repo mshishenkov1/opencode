@@ -91,6 +91,8 @@ export function useCorpInvalidate() {
 export type ConnectorAction =
   | { kind: "connect"; alias: string; preset?: string }
   | { kind: "disconnect"; alias: string }
+  /** «Убрать из списка» (S-V17): удаляет запись `mcp.<alias>` и снимает признак подключения. */
+  | { kind: "forget"; alias: string }
   | { kind: "permissions"; alias: string; preset: string }
 
 export function useConnectorAction() {
@@ -108,11 +110,26 @@ export function useConnectorAction() {
         return sdk()
           .client.corp.disconnect({ alias: action.alias })
           .then((response) => response.data)
+      if (action.kind === "forget")
+        return sdk()
+          .client.corp.forget({ alias: action.alias })
+          .then((response) => response.data)
       return sdk()
         .client.corp.permissions({ alias: action.alias, preset: action.preset })
         .then((response) => response.data)
     },
     onSuccess: async (result) => {
+      // S-V17: отказ Hub локальные шаги не откатывает — пользователю показывается предупреждение,
+      // называющее ровно то, что произошло: запись удалена у него, а Hub о ней мог не узнать.
+      if (result && "removed" in result && result.removed && "hub_error" in result && result.hub_error) {
+        showToast({
+          variant: "default",
+          title: language.t("corp.hubWarning"),
+          description: language.t("corp.connectors.forgetHubFailed"),
+        })
+        await invalidate()
+        return
+      }
       if (result && "hub_error" in result && result.hub_error) {
         showToast({
           variant: "default",
@@ -121,7 +138,12 @@ export function useConnectorAction() {
         })
       }
       if (result && "error" in result && result.error) {
-        showToast({ variant: "error", title: language.t("common.requestFailed"), description: result.error })
+        // S-V19: текст ошибки не показывается голым кодом — рядом идёт объяснение класса.
+        const explained =
+          "error_class" in result && result.error_class
+            ? `${language.t(connectErrorKey(result.error_class), { code: result.error })} (${result.error})`
+            : result.error
+        showToast({ variant: "error", title: language.t("common.requestFailed"), description: explained })
       }
       if (result && "reauth_required" in result && result.reauth_required) {
         showToast({ variant: "default", title: language.t("corp.connectors.reauth") })
@@ -152,6 +174,17 @@ const ERROR_KEYS = [
   "not_found",
   "invalid_request",
 ] as const
+
+const CONNECT_ERROR_CLASSES = ["token_rejected", "method_unavailable", "hub_unreachable", "unknown"] as const
+
+/**
+ * Ключ словаря по классу ошибки подключения (S-V19, S-I1).
+ * Неизвестный класс падает в `unknown`: «ошибка без объяснения» — дефект, а не состояние (D-32).
+ */
+export function connectErrorKey(errorClass: string | undefined) {
+  const known = CONNECT_ERROR_CLASSES.find((entry) => entry === errorClass)
+  return `corp.error.connect.${known ?? "unknown"}` as `corp.error.connect.${(typeof CONNECT_ERROR_CLASSES)[number]}`
+}
 
 /** Ключ словаря по стабильному коду ошибки корп-роутов (S-A5, S-I1). */
 export function corpErrorKey(code: string | undefined) {

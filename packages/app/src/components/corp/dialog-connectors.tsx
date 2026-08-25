@@ -6,7 +6,14 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { List } from "@opencode-ai/ui/list"
 import { Tag } from "@opencode-ai/ui/tag"
-import { corpErrorKey, useConnectorAction, useCorpCatalog, useCorpInvalidate, useCorpStatus } from "@/context/corp"
+import {
+  connectErrorKey,
+  corpErrorKey,
+  useConnectorAction,
+  useCorpCatalog,
+  useCorpInvalidate,
+  useCorpStatus,
+} from "@/context/corp"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
@@ -25,6 +32,22 @@ const STATUS_KEY = {
   needs_auth: "corp.status.needs_auth",
   not_connected: "corp.status.not_connected",
   unavailable: "corp.status.unavailable",
+} as const
+
+/**
+ * Подписи состояний карточки (S-V16).
+ *
+ * Состояние 3 имеет две подписи при одном наборе действий: «Соединение потеряно» — когда связь
+ * сломалась сама, «Отключено вами» — когда пользователь отключил сервер сам. Путать поломку с
+ * собственным решением нельзя, поэтому подписи разные. Состояния 1 и 4 подписи не добавляют:
+ * у первого её несёт статус, у второго — бейдж «Подключено» (S-V18).
+ */
+const STATE_KEY = {
+  never: undefined,
+  failed: "corp.connectors.neverConnected",
+  lost: "corp.connectors.lost",
+  disconnected: "corp.connectors.disconnected",
+  connected: undefined,
 } as const
 
 /**
@@ -124,6 +147,44 @@ const DialogConnectorPermissions: Component<{ card: CorpCatalogCard }> = (props)
   )
 }
 
+/**
+ * Подтверждение действия «Убрать из списка» (S-V17).
+ *
+ * Действие удаляет данные из конфига и, в отличие от «Отключить», в один клик не отменяется,
+ * поэтому спрашивается один раз явно; отмена не меняет ничего.
+ */
+const DialogForgetConnector: Component<{ card: CorpCatalogCard }> = (props) => {
+  const language = useLanguage()
+  const dialog = useDialog()
+  const action = useConnectorAction()
+
+  return (
+    <Dialog title={language.t("corp.connectors.forget")} fit>
+      <div class="flex flex-col gap-4 pl-6 pr-2.5 pb-3">
+        <span class="text-14-regular text-text-strong">
+          {language.t("corp.connectors.forgetConfirm", { title: props.card.title })}
+        </span>
+        <div class="flex justify-end gap-2">
+          <Button variant="ghost" size="large" onClick={() => dialog.close()}>
+            {language.t("common.cancel")}
+          </Button>
+          <Button
+            variant="primary"
+            size="large"
+            disabled={action.isPending}
+            onClick={() => {
+              action.mutate({ kind: "forget", alias: props.card.alias })
+              dialog.close()
+            }}
+          >
+            {language.t("corp.connectors.forget")}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
 export const DialogConnectors: Component = () => {
   const language = useLanguage()
   const dialog = useDialog()
@@ -194,6 +255,16 @@ export const DialogConnectors: Component = () => {
 
   const needsLogin = createMemo(() => catalog.data?.hub_error === "unauthorized")
 
+  /**
+   * Подпись ошибки подключения (S-V19): объяснение своего класса плюс код ошибки как есть.
+   * Класс есть у любой неудачи, включая `unknown`, поэтому необъяснённой ошибки не бывает (D-32).
+   */
+  function explain(card: CorpCatalogCard): string | undefined {
+    if (!card.error_class && !card.error) return undefined
+    const text = language.t(connectErrorKey(card.error_class), { code: card.error ?? "" })
+    return card.error ? `${text} (${card.error})` : text
+  }
+
   return (
     <CorpDialog
       title={language.t("corp.connectors.title")}
@@ -235,7 +306,17 @@ export const DialogConnectors: Component = () => {
             <div class="flex flex-col gap-0.5 min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <span class="truncate">{card.title}</span>
+                {/* S-V18: признак подключения — отдельный положительный элемент того же средства и
+                    размера, что бейдж «устаревший». Подписи мелким вспомогательным шрифтом для
+                    этого недостаточно — именно она была единственным признаком в BUG-I4-010. */}
+                <Show when={card.state === "connected"}>
+                  <Tag class="corp-tag-connected">{language.t("corp.connectors.connected")}</Tag>
+                </Show>
+                {/* Подпись статуса сохраняется — бейдж её дополняет, а не заменяет (S-V18). */}
                 <span class="text-11-regular text-text-weaker">{language.t(STATUS_KEY[card.status])}</span>
+                <Show when={STATE_KEY[card.state]}>
+                  {(key) => <span class="text-11-regular text-text-weaker">{language.t(key())}</span>}
+                </Show>
                 <Show when={card.deprecated}>
                   <Tag>{language.t("corp.connectors.deprecated")}</Tag>
                 </Show>
@@ -243,8 +324,11 @@ export const DialogConnectors: Component = () => {
                   <span class="text-11-regular text-text-weaker">{card.preset}</span>
                 </Show>
               </div>
-              <Show when={card.description || card.error}>
-                <span class="text-11-regular text-text-weaker truncate">{card.error ?? card.description}</span>
+              {/* S-V19: ошибка подключения не остаётся голым кодом — рядом объяснение своего класса.
+                  Предлагаемое действие показывается тем же элементом, которым оно выполняется
+                  («Повторить»/«Подключить» и «Открыть в Hub»), отдельной кнопкой-советом — нет. */}
+              <Show when={explain(card) || card.description}>
+                <span class="text-11-regular text-text-weaker truncate">{explain(card) ?? card.description}</span>
               </Show>
             </div>
             <div class="flex items-center gap-1 shrink-0" onClick={(event) => event.stopPropagation()}>
@@ -260,9 +344,9 @@ export const DialogConnectors: Component = () => {
                     })
                   }
                 >
-                  {language.t(
-                    card.actions.includes("reconnect") ? "corp.connectors.reconnect" : "corp.connectors.connect",
-                  )}
+                  {/* S-V16: подпись действия в состоянии 3 — «Повторить»: попытка уже была, и
+                      честнее это назвать; в состояниях 1 и 2 — «Подключить». Оба выполняют S-V7. */}
+                  {language.t(card.actions.includes("reconnect") ? "corp.connectors.retry" : "corp.connectors.connect")}
                 </Button>
               </Show>
               <Show when={card.actions.includes("permissions")}>
@@ -282,6 +366,8 @@ export const DialogConnectors: Component = () => {
                   {language.t("corp.connectors.permissions")}
                 </Button>
               </Show>
+              {/* S-V8, S-V16: «Отключить» существует ровно в состоянии «Подключено» — набор действий
+                  считает общий модуль corp/status.ts, оболочка его не пересчитывает. */}
               <Show when={card.actions.includes("disconnect")}>
                 <Button
                   size="small"
@@ -290,6 +376,19 @@ export const DialogConnectors: Component = () => {
                   onClick={() => action.mutate({ kind: "disconnect", alias: card.alias })}
                 >
                   {language.t("corp.connectors.disconnect")}
+                </Button>
+              </Show>
+              {/* S-V17: «Убрать из списка» — ровно в состоянии «Соединение потеряно»/«Отключено
+                  вами». Остаётся доступной и на протухшем каталоге: она нужна пользователю именно
+                  тогда, когда Hub недоступен. */}
+              <Show when={card.actions.includes("forget")}>
+                <Button
+                  size="small"
+                  variant="ghost"
+                  disabled={action.isPending}
+                  onClick={() => dialog.push(() => <DialogForgetConnector card={card} />)}
+                >
+                  {language.t("corp.connectors.forget")}
                 </Button>
               </Show>
               <Show when={card.actions.includes("open_hub") && card.hub_url}>

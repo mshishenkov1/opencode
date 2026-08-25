@@ -2290,6 +2290,7 @@ export type CorpCatalogCard = {
   blocked: boolean
   configured: boolean
   error?: string
+  error_class?: "token_rejected" | "method_unavailable" | "hub_unreachable" | "unknown"
   hub_url?: string
 }
 

@@ -322,6 +322,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           blocked: card.blocked,
           configured: configured.has(server.alias),
           ...(card.error === undefined ? {} : { error: card.error }),
+          ...(card.errorClass === undefined ? {} : { error_class: card.errorClass }),
           hub_url: CorpConnectors.hubServerUrl(url, server.alias),
         }
       })
@@ -346,6 +347,8 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           deprecated: false,
           blocked: card.blocked,
           configured: true,
+          ...(card.error === undefined ? {} : { error: card.error }),
+          ...(card.errorClass === undefined ? {} : { error_class: card.errorClass }),
           hub_url: CorpConnectors.hubServerUrl(url, alias),
         })
       }

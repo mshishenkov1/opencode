@@ -108,7 +108,13 @@ const NETWORK_PATTERNS =
  * ответов Hub, ключи и `poll_secret` сюда не попадают и наружу не уходят: класс — это одно из
  * четырёх слов, а текст пользователю подставляет словарь (S-I1).
  */
-export function connectErrorClass(input: { code?: Code; local?: string; message?: string }): ErrorClass {
+export function connectErrorClass(input: {
+  code?: Code
+  local?: string
+  /** Статус подключения в каталоге Hub: `needs_reauth` сам по себе означает «авторизация не принята». */
+  connection?: string
+  message?: string
+}): ErrorClass {
   if (input.local === "needs_client_registration") return "method_unavailable"
   if (input.code !== undefined) {
     const byCode = CLASS_BY_CODE[input.code]
@@ -120,6 +126,10 @@ export function connectErrorClass(input: { code?: Code; local?: string; message?
     if (TOKEN_PATTERNS.test(message)) return "token_rejected"
     if (NETWORK_PATTERNS.test(message)) return "hub_unreachable"
   }
+  // Проверяется последней: конкретная местная ошибка знает о причине больше, чем пометка Hub.
+  // Но если местной ошибки нет вовсе, `needs_reauth` — не «неизвестно», а прямо названная причина
+  // из строки `token_rejected` таблицы S-V19, и предлагаемое действие у неё то самое, что нужно.
+  if (input.connection === "needs_reauth") return "token_rejected"
   return "unknown"
 }
 

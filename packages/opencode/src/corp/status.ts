@@ -118,22 +118,31 @@ export function compute(input: Input): Card {
     status = "not_connected"
   }
 
-  // Состояние карточки (S-V16). Порядок проверок и есть таблица: сначала «Подключено» (оно
-  // определяется локальным статусом и признака не требует), затем разделение по признаку S-V15.
+  // Состояние карточки (S-V16). Порядок проверок и есть таблица.
+  //
+  // Первым идёт `connection.status = "needs_reauth"` — ровно тем же приоритетом, каким строка 4
+  // таблицы S-V6 идёт выше строки 5: Hub пометил подключение требующим повторной авторизации, и
+  // работающее локальное соединение этого не отменяет (BUG-I4-011). S-V16 прямо перечисляет
+  // `needs_reauth` среди условий состояния 3 и относит его к подписи «Соединение потеряно» —
+  // связь сломалась сама, пользователь ничего не отключал. Пропустить эту проверку значит выдать
+  // штатному исходу расширения прав (S-V9/AC-64) состояние 4: бейдж «Подключено» рядом с подписью
+  // «Требуется авторизация» и ни одного способа пройти повторную авторизацию.
   const state: CorpSchema.CardState =
-    input.local === "connected"
-      ? "connected"
-      : everConnected
-        ? // Состояние 3 при одном наборе действий имеет две подписи: «Отключено вами» — когда
-          // пользователь отключил сервер сам (S-V8 гасит запись конфига и её сохраняет),
-          // «Соединение потеряно» — когда связь сломалась сама. Запись конфига без локального
-          // статуса — тот же случай «отключено вами»: «Убрать из списка» её бы удалило (S-V17).
-          input.local === "disabled" || (input.local === undefined && input.configured)
-          ? "disconnected"
-          : "lost"
-        : input.local === "failed" || (input.local !== undefined && NEEDS_AUTH_LOCAL.has(input.local))
-          ? "failed"
-          : "never"
+    connection === "needs_reauth"
+      ? "lost"
+      : input.local === "connected"
+        ? "connected"
+        : everConnected
+          ? // Состояние 3 при одном наборе действий имеет две подписи: «Отключено вами» — когда
+            // пользователь отключил сервер сам (S-V8 гасит запись конфига и её сохраняет),
+            // «Соединение потеряно» — когда связь сломалась сама. Запись конфига без локального
+            // статуса — тот же случай «отключено вами»: «Убрать из списка» её бы удалило (S-V17).
+            input.local === "disabled" || (input.local === undefined && input.configured)
+            ? "disconnected"
+            : "lost"
+          : input.local === "failed" || (input.local !== undefined && NEEDS_AUTH_LOCAL.has(input.local))
+            ? "failed"
+            : "never"
 
   let actions: CorpSchema.CardAction[] = [...ACTIONS[state]]
 
@@ -153,9 +162,10 @@ export function compute(input: Input): Card {
   // объяснять ошибку и после перезапуска приложения, когда свежей попытки не было.
   const failedState = state === "failed" || state === "lost"
   const errorClass =
-    failedState && (error !== undefined || input.local !== undefined)
+    failedState && (error !== undefined || input.local !== undefined || connection === "needs_reauth")
       ? CorpErrors.connectErrorClass({
           ...(input.local === undefined ? {} : { local: input.local }),
+          ...(connection === undefined ? {} : { connection }),
           ...(error === undefined ? {} : { message: error }),
         })
       : undefined

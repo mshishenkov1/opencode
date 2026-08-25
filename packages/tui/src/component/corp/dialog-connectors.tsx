@@ -6,7 +6,7 @@ import { useEvent } from "../../context/event"
 import { useSDK } from "../../context/sdk"
 import { useSync } from "../../context/sync"
 import { useTheme } from "../../context/theme"
-import { errorText, t } from "../../corp/i18n"
+import { connectErrorText, errorText, t } from "../../corp/i18n"
 import { rememberTitles } from "../../corp/state"
 import { useDialog } from "../../ui/dialog"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
@@ -14,11 +14,16 @@ import { useToast } from "../../ui/toast"
 import { DialogCorpLogin } from "./dialog-corp-login"
 
 /**
- * Витрина коннекторов для TUI (S-T6, S-T7, S-V6, S-V11, S-V12).
+ * Витрина коннекторов для TUI (S-T6, S-T7, S-T10, S-V6, S-V11, S-V12, S-V16).
  *
  * Список карточек на штатном `DialogSelect`: `title` — название, `description` — описание и владелец,
- * `footer` — статус витрины цветами темы. Действия: `enter` — подключить/переподключить, `d` —
- * отключить, `p` — права, `o` — открыть в Hub, `r` — обновить каталог.
+ * `footer` — статус витрины цветами темы. Действия: `enter` — подключить/повторить, `d` —
+ * отключить, `x` — убрать из списка, `p` — права, `o` — открыть в Hub, `r` — обновить каталог.
+ *
+ * Паритет с Desktop держится не договорённостью, а построением (S-T10): набор действий обе оболочки
+ * получают из общего модуля `packages/opencode/src/corp/status.ts` и сами его не вычисляют. Клавиша
+ * `d` действует только в состоянии «Подключено», `x` — только в состоянии «Соединение потеряно» /
+ * «Отключено вами».
  */
 
 const STATUS_KEY = {
@@ -27,6 +32,27 @@ const STATUS_KEY = {
   not_connected: "status.not_connected",
   unavailable: "status.unavailable",
 } as const
+
+/**
+ * Подписи состояний карточки (S-V16). Состояние 3 имеет две подписи при одном наборе действий:
+ * путать поломку связи с собственным решением пользователя нельзя.
+ */
+const STATE_KEY = {
+  never: undefined,
+  failed: "connectors.neverConnected",
+  lost: "connectors.lost",
+  disconnected: "connectors.disconnected",
+  connected: undefined,
+} as const
+
+/**
+ * Маркер подключённой карточки в начале строки (S-T10, S-V18).
+ *
+ * Цвет и жирное начертание подписи статуса в монохромном терминале недоступны, поэтому признак
+ * подключения обязан читаться символом. Ширина маркера одинакова у всех карточек — список не
+ * разъезжается.
+ */
+const MARKER = { connected: "● ", other: "  " } as const
 
 function Status(props: { card: CorpCatalogCard; busy: boolean }) {
   const { theme } = useTheme()
@@ -39,10 +65,18 @@ function Status(props: { card: CorpCatalogCard; busy: boolean }) {
   }[props.card.status]
   const label = t(STATUS_KEY[props.card.status])
   const attributes = props.card.status === "connected" ? TextAttributes.BOLD : undefined
+  // S-V16: подпись состояния идёт рядом со статусом — «Подключение не удалось» и «Соединение
+  // потеряно» при одном и том же статусе витрины различаются только ею.
+  const stateKey = STATE_KEY[props.card.state]
+  const state = stateKey ? ` · ${t(stateKey)}` : ""
+  // S-V19: ошибка показывается текстом своего класса, а не голым кодом.
+  const explained = props.card.error_class ? ` · ${connectErrorText(props.card.error_class)}` : ""
   const suffix = props.card.deprecated ? ` · ${t("connectors.deprecated")}` : ""
   return (
     <span style={attributes === undefined ? { fg: color } : { fg: color, attributes }}>
       {label}
+      {state}
+      {explained}
       {suffix}
     </span>
   )
@@ -89,6 +123,12 @@ export function DialogConnectors() {
   const [busy, setBusy] = createSignal<string>()
   /** Подпись пользователя в заголовке витрины: email, а при неизвестном email — `user_id` (S-A13). */
   const [user, setUser] = createSignal<string>()
+  /**
+   * Карточка под курсором: от её состояния зависит подпись `enter` — «Повторить» в состоянии
+   * «Соединение потеряно» и «Подключить» в состояниях «Не подключён» и «Подключение не удалось»
+   * (S-T10, S-V16). Оболочка подпись выбирает, набор действий — нет.
+   */
+  const [current, setCurrent] = createSignal<CorpCatalogCard>()
 
   async function loadUser() {
     const status = await sdk.client.corp.status().catch(() => undefined)
@@ -127,8 +167,12 @@ export function DialogConnectors() {
     return card.actions.includes(action)
   }
 
-  async function act(card: CorpCatalogCard, action: "connect" | "disconnect") {
+  async function act(card: CorpCatalogCard, action: "connect" | "disconnect" | "forget") {
     if (busy()) return
+    // S-T10: клавиша `d` вне состояния «Подключено» ничего не меняет — и говорит, почему:
+    // молчаливое бездействие неотличимо от зависшего интерфейса.
+    if (action === "disconnect" && !allows(card, "disconnect"))
+      toast.show({ variant: "warning", message: t("connectors.notConnectedHint") })
     if (!allows(card, action)) return
     if (card.blocked && action === "connect") {
       toast.show({ variant: "warning", message: t("connectors.stale") })
@@ -139,12 +183,22 @@ export function DialogConnectors() {
       const result =
         action === "connect"
           ? await sdk.client.corp.connect({ alias: card.alias, preset: card.preset ?? "readonly" })
-          : await sdk.client.corp.disconnect({ alias: card.alias })
-      if (result?.data?.hub_error) {
-        toast.show({ variant: "warning", message: errorText(result.data.hub_error) })
+          : action === "forget"
+            ? await sdk.client.corp.forget({ alias: card.alias })
+            : await sdk.client.corp.disconnect({ alias: card.alias })
+      const data = result?.data
+      if (data?.hub_error) {
+        // S-V17: отказ Hub локальные шаги не откатывает — предупреждение называет ровно это.
+        const removed = data && "removed" in data && data.removed
+        toast.show({
+          variant: "warning",
+          message: removed ? t("connectors.forgetHubFailed") : errorText(data.hub_error),
+        })
       }
-      if (result?.data?.error) {
-        toast.show({ variant: "error", message: result.data.error })
+      if (data && "error" in data && data.error) {
+        // S-V19: рядом с кодом ошибки — объяснение её класса и предлагаемое действие.
+        const explained = "error_class" in data && data.error_class ? connectErrorText(data.error_class) : undefined
+        toast.show({ variant: "error", message: explained ? `${explained} (${data.error})` : data.error })
       }
     } catch (error) {
       toast.show({ variant: "error", message: String(error) })
@@ -195,6 +249,35 @@ export function DialogConnectors() {
     dialog.replace(() => <DialogConnectors />)
   }
 
+  /**
+   * Подтверждение «Убрать из списка» (S-V17, S-T10): то же подтверждение, что в Desktop.
+   * Действие удаляет запись из конфига и в один клик не отменяется; отмена не меняет ничего.
+   */
+  async function openForget(card: CorpCatalogCard) {
+    if (!allows(card, "forget")) return
+    const confirmed = await new Promise<boolean>((resolve) => {
+      dialog.replace(
+        () => (
+          <DialogSelect
+            title={t("connectors.forgetConfirm")}
+            options={[
+              { title: t("connectors.forget"), value: true },
+              { title: t("login.cancelled"), value: false },
+            ]}
+            onSelect={(option) => resolve(option.value)}
+          />
+        ),
+        () => resolve(false),
+      )
+    })
+    if (!confirmed) {
+      dialog.replace(() => <DialogConnectors />)
+      return
+    }
+    await act(card, "forget")
+    dialog.replace(() => <DialogConnectors />)
+  }
+
   async function openHub(card: CorpCatalogCard) {
     if (!allows(card, "open_hub") || !card.hub_url) return
     const open = await import("open").then((module) => module.default)
@@ -209,7 +292,8 @@ export function DialogConnectors() {
     const active = busy()
     // Порядок карточек и групп — как в каталоге Hub (S-V11, I-1 R-A3).
     return data.servers.map((card) => ({
-      title: card.title,
+      // S-T10: маркер в начале строки читается и в монохромном терминале, где цвет недоступен.
+      title: `${card.state === "connected" ? MARKER.connected : MARKER.other}${card.title}`,
       value: card,
       description: [card.description, card.owner].filter(Boolean).join(" · ") || undefined,
       category: card.owner || undefined,
@@ -267,13 +351,15 @@ export function DialogConnectors() {
       }
       emptyView={<text fg={theme.textMuted}>{empty() ?? ""}</text>}
       options={options()}
+      onMove={(option) => setCurrent(option.value)}
       onSelect={() => {
         // Закрываем только по esc; действия — по клавишам ниже (как в dialog-mcp).
       }}
       actions={[
         {
           command: "dialog.corp.connect",
-          title: t("connectors.connect"),
+          // S-V16: «Повторить» в состоянии 3 честно называет, что попытка уже была.
+          title: current()?.actions.includes("reconnect") ? t("connectors.retry") : t("connectors.connect"),
           disabled: (option) => !allows(option?.value, "connect"),
           onTrigger: (option) => void act(option.value, "connect"),
         },
@@ -282,6 +368,12 @@ export function DialogConnectors() {
           title: t("connectors.disconnect"),
           disabled: (option) => !allows(option?.value, "disconnect"),
           onTrigger: (option) => void act(option.value, "disconnect"),
+        },
+        {
+          command: "dialog.corp.forget",
+          title: t("connectors.forget"),
+          disabled: (option) => !allows(option?.value, "forget"),
+          onTrigger: (option) => void openForget(option.value),
         },
         {
           command: "dialog.corp.permissions",

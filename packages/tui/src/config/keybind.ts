@@ -211,6 +211,8 @@ export const Definitions = {
   // corp: действия витрины коннекторов (S-T6, S-T7)
   "dialog.corp.connect": keybind("return", "Connect connector"),
   "dialog.corp.disconnect": keybind("d", "Disconnect connector"),
+  // corp: «Убрать из списка» (S-V17, S-T10) — действует только в состоянии «Соединение потеряно».
+  "dialog.corp.forget": keybind("x", "Remove connector from list"),
   "dialog.corp.permissions": keybind("p", "Edit connector permissions"),
   "dialog.corp.open_hub": keybind("o", "Open connector in Hub"),
   "dialog.corp.refresh": keybind("r", "Refresh connector catalog"),

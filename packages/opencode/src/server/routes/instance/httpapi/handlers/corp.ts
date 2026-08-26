@@ -17,7 +17,7 @@ import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import open from "open"
 import { InstanceHttpApi } from "../api"
-import { CorpDisabledError, CorpHubError } from "../groups/corp"
+import { CorpBadRequestError, CorpDisabledError, CorpHubError } from "../groups/corp"
 
 /**
  * Обработчики корп-роутов (S-A1…S-A5, S-V1…S-V10).
@@ -236,7 +236,12 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
     const localState = Effect.fnUntraced(function* () {
       const statuses = yield* mcpSvc.status()
       const config = yield* configSvc.get()
-      return { statuses, configured: new Set(Object.keys(config.mcp ?? {})) }
+      // S-V23: раздел `permission` действующего (слитого) конфига — по нему считается permission_state.
+      return {
+        statuses,
+        configured: new Set(Object.keys(config.mcp ?? {})),
+        permission: config.permission,
+      }
     })
 
     /**
@@ -269,8 +274,11 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
     })
 
     const toCards = Effect.fnUntraced(function* (url: string, servers: CorpSchema.CatalogServer[], stale: boolean) {
-      const { statuses, configured } = yield* localState()
+      const { statuses, configured, permission } = yield* localState()
       const known = new Set(servers.map((server) => server.alias))
+      // S-V20: группы, выброшенные разбором словаря, — та же новость, что отброшенные карточки,
+      // и доезжает до пользователя тем же полем `dropped` (`corp.connectors.partial`).
+      const dropped: CorpSchema.Dropped[] = []
 
       // S-V15: сначала фиксируем наблюдения этого построения витрины, потом считаем по ним карточки —
       // иначе признак у только что подключённого сервера появился бы лишь со следующего открытия.
@@ -290,6 +298,10 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const cards: CorpSchema.CatalogCard[] = servers.map((server) => {
         const local = statuses[server.alias]
         const permissions = CorpSchema.parsePermissionModel(server.permission_model)
+        const groups = CorpSchema.parsePermissionGroups(server.permission_groups)
+        if (groups && groups.dropped > 0)
+          for (let index = 0; index < groups.dropped; index++)
+            dropped.push({ alias: server.alias, reason: "permission_groups.group" })
         const card = CorpStatus.compute({
           alias: server.alias,
           server,
@@ -307,11 +319,22 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           ...(server.contact === undefined ? {} : { contact: server.contact }),
           ...(server.docs_url === undefined ? {} : { docs_url: server.docs_url }),
           ...(server.status === undefined ? {} : { server_status: server.status }),
+          // S-V22: значение колонки «Тип» — данные каталога; деградацию `type` → `owner` → пусто
+          // делает оболочка, у которой есть оба поля.
+          ...(server.type === undefined ? {} : { type: server.type }),
           mode: server.mode,
           mcp_url: server.mcp_url,
           // Наружу уходит разобранная модель прав; непонятый вид — как отсутствующий, экран прав
           // блокируется с причиной (S-V9, S-V14 п.3). Дословное значение остаётся в кэше.
           ...(permissions === undefined ? {} : { permission_model: permissions }),
+          // S-V20: разобранный словарь групп; неразобранный — как отсутствующий, экран деградирует
+          // на прежний вид по `permission_model`. S-V23: действующий режим групп считает сервер.
+          ...(groups === undefined
+            ? {}
+            : {
+                permission_groups: groups.groups,
+                permission_state: CorpConnectors.permissionState(server.alias, groups.groups, permission),
+              }),
           ...(server.connection === undefined ? {} : { connection_status: server.connection.status }),
           ...(server.connection?.preset === undefined ? {} : { preset: server.connection.preset }),
           status: card.status,
@@ -352,7 +375,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           hub_url: CorpConnectors.hubServerUrl(url, alias),
         })
       }
-      return cards
+      return { cards, dropped }
     })
 
     const catalog = Effect.fn("CorpHttpApi.catalog")(function* (ctx: { query: { refresh?: string } }) {
@@ -372,7 +395,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const hub = CorpHub.make({ hubUrl: url, key: corpApiKey })
       const fresh = yield* Effect.promise(() => hub.catalog())
       if (fresh.ok) {
-        const dropped = fresh.dropped ?? []
+        const built = yield* toCards(url, fresh.data.servers, false)
+        // S-V14 п.5 и S-V20: отброшенные карточки и выброшенные группы словаря — один список.
+        const dropped = [...(fresh.dropped ?? []), ...built.dropped]
         if (dropped.length > 0) {
           // S-V14 п.5: отброшенные карточки не исчезают молча. В лог уходят только alias и путь к
           // полю — ни тела ответа Hub, ни ключа провайдера, ни `poll_secret`.
@@ -397,7 +422,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           source: "hub",
           cached_at: now,
           stale: false,
-          servers: yield* toCards(url, fresh.data.servers, false),
+          servers: built.cards,
           ...(dropped.length === 0 ? {} : { dropped }),
         }
         // Записи других инстансов старше окна свежести больше не нужны — memo не растёт бесконечно.
@@ -418,12 +443,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         }
       }
       const stale = CorpCatalogCache.isStale(cached, now)
+      const built = yield* toCards(url, cached.servers, stale)
       return {
         version: cached.version,
         source: "cache" as const,
         cached_at: cached.fetchedAt,
         stale,
-        servers: yield* toCards(url, cached.servers, stale),
+        servers: built.cards,
+        ...(built.dropped.length === 0 ? {} : { dropped: built.dropped }),
         hub_error: fresh.code,
       }
     })
@@ -439,6 +466,16 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         const fresh = yield* Effect.promise(() => hub.catalog())
         if (fresh.ok) return { server: fresh.data.servers.find((server) => server.alias === alias), stale: false }
       }
+      return yield* cachedServerFor(url, alias)
+    })
+
+    /**
+     * Карточка каталога **только из кэша** (S-V3).
+     *
+     * Нужна действиям, которым обращаться к Hub запрещено: у вида `permission_groups` запроса к Hub
+     * не выполняется вовсе (S-V1, D-35), а словарь групп взять всё равно откуда-то надо.
+     */
+    const cachedServerFor = Effect.fnUntraced(function* (url: string, alias: string) {
       const cached = yield* Effect.promise(() => CorpCatalogCache.read(url))
       if (!cached) return { server: undefined, stale: true }
       return {
@@ -453,9 +490,15 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
      * Считается тем же правилом и по тем же источникам, что и `toCards`: карточка каталога берётся
      * заново (действие меняет состояние подключения в Hub), локальные данные — из `GET /mcp` и конфига.
      * Без карточки каталога сработало бы правило 1 таблицы S-V6 и статус всегда был бы `unavailable`.
+     *
+     * `source` — уже прочитанная карточка: им пользуются действия, которым запрещено ходить в Hub.
      */
-    const cardFor = Effect.fnUntraced(function* (url: string, alias: string) {
-      const { server, stale } = yield* serverFor(url, alias)
+    const cardFor = Effect.fnUntraced(function* (
+      url: string,
+      alias: string,
+      source?: { server: CorpSchema.CatalogServer | undefined; stale: boolean },
+    ) {
+      const { server, stale } = source ?? (yield* serverFor(url, alias))
       const { statuses, configured } = yield* localState()
       const local = statuses[alias]
       // S-V15: наблюдение фиксируется и после отдельного действия — состояние карточки в ответе
@@ -583,39 +626,96 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       }
     })
 
+    /**
+     * S-V21: применение режимов групп записью в раздел `permission` глобального конфига.
+     *
+     * Hub в этом не участвует вовсе (D-35): ни запроса, ни `oauth.scope`, ни повторной авторизации.
+     * Запись — детерминированная перезапись всего блока alias двумя вызовами `updateGlobal` в
+     * строго этом порядке; правило порядка ключей внутри блока держит `permissionGroupsPatch`.
+     */
+    const applyPermissionGroups = Effect.fnUntraced(function* (
+      url: string,
+      alias: string,
+      modes: Record<string, CorpSchema.PermissionMode>,
+    ) {
+      // Словарь берётся из кэша каталога, а не из Hub: «запрос к Hub не выполняется вовсе» (S-V1)
+      // относится и к чтению — экран разрешений открывается с витрины, которая кэш только что
+      // перезаписала (S-V3).
+      const source = yield* cachedServerFor(url, alias)
+      const parsed =
+        source.server === undefined ? undefined : CorpSchema.parsePermissionGroups(source.server.permission_groups)
+      // Словаря нет — применять режимы не к чему: состав ключей выводится только из него.
+      if (!parsed) return yield* new CorpBadRequestError({ error: "permission_groups_unavailable" })
+
+      // Ключи берутся из **глобального** конфига: правится именно он, а гасить `undefined` имеет
+      // смысл только то, что в этом файле действительно лежит.
+      const globalConfig = yield* configSvc.getGlobal()
+      const patch = CorpConnectors.permissionGroupsPatch(alias, {
+        groups: parsed.groups,
+        modes,
+        existing: Object.keys(globalConfig.permission ?? {}),
+      })
+      yield* configSvc.updateGlobal(patch.clear)
+      yield* configSvc.updateGlobal(patch.write)
+      yield* dropMemo(url)
+
+      // Состояние считается по конфигу **после** записи — и тем же правилом, что на витрине (S-V23).
+      const config = yield* configSvc.get()
+      return {
+        alias,
+        status: yield* cardFor(url, alias, source),
+        reauth_required: false,
+        permission_state: CorpConnectors.permissionState(alias, parsed.groups, config.permission),
+      }
+    })
+
     const permissions = Effect.fn("CorpHttpApi.permissions")(function* (ctx: {
       params: { alias: string }
-      payload: { preset: string; groups?: string[] }
+      payload: { preset?: string; groups?: string[]; modes?: Record<string, CorpSchema.PermissionMode> }
     }) {
       const url = yield* requireHub()
       const alias = ctx.params.alias
+      // S-V1: два вида тела взаимоисключающи. Оба сразу — ошибка запроса, и ничего не записывается:
+      // молча предпочесть один вид значило бы применить не то, о чём просил клиент.
+      if (ctx.payload.preset !== undefined && ctx.payload.modes !== undefined)
+        return yield* new CorpBadRequestError({ error: "conflicting_body" })
+      // Ни того, ни другого: прежде такое тело отвергала схема (`preset` был обязателен), и оно
+      // обязано отвергаться и теперь — молчаливый `readonly` по умолчанию снял бы права, о которых
+      // никто не просил.
+      if (ctx.payload.preset === undefined && ctx.payload.modes === undefined)
+        return yield* new CorpBadRequestError({ error: "missing_body" })
+
+      // Ветка `modes` уходит до чтения каталога из Hub: в ней Hub не участвует ни на шаг (D-35).
+      if (ctx.payload.modes !== undefined) return yield* applyPermissionGroups(url, alias, ctx.payload.modes)
+
       const { server } = yield* serverFor(url, alias)
+      const preset = ctx.payload.preset ?? CorpStatus.DEFAULT_PRESET
       const key = yield* corpKey()
       if (!key)
         return {
           alias,
           status: yield* cardFor(url, alias),
-          preset: ctx.payload.preset,
+          preset,
           reauth_required: false,
           hub_error: "unauthorized" as const,
         }
 
       const hub = CorpHub.make({ hubUrl: url, key })
-      const updated = yield* Effect.promise(() => hub.setPermissions(alias, ctx.payload.preset, ctx.payload.groups))
+      const updated = yield* Effect.promise(() => hub.setPermissions(alias, preset, ctx.payload.groups))
       if (!updated.ok)
         return {
           alias,
           status: yield* cardFor(url, alias),
-          preset: ctx.payload.preset,
+          preset,
           reauth_required: false,
           hub_error: updated.code,
         }
 
       const previous = server?.connection?.preset
-      const reauth = CorpConnectors.needsReauth(previous, ctx.payload.preset, updated.data.status)
+      const reauth = CorpConnectors.needsReauth(previous, preset, updated.data.status)
 
       if (server) {
-        const patch = CorpConnectors.permissionsPatch(server, ctx.payload.preset)
+        const patch = CorpConnectors.permissionsPatch(server, preset)
         if (patch) yield* configSvc.updateGlobal(patch)
       }
       yield* dropMemo(url)
@@ -626,7 +726,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return {
         alias,
         status: yield* cardFor(url, alias),
-        preset: ctx.payload.preset,
+        preset,
         reauth_required: reauth,
       }
     })

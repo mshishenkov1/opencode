@@ -29,11 +29,33 @@ export class CorpHubError extends Schema.ErrorClass<CorpHubError>("CorpHubError"
   { httpApiStatus: 502 },
 ) {}
 
+/**
+ * Ошибка запроса корп-роута (S-V1, ревизия 1.10): тело не годится и **ничего не записывается**.
+ *
+ * Отдельный класс, а не `CorpHubError`: Hub здесь ни при чём — у вида `permission_groups` запроса к
+ * нему не выполняется вовсе (D-35), а 502 сказал бы пользователю неправду о причине.
+ */
+export class CorpBadRequestError extends Schema.ErrorClass<CorpBadRequestError>("CorpBadRequestError")(
+  { error: Schema.Literals(["conflicting_body", "missing_body", "permission_groups_unavailable"]) },
+  { httpApiStatus: 400 },
+) {}
+
 export const TeamPayload = Schema.Struct({ team_id: Schema.String })
 export const ConnectPayload = Schema.Struct({ preset: Schema.optional(Schema.String) })
+
+/**
+ * Тело роута прав (S-V1, ревизия 1.10) — два взаимоисключающих вида.
+ *
+ * Прежний `{preset}` (виды `header_groups` / `tool_filter` / `consent`, S-V9) не изменён; новый
+ * `{modes: {<groupId>: allow|ask|deny}}` — вид `permission_groups` (S-V20, S-V21), где ключ `rest`
+ * задаёт режим группы «Остальное». Схема допускает оба поля необязательными, потому что
+ * взаимоисключение — правило запроса, а не формы: одновременная передача обоих отвергается
+ * `CorpBadRequestError`, и это же отличает её от «поле пропущено» в диагностике клиента.
+ */
 export const PermissionsPayload = Schema.Struct({
-  preset: Schema.String,
+  preset: Schema.optional(Schema.String),
   groups: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
+  modes: Schema.optional(Schema.Record(Schema.String, CorpSchema.PermissionMode)),
 })
 
 export const CatalogQuery = Schema.Struct({
@@ -171,12 +193,13 @@ export const CorpApi = HttpApi.make("corp")
           query: WorkspaceRoutingQuery,
           payload: PermissionsPayload,
           success: described(CorpSchema.PermissionsResult, "Права обновлены"),
-          error: CorpDisabledError,
+          error: [CorpDisabledError, CorpBadRequestError],
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "corp.permissions",
             summary: "Update connector permissions",
-            description: "Обновляет пресет прав в Hub и, для mode:facade, oauth.scope в конфиге.",
+            description:
+              "Тело {preset} — пресет прав в Hub и, для mode:facade, oauth.scope в конфиге. Тело {modes} — режимы групп вида permission_groups: запись в раздел permission конфига пользователя без обращения к Hub.",
           }),
         ),
       )

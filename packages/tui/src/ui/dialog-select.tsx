@@ -505,7 +505,6 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         <Show when={props.renderFilter !== false}>
           <box paddingTop={1}>
             <input
-              value={props.initialFilter}
               onInput={(e) => {
                 if (props.locked) return
                 batch(() => {
@@ -519,6 +518,11 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
               ref={(r) => {
                 input = r
                 input.traits = { status: "FILTER" }
+                // corp (S-T10, S-D11): начальный запрос ставится здесь, а не пропсом `value`.
+                // Пропсы применяются присваиванием (`node[name] = value`), а сеттер `value` у
+                // `InputRenderable` зовёт `value.substring(...)` — `undefined` уронил бы каждый
+                // диалог, который `initialFilter` не передаёт.
+                if (props.initialFilter) input.value = props.initialFilter
                 setTimeout(() => {
                   if (!input) return
                   if (input.isDestroyed) return

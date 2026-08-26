@@ -209,12 +209,16 @@ export const Definitions = {
   "dialog.prompt.submit": keybind("return", "Submit dialog prompt"),
   "dialog.mcp.toggle": keybind("space", "Toggle MCP in MCP dialog"),
   // corp: действия витрины коннекторов (S-T6, S-T7)
-  "dialog.corp.connect": keybind("return", "Connect connector"),
+  // Ревизия 1.10 (S-T10, S-D11): `return` на строке открывает страницу коннектора, поэтому
+  // «Подключить» переехало на `c` — две команды на одной клавише разошлись бы поведением.
+  "dialog.corp.connect": keybind("c", "Connect connector"),
   "dialog.corp.disconnect": keybind("d", "Disconnect connector"),
   // corp: «Убрать из списка» (S-V17, S-T10) — действует только в состоянии «Соединение потеряно».
   "dialog.corp.forget": keybind("x", "Remove connector from list"),
   "dialog.corp.permissions": keybind("p", "Edit connector permissions"),
   "dialog.corp.open_hub": keybind("o", "Open connector in Hub"),
+  // corp: вкладки фильтра витрины (S-V11, S-T10) — циклом «Все → Подключённые → Неподключённые».
+  "dialog.corp.filter": keybind("f", "Cycle connector filter tab"),
   "dialog.corp.refresh": keybind("r", "Refresh connector catalog"),
   "dialog.corp.login": keybind("l", "Corporate SSO sign-in"),
   "dialog.move_session.new": keybind("ctrl+m", "New project copy"),

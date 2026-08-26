@@ -4,7 +4,13 @@ import * as CorpDiagnostics from "@/corp/diagnostics"
 import * as CorpHub from "@/corp/hub"
 import * as CorpLogin from "@/corp/login"
 import type * as CorpSchema from "@/corp/schema"
-import { CORP_PROVIDER_ID, corpHubUrl, corpUserEmail, corpUserLabel } from "@opencode-ai/core/corp/constants"
+import {
+  CORP_PROVIDER_ID,
+  corpCatalogUrl,
+  corpHubUrl,
+  corpUserEmail,
+  corpUserLabel,
+} from "@opencode-ai/core/corp/constants"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect, Option } from "effect"
 import open from "open"
@@ -21,6 +27,13 @@ import { cmd } from "./cmd"
  */
 
 const DISABLED = "Корпоративный режим не настроен: не задан адрес Hub (--hub, OPENCODE_CORP_HUB_URL или сборка)"
+
+/**
+ * Сборка без Hub, но со статическим каталогом (S-C5, S-C10 п.2): корп-функции включены, а вход по
+ * SSO зависит от Hub и потому недоступен. Причина называется вслух — вместо запроса на незаданный
+ * адрес и вместо неправды «корпоративный режим не настроен».
+ */
+const SSO_DISABLED = "Вход по корпоративному SSO в этой сборке не настроен: адрес Hub не задан"
 
 const println = (message: string) => Effect.sync(() => UI.println(message))
 const dim = (value: string) => UI.Style.TEXT_DIM + value + UI.Style.TEXT_NORMAL
@@ -75,16 +88,26 @@ export const CorpStatusCommand = effectCmd({
   builder: withHub,
   handler: Effect.fn("Cli.corp.status")(function* (args: HubArgs) {
     const url = corpHubUrl(args.hub)
-    if (!url) {
+    const catalog = corpCatalogUrl()
+    // S-C10 п.2: выключено только при отсутствии обоих адресов.
+    if (!url && !catalog) {
       yield* println(DISABLED)
       return yield* fail(DISABLED)
     }
 
-    yield* println(`Hub: ${url}`)
+    if (url) yield* println(`Hub: ${url}`)
+    else {
+      // Сборка без Hub: строки о доступности Hub, ключе и пользователе относятся к Hub и потому не
+      // печатаются вовсе — вместо них назван действующий источник каталога (S-C10 п.3, D-43).
+      yield* println(`Каталог: ${catalog}`)
+      yield* println(SSO_DISABLED)
+    }
 
     // S-A11a: сразу после строки «Hub: …» — адрес модели по S-C4a; конфликты личного конфига (S-C9)
     // читаются здесь же, потому что для них нужен кэш каталога Hub.
-    const cached = yield* Effect.promise(() => CorpCatalogCache.read(url))
+    // Кэш каталога ключуется адресом источника (S-V3, S-C10 п.3): в сборке без Hub это адрес
+    // статического каталога.
+    const cached = yield* Effect.promise(() => CorpCatalogCache.read(url ?? catalog!))
     const report = yield* Effect.promise(() =>
       CorpDiagnostics.inspect({
         directory: process.cwd(),
@@ -97,12 +120,16 @@ export const CorpStatusCommand = effectCmd({
     const record = yield* authSvc.get(CORP_PROVIDER_ID).pipe(Effect.orElseSucceed(() => undefined))
     const key = record?.type === "api" ? record.key : undefined
 
-    const hub = CorpHub.make({ hubUrl: url, ...(key === undefined ? {} : { key }) })
-    const health = yield* Effect.promise(() => hub.health())
-    yield* println(`Доступность Hub: ${health.ok ? "доступен (ok)" : "недоступен"}`)
-    yield* println(`Корпоративный ключ: ${key ? "есть" : "нет"}`)
+    // Строки о Hub печатаются только в сборке с Hub: в сборке без него они отвечали бы на вопрос,
+    // которого пользователь не задавал (S-C10 п.7, D-43).
+    const hub = url ? CorpHub.make({ hubUrl: url, ...(key === undefined ? {} : { key }) }) : undefined
+    if (hub) {
+      const health = yield* Effect.promise(() => hub.health())
+      yield* println(`Доступность Hub: ${health.ok ? "доступен (ok)" : "недоступен"}`)
+      yield* println(`Корпоративный ключ: ${key ? "есть" : "нет"}`)
+    }
 
-    if (key) {
+    if (hub && key) {
       const me = yield* Effect.promise(() => hub.me())
       if (me.ok) {
         // S-A11a / S-A13: email известен — `Пользователь: <email> <user_id>`, иначе `Пользователь: <user_id>`.
@@ -127,7 +154,8 @@ export const CorpStatusCommand = effectCmd({
     // S-C9: конфликты личного конфига называются, но не чинятся; любой из них даёт код выхода 1.
     for (const line of CorpDiagnostics.conflictLines(report)) yield* println(line)
 
-    if (!key) return yield* fail("Ключ не найден: выполните opencode corp login")
+    // Ключ нужен Hub, а не каталогу: в сборке без Hub его отсутствие не ошибка (S-C10 п.6).
+    if (url && !key) return yield* fail("Ключ не найден: выполните opencode corp login")
     if (CorpDiagnostics.hasConflicts(report)) return yield* fail("")
   }),
 })
@@ -144,8 +172,11 @@ export const CorpLoginCommand = effectCmd({
   handler: Effect.fn("Cli.corp.login")(function* (args: HubArgs & { team?: string }) {
     const url = corpHubUrl(args.hub)
     if (!url) {
-      yield* println(DISABLED)
-      return yield* fail(DISABLED)
+      // S-C5: без обоих адресов режим не настроен вовсе; со статическим каталогом — не настроен
+      // именно вход, и путать эти два ответа нельзя.
+      const message = corpCatalogUrl() ? SSO_DISABLED : DISABLED
+      yield* println(message)
+      return yield* fail(message)
     }
 
     const authSvc = yield* Auth.Service

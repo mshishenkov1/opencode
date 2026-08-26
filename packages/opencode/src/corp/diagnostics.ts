@@ -6,7 +6,7 @@ import { isRecord } from "@/util/record"
 import { ConfigParse } from "@/config/parse"
 import * as CorpCatalogCache from "./catalog-cache"
 import * as CorpConfig from "./config"
-import { corpEnabled, corpHubUrl, CORP_PROVIDER_ID } from "./config"
+import { corpCatalogUrl, corpEnabled, corpHubUrl, CORP_PROVIDER_ID } from "./config"
 import type * as CorpSchema from "./schema"
 
 /**
@@ -211,7 +211,9 @@ export async function startupWarnings(directory: string): Promise<string[]> {
   if (!corpEnabled()) return []
   if (warned.has(directory)) return []
   warned.add(directory)
-  const url = corpHubUrl()
+  // Кэш каталога ключуется адресом источника (S-V3, S-C10 п.3): в сборке без Hub — адресом
+  // статического каталога. Без обоих адресов кэша нет и читать нечего.
+  const url = corpHubUrl() ?? corpCatalogUrl()
   const cached = url === undefined ? undefined : await CorpCatalogCache.read(url).catch(() => undefined)
   const report = await inspect({
     directory,

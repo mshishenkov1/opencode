@@ -42,11 +42,194 @@
 }
 
 /*
+ * Алиасы токенов `SegmentedControlV2` (S-D12, F50).
+ *
+ * `segmented-control-v2.css` пользуется семью переменными без префикса `--v2-`, которых в темах
+ * приложения нет: компонент отрисовывается без фона, без границ и без цвета текста. Чиним
+ * объявлением алиасов на контейнере корп-окна, а **не** правкой `packages/ui`: общие стили
+ * обслуживают все окна приложения, и корп-фикс не должен менять чужие (прецедент D-33). Плюс
+ * нулевой след в `corp/patches.md` — ни один upstream-файл не тронут. Алиасы ограничены
+ * поддеревом корп-окна и наружу не протекают.
+ */
+.corp-dialog,
+.corp-dialog-v2 {
+  --text-text-base: var(--v2-text-text-base);
+  --text-text-muted: var(--v2-text-text-muted);
+  --background-bg-base: var(--v2-background-bg-base);
+  --background-bg-layer-01: var(--v2-background-bg-layer-01);
+  --border-border-base: var(--v2-border-border-base);
+  --border-border-strong: var(--v2-border-border-strong);
+  --border-border-focus: var(--v2-border-border-focus);
+}
+
+/*
  * Бейдж «Подключено» (S-V18): то же средство и тот же размер, что бейдж «устаревший», цвет —
- * успех темы. Признак обязан быть положительным и читаться в списке сразу, без наведения.
+ * успех темы. Признак обязан быть положительным и читаться сразу, без наведения. С ревизии 1.10
+ * бейдж остаётся средством признака **там, где колонки нет**: в диалоге `/mcps` и на странице
+ * коннектора; на витрине признак живёт в колонке «Статус».
  */
 [data-component="tag"].corp-tag-connected {
   border-color: var(--border-success-base);
   background: var(--surface-success-weak);
   color: var(--text-on-success-base);
+}
+
+/*
+ * Витрина-таблица (S-D6, ревизия 1.10).
+ *
+ * `List` приносит поиск, клавиатурную навигацию и прокрутку, но его собственный контейнер сложил
+ * бы шапку таблицы **над** строкой поиска: шапка — сосед списка, а не его потомок, и порядок
+ * «вкладки → поиск → шапка → строки» иначе не собрать. `display: contents` поднимает поле поиска
+ * и область прокрутки на уровень корп-контейнера, а `order` расставляет части витрины в порядке
+ * S-D6. Правка живёт здесь, а не в `packages/ui`: общие стили обслуживают все окна приложения.
+ */
+.corp-connectors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  padding: 0 12px;
+}
+
+.corp-connectors [data-component="list"] {
+  display: contents;
+}
+
+.corp-connectors [data-slot="corp-connectors-banner"] {
+  order: 1;
+  flex: none;
+}
+
+.corp-connectors [data-slot="corp-connectors-partial"] {
+  order: 2;
+  flex: none;
+}
+
+.corp-connectors [data-component="tabs-v2"] {
+  order: 3;
+  flex: none;
+}
+
+.corp-connectors [data-slot="list-search-wrapper"] {
+  order: 4;
+  flex: none;
+}
+
+.corp-connectors [data-slot="corp-connectors-header"] {
+  order: 5;
+}
+
+/* Строки прокручиваются внутри окна; шапка, вкладки, баннер и пустое состояние — снаружи
+   области прокрутки, поэтому «остаются на месте» по построению, а не по удачному z-index. */
+.corp-connectors [data-slot="list-scroll"] {
+  order: 6;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.corp-connectors [data-slot="corp-connectors-empty"] {
+  order: 7;
+  flex: none;
+}
+
+/*
+ * Одна сетка на шапку и строки (S-D6): ширины колонок объявлены **один раз** и переиспользуются
+ * обеими. Расхождение сеток — дефект: колонки перестают быть колонками.
+ */
+[data-slot="corp-connectors-header"],
+[data-slot="corp-connectors-row"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.5fr) minmax(0, 0.55fr);
+  align-items: center;
+  gap: 12px;
+}
+
+/* Неподвижная шапка: вне области прокрутки списка и с прижатием к верху своего контейнера. */
+[data-slot="corp-connectors-header"] {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex: none;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-base);
+}
+
+/*
+ * Колонка «Статус» (S-V18): текст состояния и цветовая точка перед ним. Точка — дубликат текста,
+ * а не замена, поэтому цвет несёт только она, а сам текст оформлен контрастными классами.
+ */
+[data-slot="corp-status-cell"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+[data-slot="corp-status-dot"] {
+  flex: none;
+  line-height: 1;
+  font-size: 16px;
+  color: var(--text-weak);
+}
+
+[data-slot="corp-status-dot"][data-tone="success"] {
+  color: var(--v2-state-fg-success);
+}
+
+[data-slot="corp-status-dot"][data-tone="warning"] {
+  color: var(--v2-state-fg-warning);
+}
+
+[data-slot="corp-status-dot"][data-tone="danger"] {
+  color: var(--v2-state-fg-danger);
+}
+
+[data-slot="corp-status-dot"][data-tone="weak"] {
+  color: var(--text-weak);
+}
+
+/*
+ * Пустые состояния (S-V12) показываются вместе со своим действием и **вне** области прокрутки,
+ * поэтому высоту окна они не меняют (S-D10). Собственное сообщение `List` при этом скрывается:
+ * иначе о пустоте говорили бы двое, и по-разному.
+ */
+[data-slot="corp-connectors-empty"] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 0;
+  text-align: center;
+}
+
+.corp-connectors[data-empty] [data-slot="list-scroll"] {
+  flex: 0 0 auto;
+}
+
+.corp-connectors[data-empty] [data-slot="list-empty-state"] {
+  display: none;
+}
+
+.corp-connectors[data-empty] [data-slot="corp-connectors-empty"] {
+  flex: 1 1 auto;
+}
+
+/*
+ * Страница коннектора и экран разрешений (S-D11, S-D10).
+ *
+ * Прокручивается **содержимое** страницы внутри окна; окно целиком не прокручивается, и высота
+ * его не зависит ни от длины описания, ни от числа групп разрешений: одна группа, пятнадцать
+ * групп и текст ошибки подключения дают одно и то же окно.
+ */
+.corp-connector {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 12px 12px;
 }

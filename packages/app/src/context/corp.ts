@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/solid-query"
-import type { CorpCatalogView, CorpStatus } from "@opencode-ai/sdk/v2"
+import type { CorpCatalogView, CorpPermissionMode, CorpStatus } from "@opencode-ai/sdk/v2"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
@@ -94,6 +94,13 @@ export type ConnectorAction =
   /** «Убрать из списка» (S-V17): удаляет запись `mcp.<alias>` и снимает признак подключения. */
   | { kind: "forget"; alias: string }
   | { kind: "permissions"; alias: string; preset: string }
+  /**
+   * Режимы групп разрешений (S-V9 вид `permission_groups`, S-V21). Тот же роут, что у пресетов, —
+   * второе, взаимоисключающее с `preset` тело (S-V1): Hub в этой ветке не участвует ни на шаг,
+   * запись идёт в раздел `permission` конфига пользователя. В теле идут режимы **всех** групп:
+   * запись детерминирована и перезаписывает блок alias целиком, а не правит отдельные ключи.
+   */
+  | { kind: "permissionModes"; alias: string; modes: Record<string, CorpPermissionMode> }
 
 export function useConnectorAction() {
   const sdk = useServerSDK()
@@ -113,6 +120,10 @@ export function useConnectorAction() {
       if (action.kind === "forget")
         return sdk()
           .client.corp.forget({ alias: action.alias })
+          .then((response) => response.data)
+      if (action.kind === "permissionModes")
+        return sdk()
+          .client.corp.permissions({ alias: action.alias, modes: action.modes })
           .then((response) => response.data)
       return sdk()
         .client.corp.permissions({ alias: action.alias, preset: action.preset })

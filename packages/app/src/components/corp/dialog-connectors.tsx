@@ -1,32 +1,32 @@
-import { Component, createMemo, onCleanup, Show } from "solid-js"
-import type { CorpCatalogCard, CorpPermissionModel } from "@opencode-ai/sdk/v2"
-import { corpUserLabel } from "@opencode-ai/core/corp/constants"
+import { Component, createMemo, createSignal, onCleanup, Show } from "solid-js"
+import type { CorpCatalogCard } from "@opencode-ai/sdk/v2"
+import { connectorType, corpUserLabel } from "@opencode-ai/core/corp/constants"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { Dialog } from "@opencode-ai/ui/dialog"
 import { List } from "@opencode-ai/ui/list"
 import { Tag } from "@opencode-ai/ui/tag"
-import {
-  connectErrorKey,
-  corpErrorKey,
-  useConnectorAction,
-  useCorpCatalog,
-  useCorpInvalidate,
-  useCorpStatus,
-} from "@/context/corp"
+import { TabsV2 } from "@opencode-ai/ui/v2/tabs-v2"
+import { corpErrorKey, useCorpCatalog, useCorpInvalidate, useCorpStatus } from "@/context/corp"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
 import { CorpDialog } from "./dialog-shell"
 
 /**
- * Витрина коннекторов для Desktop/web (S-D2, S-D6, S-D7, S-V6, S-V11, S-V12).
+ * Витрина коннекторов Desktop/web — плоская таблица (S-D2, S-D6, S-V11, S-V12, S-V18, S-V22).
  *
- * Отдельный диалог, а не URL-маршрут: сегмент `/:dir` роутера перехватывает произвольные пути
- * (D-4). Группировка — по владельцу, порядок — как в каталоге Hub. Контейнер и габариты окна берутся
- * из `CorpDialog` — того же формата, что открытый у пользователя экран настроек (S-D6).
+ * Композиция ревизии 1.10 сверху вниз, и каждая часть — существующий компонент (S-D6):
+ * `CorpDialog` (окно и его габариты, S-D10) → `TabsV2 variant="pill"` (три вкладки-фильтра
+ * S-V11) → неподвижная шапка «Имя | Тип | Статус» → существующий `List` (поиск, клавиатурная
+ * навигация, пустые состояния). Группировка по владельцу отменена: витрина — таблица состояний,
+ * а не лента, и заголовки групп ломали выравнивание колонок.
+ *
+ * Строка не носит кнопок действий: и они, и описание уехали на страницу коннектора (S-D11),
+ * которая открывается основным действием строки через `useDialog().push` — витрина при этом
+ * остаётся в стеке живой, поэтому возврат сохраняет вкладку, поиск и позицию прокрутки.
  */
 
+/** Подписи состояний витрины (S-V6) — используются, когда попытки подключения ещё не было. */
 const STATUS_KEY = {
   connected: "corp.status.connected",
   needs_auth: "corp.status.needs_auth",
@@ -39,149 +39,70 @@ const STATUS_KEY = {
  *
  * Состояние 3 имеет две подписи при одном наборе действий: «Соединение потеряно» — когда связь
  * сломалась сама, «Отключено вами» — когда пользователь отключил сервер сам. Путать поломку с
- * собственным решением нельзя, поэтому подписи разные. Состояния 1 и 4 подписи не добавляют:
- * у первого её несёт статус, у второго — бейдж «Подключено» (S-V18).
+ * собственным решением нельзя, поэтому подписи разные. У состояния 1 подписи своей нет — её
+ * несёт состояние витрины.
  */
 const STATE_KEY = {
   never: undefined,
   failed: "corp.connectors.neverConnected",
   lost: "corp.connectors.lost",
   disconnected: "corp.connectors.disconnected",
-  connected: undefined,
+  connected: "corp.connectors.connected",
+} as const
+
+/** Вкладки-фильтры витрины (S-V11). Умолчание — «Все»; выбор между запусками не персистится. */
+export type ConnectorsTab = "all" | "connected" | "not_connected"
+
+const TAB_KEY = {
+  all: "corp.connectors.tabAll",
+  connected: "corp.connectors.tabConnected",
+  not_connected: "corp.connectors.tabNotConnected",
 } as const
 
 /**
- * Пресеты карточки для экрана прав (S-V9): по одной строке таблицы на вид модели прав.
+ * Ключ подписи состояния для колонки «Статус» (S-V18).
  *
- * `header_groups` — `readonly`/`readwrite` с локализованными названиями; `tool_filter` и `consent` —
- * имена ключей `presets` в порядке ответа Hub; неизвестный вид, отсутствующая или неразобранная
- * модель (S-V14) — пустой список: выбор недоступен, причина показывается отдельно.
+ * Текст в ячейке есть всегда: точка его дублирует, а не заменяет — состояние обязано читаться и
+ * в чёрно-белой печати, и при дальтонизме.
  */
-export function presetsFor(model: CorpPermissionModel | undefined): { value: string; labelKey?: string }[] {
-  if (!model) return []
-  if (model.kind === "header_groups")
-    return [
-      { value: "readonly", labelKey: "corp.preset.readonly" },
-      { value: "readwrite", labelKey: "corp.preset.readwrite" },
-    ]
-  return Object.keys(model.presets).map((value) => ({ value }))
+export function statusKey(card: Pick<CorpCatalogCard, "state" | "status">) {
+  return STATE_KEY[card.state] ?? STATUS_KEY[card.status]
 }
 
 /**
- * Состав среза инструментов пресета (S-V9, вид `tool_filter`): имена и шаблоны как есть.
- * Для остальных видов список пуст — состав прав на экране не показывается.
+ * Цвет точки в колонке «Статус» (S-V18): семантический токен темы, а не произвольный цвет.
+ * `success` — «Подключено»; `danger` — «Подключение не удалось» и `unavailable`; `warning` —
+ * «Требуется вход», «Соединение потеряно» и «Отключено вами»; `weak` — «Не подключён».
  */
-export function toolsFor(model: CorpPermissionModel | undefined, preset: string | undefined): string[] {
-  if (!model || model.kind !== "tool_filter" || preset === undefined) return []
-  return model.presets[preset]?.tools ?? []
-}
-
-const DialogConnectorPermissions: Component<{ card: CorpCatalogCard }> = (props) => {
-  const language = useLanguage()
-  const dialog = useDialog()
-  const action = useConnectorAction()
-
-  const options = createMemo(() => presetsFor(props.card.permission_model))
-  // Пресеты не предлагаются — вид модели прав клиенту неизвестен либо модель не разобрана (S-V9).
-  const unavailable = createMemo(() => options().length === 0)
-  const selected = createMemo(() => props.card.preset ?? options()[0]?.value)
-  const tools = createMemo(() => toolsFor(props.card.permission_model, selected()))
-  const groups = createMemo(() => {
-    const model = props.card.permission_model
-    return model?.kind === "header_groups" ? model.groups : []
-  })
-  const always = createMemo(() => {
-    const model = props.card.permission_model
-    return model?.kind === "header_groups" ? (model.always ?? []) : []
-  })
-
-  return (
-    <Dialog title={language.t("corp.connectors.presetTitle", { title: props.card.title })}>
-      <div class="px-3 pb-3 flex flex-col gap-4">
-        <Show when={unavailable()}>
-          <div class="text-12-regular text-text-weak">{language.t("corp.connectors.permissionsUnavailable")}</div>
-        </Show>
-        <Show when={tools().length > 0}>
-          <div class="flex flex-col gap-1">
-            <div class="text-12-regular text-text-weak">
-              {language.t("corp.connectors.toolsPreview", { preset: selected() ?? "" })}
-            </div>
-            <div class="text-14-regular text-text-base break-all">{tools().join(", ")}</div>
-          </div>
-        </Show>
-        <Show when={groups().length > 0}>
-          <div class="flex flex-col gap-1">
-            {groups().map((group) => (
-              <div class="flex items-center justify-between gap-x-3">
-                <span class="text-14-regular text-text-base">{group.title}</span>
-                <Show when={group.preset}>
-                  <span class="text-12-regular text-text-weak">{group.preset}</span>
-                </Show>
-              </div>
-            ))}
-          </div>
-        </Show>
-        <Show when={always().length > 0}>
-          <div class="flex flex-col gap-1">
-            <div class="text-12-regular text-text-weak">{language.t("corp.connectors.always")}</div>
-            <div class="text-14-regular text-text-base break-all">{always().join(", ")}</div>
-          </div>
-        </Show>
-        <div class="flex items-center gap-2">
-          {options().map((option) => (
-            <Button
-              size="large"
-              variant={props.card.preset === option.value ? "primary" : "ghost"}
-              disabled={action.isPending}
-              onClick={() => {
-                action.mutate({ kind: "permissions", alias: props.card.alias, preset: option.value })
-                dialog.close()
-              }}
-            >
-              {option.labelKey ? language.t(option.labelKey as "corp.preset.readonly") : option.value}
-            </Button>
-          ))}
-        </div>
-      </div>
-    </Dialog>
-  )
+export function statusTone(card: Pick<CorpCatalogCard, "state" | "status">): "success" | "warning" | "danger" | "weak" {
+  if (card.state === "connected") return "success"
+  if (card.state === "failed" || card.status === "unavailable") return "danger"
+  if (card.state === "lost" || card.state === "disconnected") return "warning"
+  if (card.status === "needs_auth") return "warning"
+  return "weak"
 }
 
 /**
- * Подтверждение действия «Убрать из списка» (S-V17).
- *
- * Действие удаляет данные из конфига и, в отличие от «Отключить», в один клик не отменяется,
- * поэтому спрашивается один раз явно; отмена не меняет ничего.
+ * Вкладка карточки (S-V11): «Подключённые» — состояние 4 таблицы S-V16, «Неподключённые» — все
+ * прочие, включая `needs_auth` и `unavailable`. Вкладка отвечает на вопрос «чем я уже могу
+ * пользоваться», а не пересказывает таблицу статусов.
  */
-const DialogForgetConnector: Component<{ card: CorpCatalogCard }> = (props) => {
-  const language = useLanguage()
-  const dialog = useDialog()
-  const action = useConnectorAction()
+export function matchesTab(card: CorpCatalogCard, tab: ConnectorsTab): boolean {
+  if (tab === "all") return true
+  const connected = card.state === "connected"
+  return tab === "connected" ? connected : !connected
+}
 
-  return (
-    <Dialog title={language.t("corp.connectors.forget")} fit>
-      <div class="flex flex-col gap-4 pl-6 pr-2.5 pb-3">
-        <span class="text-14-regular text-text-strong">
-          {language.t("corp.connectors.forgetConfirm", { title: props.card.title })}
-        </span>
-        <div class="flex justify-end gap-2">
-          <Button variant="ghost" size="large" onClick={() => dialog.close()}>
-            {language.t("common.cancel")}
-          </Button>
-          <Button
-            variant="primary"
-            size="large"
-            disabled={action.isPending}
-            onClick={() => {
-              action.mutate({ kind: "forget", alias: props.card.alias })
-              dialog.close()
-            }}
-          >
-            {language.t("corp.connectors.forget")}
-          </Button>
-        </div>
-      </div>
-    </Dialog>
+/**
+ * Поиск витрины (S-V11, S-V22): подстрока без учёта регистра по `title`, `alias`, `description`,
+ * `owner` и `type`. Порядок строк при этом остаётся порядком каталога Hub — ранжирования у
+ * подстрочного поиска нет.
+ */
+export function matchesQuery(card: CorpCatalogCard, query: string): boolean {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return true
+  return [card.title, card.alias, card.description, card.owner, card.type].some((value) =>
+    value ? value.toLowerCase().includes(needle) : false,
   )
 }
 
@@ -189,7 +110,6 @@ export const DialogConnectors: Component = () => {
   const language = useLanguage()
   const dialog = useDialog()
   const invalidate = useCorpInvalidate()
-  const action = useConnectorAction()
   const catalog = useCorpCatalog(() => true)
   const status = useCorpStatus()
   /** Подпись пользователя в заголовке витрины: email, а при неизвестном email — `user_id` (S-A13). */
@@ -214,8 +134,20 @@ export const DialogConnectors: Component = () => {
     }),
   )
 
+  const [tab, setTab] = createSignal<ConnectorsTab>("all")
+  // Строка поиска живёт здесь, а не только внутри `List`: по ней считается, пусто ли пересечение
+  // вкладки и запроса (S-V12, состояния 5 и 6), и она же возвращается в поле после сброса фильтра.
+  const [query, setQuery] = createSignal("")
+
   const cards = createMemo<CorpCatalogCard[]>(() => catalog.data?.servers ?? [])
-  const connected = createMemo(() => cards().filter((card) => card.status === "connected").length)
+  const connected = createMemo(() => cards().filter((card) => card.state === "connected").length)
+
+  /**
+   * Видимые строки: поиск и вкладка перемножаются, а не спорят (S-V11). Отбор выполняется здесь,
+   * а `List` получает готовый набор (`skipFilter`), потому что S-V11 требует **подстроку** и
+   * **порядок каталога**, а встроенный поиск списка нечёткий и ранжирует результаты по релевантности.
+   */
+  const visible = createMemo(() => cards().filter((card) => matchesTab(card, tab()) && matchesQuery(card, query())))
 
   const banner = createMemo(() => {
     const data = catalog.data
@@ -237,15 +169,43 @@ export const DialogConnectors: Component = () => {
     return language.t("corp.connectors.partial", { dropped: dropped() })
   })
 
-  const emptyMessage = createMemo(() => {
+  /** Каталога нет вовсе: Hub не ответил или требуется вход — фильтровать нечего (S-V11). */
+  const hubEmpty = createMemo(
+    () => cards().length === 0 && !catalog.isLoading && (!catalog.data || !!catalog.data.hub_error),
+  )
+  const showTable = createMemo(() => !hubEmpty())
+
+  /**
+   * Шесть пустых состояний (S-V12). Первые четыре — про каталог целиком и предлагают запросить его
+   * заново («Обновить») либо войти («Войти»); два новых — про вкладку, и предлагают сброс фильтра
+   * («Показать все»), потому что каталог-то на месте.
+   *
+   * Пустой результат на вкладке «Все» сюда не попадает: там причина — поиск, и `List` сам говорит
+   * об этом своим сообщением с текстом запроса.
+   */
+  const empty = createMemo(() => {
+    if (catalog.isLoading) return undefined
     const data = catalog.data
-    if (!data) return language.t("corp.connectors.hubDown")
-    if (data.hub_error === "unauthorized") return language.t("corp.connectors.needsLogin")
-    if (data.hub_error) return `${language.t("corp.connectors.hubDown")}: ${language.t(corpErrorKey(data.hub_error))}`
-    // Четвёртое состояние S-V12: Hub ответил, карточки были, но все отброшены разбором. Текст
-    // обязан отличаться от «Каталог пуст» — это сообщение о дефекте клиента, а не правда о каталоге.
-    if (dropped() > 0) return language.t("corp.empty.unparsed", { dropped: dropped() })
-    return language.t("corp.connectors.empty")
+    if (cards().length === 0) {
+      if (!data) return { text: language.t("corp.connectors.hubDown"), action: "refresh" as const }
+      if (data.hub_error === "unauthorized")
+        return { text: language.t("corp.connectors.needsLogin"), action: "login" as const }
+      if (data.hub_error)
+        return {
+          text: `${language.t("corp.connectors.hubDown")}: ${language.t(corpErrorKey(data.hub_error))}`,
+          action: "refresh" as const,
+        }
+      // Состояния 1 и 2 обязаны различаться текстом: первое — правда о каталоге, второе —
+      // сообщение о дефекте клиента, и путать их нельзя.
+      if (dropped() > 0)
+        return { text: language.t("corp.empty.unparsed", { dropped: dropped() }), action: "refresh" as const }
+      return { text: language.t("corp.connectors.empty"), action: "refresh" as const }
+    }
+    if (visible().length > 0) return undefined
+    if (tab() === "connected") return { text: language.t("corp.empty.tabConnected"), action: "resetFilter" as const }
+    if (tab() === "not_connected")
+      return { text: language.t("corp.empty.tabNotConnected"), action: "resetFilter" as const }
+    return undefined
   })
 
   async function openLogin() {
@@ -256,13 +216,15 @@ export const DialogConnectors: Component = () => {
   const needsLogin = createMemo(() => catalog.data?.hub_error === "unauthorized")
 
   /**
-   * Подпись ошибки подключения (S-V19): объяснение своего класса плюс код ошибки как есть.
-   * Класс есть у любой неудачи, включая `unknown`, поэтому необъяснённой ошибки не бывает (D-32).
+   * S-D11: строка ведёт на страницу коннектора через `push`, а не `show`. `show` уничтожил бы
+   * витрину со всем её состоянием, и возврат приводил бы пользователя не туда, откуда он ушёл.
+   *
+   * Модуль страницы подгружается по требованию — тем же приёмом, что экран входа: страница берёт
+   * с витрины подписи статуса, и статический импорт в обе стороны замкнул бы модули в цикл.
    */
-  function explain(card: CorpCatalogCard): string | undefined {
-    if (!card.error_class && !card.error) return undefined
-    const text = language.t(connectErrorKey(card.error_class), { code: card.error ?? "" })
-    return card.error ? `${text} (${card.error})` : text
+  async function openConnector(alias: string) {
+    const module = await import("@/components/corp/dialog-connector")
+    dialog.push(() => <module.DialogConnector alias={alias} />)
   }
 
   return (
@@ -284,127 +246,128 @@ export const DialogConnectors: Component = () => {
         </div>
       }
     >
-      <Show when={banner()}>{(value) => <div class="px-3 pb-2 text-12-regular text-text-weak">{value()}</div>}</Show>
-      <Show when={partial()}>{(value) => <div class="px-3 pb-2 text-12-regular text-text-weak">{value()}</div>}</Show>
-      <List
-        class="px-3"
-        search={{ placeholder: language.t("corp.connectors.search"), autofocus: true }}
-        emptyMessage={emptyMessage()}
-        loadingMessage={catalog.isLoading ? language.t("corp.connectors.title") : undefined}
-        key={(card) => card?.alias ?? ""}
-        items={cards}
-        filterKeys={["alias", "title", "description", "owner"]}
-        groupBy={(card) => card.owner ?? ""}
-        onSelect={(card) => {
-          if (!card || action.isPending) return
-          if (!card.actions.includes("connect") && !card.actions.includes("reconnect")) return
-          action.mutate({ kind: "connect", alias: card.alias, ...(card.preset ? { preset: card.preset } : {}) })
-        }}
-      >
-        {(card) => (
-          <div class="w-full flex items-center justify-between gap-x-3">
-            <div class="flex flex-col gap-0.5 min-w-0 flex-1">
-              <div class="flex items-center gap-2">
-                <span class="truncate">{card.title}</span>
-                {/* S-V18: признак подключения — отдельный положительный элемент того же средства и
-                    размера, что бейдж «устаревший». Подписи мелким вспомогательным шрифтом для
-                    этого недостаточно — именно она была единственным признаком в BUG-I4-010. */}
-                <Show when={card.state === "connected"}>
-                  <Tag class="corp-tag-connected">{language.t("corp.connectors.connected")}</Tag>
-                </Show>
-                {/* Подпись статуса сохраняется — бейдж её дополняет, а не заменяет (S-V18). */}
-                <span class="text-12-regular text-text-weak">{language.t(STATUS_KEY[card.status])}</span>
-                <Show when={STATE_KEY[card.state]}>
-                  {(key) => <span class="text-12-regular text-text-weak">{language.t(key())}</span>}
-                </Show>
-                <Show when={card.deprecated}>
-                  <Tag>{language.t("corp.connectors.deprecated")}</Tag>
-                </Show>
-                <Show when={card.preset}>
-                  <span class="text-12-regular text-text-weak">{card.preset}</span>
-                </Show>
-              </div>
-              {/* S-V19: ошибка подключения не остаётся голым кодом — рядом объяснение своего класса.
-                  Предлагаемое действие показывается тем же элементом, которым оно выполняется
-                  («Повторить»/«Подключить» и «Открыть в Hub»), отдельной кнопкой-советом — нет. */}
-              <Show when={explain(card) || card.description}>
-                <span class="text-12-regular text-text-weak truncate">{explain(card) ?? card.description}</span>
-              </Show>
+      {/* Баннер, предупреждение, вкладки, шапка и пустое состояние в область прокрутки списка не
+          входят и высоту окна не меняют (S-D6, S-D10) — раскладку задаёт `dialog-shell.css`. */}
+      <div class="corp-connectors" data-empty={empty() ? "" : undefined}>
+        <Show when={banner()}>
+          {(value) => (
+            <div data-slot="corp-connectors-banner" class="text-12-regular text-text-weak">
+              {value()}
             </div>
-            <div class="flex items-center gap-1 shrink-0" onClick={(event) => event.stopPropagation()}>
-              <Show when={card.actions.includes("connect") || card.actions.includes("reconnect")}>
-                <Button
-                  size="small"
-                  disabled={action.isPending || card.blocked}
-                  onClick={() =>
-                    action.mutate({
-                      kind: "connect",
-                      alias: card.alias,
-                      ...(card.preset ? { preset: card.preset } : {}),
-                    })
+          )}
+        </Show>
+        <Show when={partial()}>
+          {(value) => (
+            <div data-slot="corp-connectors-partial" class="text-12-regular text-text-weak">
+              {value()}
+            </div>
+          )}
+        </Show>
+
+        {/* S-D6, S-V11: вкладки — единственный орган фильтрации витрины. При «Hub недоступен» и
+            «Требуется вход» они не показываются: фильтровать нечего. */}
+        <Show when={showTable()}>
+          <TabsV2
+            variant="pill"
+            data-slot="corp-connectors-tabs"
+            value={tab()}
+            onChange={(value: string) => setTab(value as ConnectorsTab)}
+          >
+            <TabsV2.List>
+              <TabsV2.Trigger value="all">{language.t(TAB_KEY.all)}</TabsV2.Trigger>
+              <TabsV2.Trigger value="connected">{language.t(TAB_KEY.connected)}</TabsV2.Trigger>
+              <TabsV2.Trigger value="not_connected">{language.t(TAB_KEY.not_connected)}</TabsV2.Trigger>
+            </TabsV2.List>
+          </TabsV2>
+        </Show>
+
+        {/* S-D6: шапка таблицы и строки списка размечены одной сеткой `grid-template-columns`
+            (`dialog-shell.css`); расхождение сеток — дефект, колонки перестают быть колонками. */}
+        <Show when={showTable()}>
+          <div data-slot="corp-connectors-header" class="text-12-regular text-text-weak">
+            <span>{language.t("corp.connectors.columnName")}</span>
+            <span>{language.t("corp.connectors.columnType")}</span>
+            <span>{language.t("corp.connectors.columnStatus")}</span>
+          </div>
+        </Show>
+
+        <List
+          search={{ placeholder: language.t("corp.connectors.search"), autofocus: true }}
+          emptyMessage={empty()?.text}
+          loadingMessage={catalog.isLoading ? language.t("corp.connectors.title") : undefined}
+          key={(card) => card?.alias ?? ""}
+          items={visible()}
+          filter={query()}
+          onFilter={setQuery}
+          // Отбор выполнен выше по правилам S-V11 — встроенный нечёткий поиск списка переупорядочил
+          // бы результаты, а порядок строк обязан совпадать с порядком каталога Hub.
+          skipFilter={() => true}
+          onSelect={(card) => {
+            if (!card) return
+            void openConnector(card.alias)
+          }}
+        >
+          {(card) => (
+            <div data-slot="corp-connectors-row" class="w-full">
+              <div class="flex flex-col gap-0.5 min-w-0">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="text-14-regular text-text-strong truncate">{card.title}</span>
+                  {/* Бейдж «устаревший» живёт в колонке «Имя»: он про карточку, а не про
+                      подключение (S-V18). */}
+                  <Show when={card.deprecated}>
+                    <Tag>{language.t("corp.connectors.deprecated")}</Tag>
+                  </Show>
+                </div>
+                <span class="text-12-regular text-text-weak truncate">{card.alias}</span>
+              </div>
+              {/* S-V22: `type` → `owner` → пустая ячейка; пустая ячейка ширину колонки сохраняет. */}
+              <span class="text-12-regular text-text-weak truncate">{connectorType(card) ?? ""}</span>
+              {/* S-V18: текст состояния и цветовая точка перед ним. Точка — дубликат текста, а не
+                  замена: состояние читается и в чёрно-белой печати, и при дальтонизме. */}
+              <span data-slot="corp-status-cell">
+                <span data-slot="corp-status-dot" data-tone={statusTone(card)} aria-hidden="true">
+                  &bull;
+                </span>
+                <span
+                  class={
+                    card.state === "connected"
+                      ? "text-12-regular text-text-strong truncate"
+                      : "text-12-regular text-text-weak truncate"
                   }
                 >
-                  {/* S-V16: подпись действия в состоянии 3 — «Повторить»: попытка уже была, и
-                      честнее это назвать; в состояниях 1 и 2 — «Подключить». Оба выполняют S-V7. */}
-                  {language.t(card.actions.includes("reconnect") ? "corp.connectors.retry" : "corp.connectors.connect")}
+                  {language.t(statusKey(card))}
+                </span>
+              </span>
+            </div>
+          )}
+        </List>
+
+        {/* Пустое состояние вместе со своим действием: «Обновить» и «Войти» перезапрашивают каталог,
+            «Показать все» переводит вкладку в «Все» и строку поиска не трогает — если список после
+            сброса всё ещё пуст, причина в поиске, и это видно по непустому полю ввода (S-V12). */}
+        <Show when={empty()}>
+          {(state) => (
+            <div data-slot="corp-connectors-empty">
+              <span class="text-14-regular text-text-strong">{state().text}</span>
+              <Show when={state().action === "login"}>
+                <Button size="small" onClick={() => void openLogin()}>
+                  {language.t("corp.connectors.login")}
                 </Button>
               </Show>
-              <Show when={card.actions.includes("permissions")}>
-                {/* S-V9, строка 4: вид модели прав неизвестен или не разобран — действие видно,
-                    но заблокировано, а рядом показана причина. Остальные действия работают. */}
-                <Show when={!card.permission_model}>
-                  <span class="text-12-regular text-text-weak truncate max-w-64">
-                    {language.t("corp.connectors.permissionsUnavailable")}
-                  </span>
-                </Show>
-                <Button
-                  size="small"
-                  variant="ghost"
-                  disabled={action.isPending || card.blocked || !card.permission_model}
-                  onClick={() => dialog.push(() => <DialogConnectorPermissions card={card} />)}
-                >
-                  {language.t("corp.connectors.permissions")}
+              <Show when={state().action === "refresh"}>
+                <Button size="small" variant="ghost" onClick={() => void invalidate()}>
+                  {language.t("corp.connectors.refresh")}
                 </Button>
               </Show>
-              {/* S-V8, S-V16: «Отключить» существует ровно в состоянии «Подключено» — набор действий
-                  считает общий модуль corp/status.ts, оболочка его не пересчитывает. */}
-              <Show when={card.actions.includes("disconnect")}>
-                <Button
-                  size="small"
-                  variant="ghost"
-                  disabled={action.isPending}
-                  onClick={() => action.mutate({ kind: "disconnect", alias: card.alias })}
-                >
-                  {language.t("corp.connectors.disconnect")}
+              <Show when={state().action === "resetFilter"}>
+                <Button size="small" variant="ghost" onClick={() => setTab("all")}>
+                  {language.t("corp.connectors.resetFilter")}
                 </Button>
-              </Show>
-              {/* S-V17: «Убрать из списка» — ровно в состоянии «Соединение потеряно»/«Отключено
-                  вами». Остаётся доступной и на протухшем каталоге: она нужна пользователю именно
-                  тогда, когда Hub недоступен. */}
-              <Show when={card.actions.includes("forget")}>
-                <Button
-                  size="small"
-                  variant="ghost"
-                  disabled={action.isPending}
-                  onClick={() => dialog.push(() => <DialogForgetConnector card={card} />)}
-                >
-                  {language.t("corp.connectors.forget")}
-                </Button>
-              </Show>
-              <Show when={card.actions.includes("open_hub") && card.hub_url}>
-                <a
-                  class="text-12-regular text-text-weak underline whitespace-nowrap"
-                  href={card.hub_url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {language.t("corp.connectors.openHub")}
-                </a>
               </Show>
             </div>
-          </div>
-        )}
-      </List>
+          )}
+        </Show>
+      </div>
     </CorpDialog>
   )
 }

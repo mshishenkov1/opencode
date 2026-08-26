@@ -86,29 +86,27 @@ CORP_HUB_URL=https://hub.magnit.ru bun run corp/build.ts --desktop --skip-cli --
 
 | `--channel` | Канал Desktop | Имя приложения | Идентификатор | Веб-UI |
 |---|---|---|---|---|
-| `latest` (по умолчанию) | `prod` | `OpenCode` | `ai.opencode.desktop` | prod-режим, без бейджа DEV |
+| `latest` (по умолчанию) | `magnit` | `OpenCode Magnit` | `ai.opencode.desktop.magnit` | режим раздачи, без бейджа DEV |
+| `magnit` | `magnit` | `OpenCode Magnit` | `ai.opencode.desktop.magnit` | режим раздачи, без бейджа DEV |
 | `dev` | `dev` | `OpenCode Dev` | `ai.opencode.desktop.dev` | dev-режим |
 | `beta` | `beta` | `OpenCode Beta` | `ai.opencode.desktop.beta` | dev-режим |
 
-У CLI и Desktop канал раздачи называется по-разному: `latest` у `@opencode-ai/script`, `prod` у
-`electron-builder`. `corp/build.ts` переводит `latest` → `prod` для шагов Desktop, поэтому
-конфигурация electron-builder не правится (S-B9, AC-112).
+У CLI и Desktop канал раздачи называется по-разному: `latest` у `@opencode-ai/script`, `magnit` у
+`electron-builder`. `corp/build.ts` переводит `latest` → `magnit` для шагов Desktop. Неизвестный
+канал — ошибка сборки, а не молчаливый откат в `dev` (BUG-I4-003).
 
 Смена канала меняет каталог данных Desktop-приложения и имя файла БД CLI (`opencode.db` для
-`latest`/`prod`), поэтому канал задаётся явно и не меняется от сборки к сборке.
+`latest`), поэтому канал задаётся явно и не меняется от сборки к сборке.
 
 Публикация из `electron-builder` запрещена (`--publish never`): релиз собирает только `--publish`
-этого скрипта (S-B4). Автообновление CLI выключено корп-умолчанием `autoupdate: false` (S-C3).
+этого скрипта (S-B4). Автообновление CLI выключено корп-умолчанием `autoupdate: false` (S-C3);
+явный `opencode upgrade` ходит только на `CORP_CLI_UPDATE_URL`, а без него отказывает (S-B14).
 
-> **[проверить] Автообновление Desktop.** На каналах `latest`/`prod` и `beta` electron-updater
-> включён (`UPDATER_ENABLED = app.isPackaged && CHANNEL !== "dev"`), а `app-update.yml` в собранном
-> приложении указывает на **публичный репозиторий upstream** `anomalyco/opencode` — этот фид
-> electron-builder подставляет из `publish` в `packages/desktop/electron-builder.config.ts`, а при
-> его отсутствии выводит из `repository` в `package.json`. То есть корп-приложение будет
-> предлагать и ставить поверх себя ванильный OpenCode. Выключить это можно только правкой
-> `publish` в конфиге electron-builder или подменой фида на приватный форк, а конфигурация
-> electron-builder в I-4 заморожена (S-B9, AC-112). До решения раздавать Desktop либо с
-> `--channel dev`, либо с осознанием, что обновления придут из upstream.
+Автообновление Desktop включено только при заданном `CORP_DESKTOP_UPDATE_URL` (S-B11):
+`UPDATER_ENABLED = app.isPackaged && CHANNEL !== "dev" && !!UPDATE_URL`. Без переменной блок
+`publish` канала `magnit` не появляется, `app-update.yml` в бандл не попадает и обновлений нет
+вовсе. Фид ванильного апстрима в корпоративный бандл не попадает: это проверяет
+`corp/verify-desktop-bundle.ts` (AC-149, AC-153).
 
 ### Что делает `--desktop`
 
@@ -116,6 +114,37 @@ CORP_HUB_URL=https://hub.magnit.ru bun run corp/build.ts --desktop --skip-cli --
 `bun run build` (electron-vite: main, preload, веб-UI) → `package:mac` / `package:win`. Первые два шага
 обязательны: electron-builder только упаковывает готовый `out/` и без них падает на
 «Application entry file out/main/index.js was not found». Артефакты — в `packages/desktop/dist`.
+
+Архитектуры macOS задаются флагами `--arm64` и `--x64`; без них собирается архитектура раннера.
+Обе архитектуры собираются **одним** вызовом: electron-builder пишет один фид `magnit-mac.yml` со
+списком `files` для arm64 и x64. Два раздельных вызова дали бы два фида, из которых на сервере
+останется последний.
+
+### Цепочка релиза (S-B16)
+
+```
+upstream-sync.yml  → мерж «corp: слить upstream <тег>» в corp/**
+corp-release.yml   → N = 1 при смене версии upstream, иначе N+1 → тег v<upstream>-magnit.<N>
+corp-ci.yml (тег)  → build-cli + build-desktop (mac arm64+x64, проверка бандлов и фида)
+                   → publish (внутренний сервер) + release (черновик GitHub Release, резерв)
+```
+
+Раскладка внутреннего сервера (`--publish --publish-to internal`, адрес записи —
+`CORP_ARTIFACTS_ENDPOINT`, учётные данные — `CORP_ARTIFACTS_TOKEN` либо
+`CORP_ARTIFACTS_USER`/`CORP_ARTIFACTS_PASSWORD`):
+
+| Объект | Адрес |
+|---|---|
+| Фид Desktop | `<CORP_DESKTOP_UPDATE_URL>/magnit-mac.yml` |
+| Артефакты Desktop | `<CORP_DESKTOP_UPDATE_URL>/<имя файла>` (плоско) |
+| Версия CLI | `<CORP_CLI_UPDATE_URL>/latest` — JSON `{"version": "…"}` |
+| Архив CLI | `<CORP_CLI_UPDATE_URL>/<версия>/opencode-<os>-<arch>.zip` |
+
+Порядок выкладки: **сначала артефакты, потом фиды**. Клиент, опросивший фид в момент выкладки,
+обязан получить либо старую версию целиком, либо новую целиком.
+
+Windows-сборки Desktop в матрице тегов нет (решение заказчика, ревизия 1.10). Конфигурация NSIS в
+`electron-builder.config.ts` не тронута: Windows вернётся флагом, а не восстановлением кода.
 
 Корп-константы попадают в Desktop так же, как в CLI: `CORP_HUB_URL` и `corp/config/opencode.corp.json`
 — в бандл встроенного сервера (`packages/opencode/script/build-node.ts`), `VITE_OPENCODE_CORP_HUB_URL`

@@ -140,8 +140,12 @@ export function DialogPermissions(props: DialogPermissionsProps) {
 
   /**
    * Тело роута прав (S-V21): режим нужен **каждой** группе — блок alias перезаписывается целиком,
-   * а не по группе за раз. «Смешанно» конкретным режимом не является и сворачивается в
-   * «Спрашивать»: неизвестное спрашивает, а не разрешает (S-V20, S-V21).
+   * а не по группе за раз.
+   *
+   * «Смешанно» конкретным режимом не является, и группе, которой пользователь не касался, режим
+   * взять неоткуда. Берётся `default` этой группы из каталога: словарь курируемый, и его умолчание
+   * — ровно то, что коннектор считает разумным для этой группы (S-V20). Жёсткого `ask` здесь нет:
+   * `ask` остаётся фолбэком на случай, когда `default` у группы не разобрался (`FALLBACK_MODE`).
    */
   function modesFor(changes: Record<string, CorpPermissionMode>) {
     const modes: Record<string, CorpPermissionMode> = {}
@@ -152,7 +156,7 @@ export function DialogPermissions(props: DialogPermissionsProps) {
         continue
       }
       const value = state()[entry.id]
-      modes[entry.id] = value === undefined ? entry.fallback : value === "mixed" ? FALLBACK_MODE : value
+      modes[entry.id] = value === undefined || value === "mixed" ? entry.fallback : value
     }
     return modes
   }

@@ -178,13 +178,24 @@ const desktopUpdateUrl = process.env["CORP_DESKTOP_UPDATE_URL"]?.trim().replace(
  */
 const cliUpdateUrl = process.env["CORP_CLI_UPDATE_URL"]?.trim().replace(/\/+$/, "")
 
+/**
+ * Адрес статического каталога коннекторов (S-C10 п.1, D-40). Задан — витрина работает и без Hub:
+ * каталог раздаётся файлом с того же внутреннего хоста, что фид обновлений, и не требует ни ключа,
+ * ни сессии. Не задан — каталог берётся из Hub, как до ревизии 1.11.
+ */
+const catalogUrl = process.env["CORP_CATALOG_URL"]?.trim().replace(/\/+$/, "")
+
 console.log(`версия сборки: ${version}`)
 console.log(`канал сборки: ${channel}${desktopChannel === channel ? "" : ` (Desktop: ${desktopChannel})`}`)
-if (!hubUrl) console.warn("CORP_HUB_URL не задан — собирается ванильная сборка (S-C6)")
+// S-C10 п.2: ванильной сборка становится только при отсутствии **обоих** корпоративных адресов —
+// сборка без Hub, но с каталогом остаётся корпоративной (D-40).
+if (!hubUrl && !catalogUrl) console.warn("CORP_HUB_URL и CORP_CATALOG_URL не заданы — собирается ванильная сборка (S-C6)")
+else if (!hubUrl) console.warn("CORP_HUB_URL не задан — сборка без Hub: витрина работает на статическом каталоге (S-C10)")
 else console.log(`адрес Hub: ${hubUrl}`)
 if (hubUrl && !cliUpdateUrl)
   console.warn("CORP_CLI_UPDATE_URL не задан — явный `opencode upgrade` будет отказывать (S-B14)")
 else if (cliUpdateUrl) console.log(`источник обновлений CLI: ${cliUpdateUrl}`)
+if (catalogUrl) console.log(`статический каталог: ${catalogUrl}`)
 
 const env = {
   ...process.env,
@@ -195,6 +206,9 @@ const env = {
   ...(hubUrl ? { CORP_HUB_URL: hubUrl, VITE_OPENCODE_CORP_HUB_URL: hubUrl } : {}),
   // CORP_CLI_UPDATE_URL читают бандлеры бинарника и встроенного сервера (S-B14).
   ...(cliUpdateUrl ? { CORP_CLI_UPDATE_URL: cliUpdateUrl } : {}),
+  // CORP_CATALOG_URL — адрес статического каталога (S-C10 п.1): его читают те же два бандлера,
+  // а VITE_… — сборка веб-UI, где по нему считается включённость корп-функций (S-C10 п.2).
+  ...(catalogUrl ? { CORP_CATALOG_URL: catalogUrl, VITE_OPENCODE_CORP_CATALOG_URL: catalogUrl } : {}),
 }
 
 /**

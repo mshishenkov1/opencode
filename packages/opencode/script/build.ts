@@ -28,9 +28,12 @@ const createEmbeddedWebUIBundle = async () => {
   console.log(`Building Web UI to embed in the binary`)
   const appDir = path.join(import.meta.dirname, "../../app")
   const dist = path.join(appDir, "dist")
-  // corp: адрес Hub прокидывается в веб-UI отдельно — vite не видит define бинарника (S-C2, S-I2)
+  // corp: адреса Hub и статического каталога прокидываются в веб-UI отдельно — vite не видит
+  // define бандлера бинарника (S-C2, S-C10 п.1, S-I2). Признак включённости в веб-UI считается по
+  // обоим (S-C10 п.2), поэтому и передаются оба.
   const corpHubUrl = process.env["CORP_HUB_URL"]?.trim().replace(/\/+$/, "") ?? ""
-  await $`OPENCODE_CHANNEL=${Script.channel} VITE_OPENCODE_CORP_HUB_URL=${corpHubUrl} bun run --cwd ${appDir} build`
+  const corpCatalogUrl = process.env["CORP_CATALOG_URL"]?.trim().replace(/\/+$/, "") ?? ""
+  await $`OPENCODE_CHANNEL=${Script.channel} VITE_OPENCODE_CORP_HUB_URL=${corpHubUrl} VITE_OPENCODE_CORP_CATALOG_URL=${corpCatalogUrl} bun run --cwd ${appDir} build`
   const files = (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: dist })))
     .map((file) => file.replaceAll("\\", "/"))
     .filter((file) => !file.endsWith(".map"))
@@ -62,6 +65,10 @@ const corpDefine: Record<string, string> = {}
   // тогда `opencode upgrade` в корп-сборке никуда не ходит и говорит об этом (D-34).
   const cliUpdateUrl = process.env["CORP_CLI_UPDATE_URL"]?.trim().replace(/\/+$/, "")
   if (cliUpdateUrl) corpDefine["OPENCODE_CORP_CLI_UPDATE_URL"] = JSON.stringify(cliUpdateUrl)
+  // corp: адрес статического каталога (S-C10 п.1). Без переменной константа не определяется —
+  // тогда каталог берётся только из Hub, как до ревизии 1.11.
+  const catalogUrl = process.env["CORP_CATALOG_URL"]?.trim().replace(/\/+$/, "")
+  if (catalogUrl) corpDefine["OPENCODE_CORP_CATALOG_URL"] = JSON.stringify(catalogUrl)
   const corpConfigPath = path.resolve(dir, "../../corp/config/opencode.corp.json")
   if (fs.existsSync(corpConfigPath)) {
     const text = fs.readFileSync(corpConfigPath, "utf8").trim()

@@ -1,4 +1,12 @@
-import { CorpConfigBuild, corpEnabled, corpHubUrl, CORP_PROVIDER_ID } from "@opencode-ai/core/corp/constants"
+import {
+  CorpConfigBuild,
+  corpCatalogUrl,
+  corpCatalogUrlIssues,
+  corpEnabled,
+  corpHubUrl,
+  CORP_PROVIDER_ID,
+  type CorpUrlIssue,
+} from "@opencode-ai/core/corp/constants"
 
 /**
  * Корпоративный слой конфигурации (S-C3) и действующий адрес модели (S-C4a).
@@ -70,4 +78,14 @@ export function modelBaseUrlOf(config: WithCorpProvider | undefined): string | u
   return typeof value === "string" && value.trim() !== "" ? value : undefined
 }
 
-export { CORP_PROVIDER_ID, corpEnabled, corpHubUrl }
+/**
+ * Текст предупреждения о непригодном адресе статического каталога (S-C10 п.1).
+ *
+ * Называет и источник значения, и само значение — по образцу `modelBaseUrlWarning` (S-C4a):
+ * «адрес отброшен» без указания, какой именно, заставляет искать его перебором.
+ */
+export function catalogUrlWarning(issue: CorpUrlIssue): string {
+  return `${issue.name}: значение "${issue.value}" не является абсолютным http/https-адресом — оно отброшено, статический каталог не используется`
+}
+
+export { CORP_PROVIDER_ID, corpCatalogUrl, corpCatalogUrlIssues, corpEnabled, corpHubUrl }

@@ -25,6 +25,9 @@ const corpDefine: Record<string, string> = {}
   // тогда `opencode upgrade` в корп-сборке никуда не ходит и говорит об этом (D-34).
   const cliUpdateUrl = process.env["CORP_CLI_UPDATE_URL"]?.trim().replace(/\/+$/, "")
   if (cliUpdateUrl) corpDefine["OPENCODE_CORP_CLI_UPDATE_URL"] = JSON.stringify(cliUpdateUrl)
+  // corp: адрес статического каталога (S-C10 п.1) — та же константа, что у бинарника CLI.
+  const catalogUrl = process.env["CORP_CATALOG_URL"]?.trim().replace(/\/+$/, "")
+  if (catalogUrl) corpDefine["OPENCODE_CORP_CATALOG_URL"] = JSON.stringify(catalogUrl)
   const corpConfigPath = path.resolve(dir, "../../corp/config/opencode.corp.json")
   if (fs.existsSync(corpConfigPath)) {
     const text = fs.readFileSync(corpConfigPath, "utf8").trim()

@@ -355,6 +355,10 @@ export const layer = Layer.effect(
           return mergePluginOrigins(source, next.plugin, kind)
         }
 
+        // corp: непригодный адрес статического каталога отбрасывается, а не роняет загрузку
+        // (S-C10 п.1, тот же принцип, что у S-C4a): в лог уходит и имя источника, и значение.
+        for (const issue of Corp.corpCatalogUrlIssues()) yield* Effect.logWarning(Corp.catalogUrlWarning(issue))
+
         // corp: корпоративный слой умолчаний из build-константы OPENCODE_CORP_CONFIG (S-C3).
         // Мержится до цикла well-known, поэтому имеет наименьший приоритет; ошибка разбора не роняет загрузку.
         const corpText = Corp.configText()

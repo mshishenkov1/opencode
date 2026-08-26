@@ -1101,7 +1101,35 @@ export const dict = {
   "corp.connectors.lost": "Connection lost",
   "corp.connectors.disconnected": "Disconnected by you",
 
+  // corp: оболочка витрины-таблицы — вкладки-фильтры и заголовки колонок (S-V11, S-D6, S-I1)
+  "corp.connectors.tabAll": "All",
+  "corp.connectors.tabConnected": "Connected",
+  "corp.connectors.tabNotConnected": "Not connected",
+  "corp.connectors.columnName": "Name",
+  "corp.connectors.columnType": "Type",
+  "corp.connectors.columnStatus": "Status",
+  "corp.connectors.resetFilter": "Show all",
+
+  // corp: страница коннектора (S-D11, S-I1)
+  "corp.connector.back": "Back",
+  "corp.connector.owner": "Owner",
+  "corp.connector.type": "Type",
+  "corp.connector.docs": "Documentation",
+
+  // corp: экран разрешений вида permission_groups (S-V9, S-V20, S-V23, S-I1)
+  "corp.permissions.title": "Permissions",
+  "corp.permissions.allow": "Allow",
+  "corp.permissions.ask": "Ask",
+  "corp.permissions.deny": "Deny",
+  "corp.permissions.allowAll": "Allow everything",
+  "corp.permissions.denyAll": "Deny everything",
+  "corp.permissions.mixed": "Mixed",
+  "corp.permissions.restTitle": "Other capabilities",
+  "corp.permissions.restDescription": "Connector tools that fall into none of the groups above",
+
   "corp.empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
+  "corp.empty.tabConnected": "Nothing connected yet",
+  "corp.empty.tabNotConnected": "Everything is connected",
 
   "corp.status.connected": "connected",
   "corp.status.needs_auth": "needs auth",

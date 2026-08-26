@@ -999,7 +999,35 @@ export const dict = {
   "corp.connectors.lost": "Соединение потеряно",
   "corp.connectors.disconnected": "Отключено вами",
 
+  // corp: оболочка витрины-таблицы — вкладки-фильтры и заголовки колонок (S-V11, S-D6, S-I1)
+  "corp.connectors.tabAll": "Все",
+  "corp.connectors.tabConnected": "Подключённые",
+  "corp.connectors.tabNotConnected": "Неподключённые",
+  "corp.connectors.columnName": "Имя",
+  "corp.connectors.columnType": "Тип",
+  "corp.connectors.columnStatus": "Статус",
+  "corp.connectors.resetFilter": "Показать все",
+
+  // corp: страница коннектора (S-D11, S-I1)
+  "corp.connector.back": "Назад",
+  "corp.connector.owner": "Владелец",
+  "corp.connector.type": "Тип",
+  "corp.connector.docs": "Документация",
+
+  // corp: экран разрешений вида permission_groups (S-V9, S-V20, S-V23, S-I1)
+  "corp.permissions.title": "Разрешения",
+  "corp.permissions.allow": "Разрешить",
+  "corp.permissions.ask": "Спрашивать",
+  "corp.permissions.deny": "Запретить",
+  "corp.permissions.allowAll": "Разрешить всё",
+  "corp.permissions.denyAll": "Запретить всё",
+  "corp.permissions.mixed": "Смешанно",
+  "corp.permissions.restTitle": "Остальные возможности",
+  "corp.permissions.restDescription": "Инструменты коннектора, не попавшие ни в одну группу выше",
+
   "corp.empty.unparsed": "Каталог не разобран: отброшены все карточки ({{dropped}})",
+  "corp.empty.tabConnected": "Пока ничего не подключено",
+  "corp.empty.tabNotConnected": "Подключено всё",
 
   "corp.status.connected": "подключён",
   "corp.status.needs_auth": "требуется авторизация",

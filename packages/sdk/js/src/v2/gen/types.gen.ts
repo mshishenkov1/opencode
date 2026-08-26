@@ -2269,6 +2269,34 @@ export type CorpPermissionConsent = {
 
 export type CorpPermissionModel = CorpPermissionHeaderGroups | CorpPermissionToolFilter | CorpPermissionConsent
 
+export type CorpPermissionMode = "allow" | "ask" | "deny"
+
+export type CorpPermissionGroupDef = {
+  id: string
+  title: string
+  description?: string
+  default?: CorpPermissionMode
+  tools: Array<string>
+}
+
+export type CorpPermissionGroupsRest = {
+  title?: string
+  description?: string
+  default?: CorpPermissionMode
+}
+
+export type CorpPermissionGroups = {
+  version?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  groups: Array<CorpPermissionGroupDef>
+  rest?: CorpPermissionGroupsRest
+}
+
+export type CorpPermissionStateMode = "allow" | "ask" | "deny" | "mixed"
+
+export type CorpPermissionState = {
+  [key: string]: CorpPermissionStateMode
+}
+
 export type CorpCatalogCard = {
   alias: string
   title: string
@@ -2280,6 +2308,9 @@ export type CorpCatalogCard = {
   mode?: "native" | "facade"
   mcp_url?: string
   permission_model?: CorpPermissionModel
+  permission_groups?: CorpPermissionGroups
+  permission_state?: CorpPermissionState
+  type?: string
   connection_status?: "not_connected" | "connected" | "needs_reauth"
   preset?: string
   status: "connected" | "needs_auth" | "not_connected" | "unavailable"
@@ -2366,8 +2397,9 @@ export type CorpForgetResult = {
 export type CorpPermissionsResult = {
   alias: string
   status: "connected" | "needs_auth" | "not_connected" | "unavailable"
-  preset: string
+  preset?: string
   reauth_required: boolean
+  permission_state?: CorpPermissionState
   hub_error?:
     | "corp_disabled"
     | "hub_unavailable"
@@ -2382,6 +2414,10 @@ export type CorpPermissionsResult = {
     | "unauthorized"
     | "not_found"
     | "invalid_request"
+}
+
+export type CorpBadRequestError = {
+  error: "conflicting_body" | "missing_body" | "permission_groups_unavailable"
 }
 
 export type ExperimentalCapabilities = {
@@ -6100,8 +6136,11 @@ export type CorpForgetResponse = CorpForgetResponses[keyof CorpForgetResponses]
 
 export type CorpPermissionsData = {
   body?: {
-    preset: string
+    preset?: string
     groups?: Array<string>
+    modes?: {
+      [key: string]: CorpPermissionMode
+    }
   }
   path: {
     alias: string
@@ -6115,9 +6154,9 @@ export type CorpPermissionsData = {
 
 export type CorpPermissionsErrors = {
   /**
-   * Bad request
+   * CorpBadRequestError | InvalidRequestError
    */
-  400: BadRequestError
+  400: CorpBadRequestError | InvalidRequestError
   /**
    * CorpDisabledError
    */

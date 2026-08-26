@@ -1513,11 +1513,18 @@
             }
           },
           "400": {
-            "description": "Bad request",
+            "description": "CorpBadRequestError | InvalidRequestError",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/CorpBadRequestError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InvalidRequestError"
+                    }
+                  ]
                 }
               }
             }
@@ -1533,7 +1540,7 @@
             }
           }
         },
-        "description": "Обновляет пресет прав в Hub и, для mode:facade, oauth.scope в конфиге.",
+        "description": "Тело {preset} — пресет прав в Hub и, для mode:facade, oauth.scope в конфиге. Тело {modes} — режимы групп вида permission_groups: запись в раздел permission конфига пользователя без обращения к Hub.",
         "summary": "Update connector permissions",
         "requestBody": {
           "content": {
@@ -1549,9 +1556,14 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "modes": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "$ref": "#/components/schemas/CorpPermissionMode"
+                    }
                   }
                 },
-                "required": ["preset"],
                 "additionalProperties": false
               }
             }
@@ -22238,6 +22250,99 @@
           }
         ]
       },
+      "CorpPermissionMode": {
+        "type": "string",
+        "enum": ["allow", "ask", "deny"]
+      },
+      "CorpPermissionGroupDef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "default": {
+            "$ref": "#/components/schemas/CorpPermissionMode"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["id", "title", "tools"],
+        "additionalProperties": false
+      },
+      "CorpPermissionGroupsRest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "default": {
+            "$ref": "#/components/schemas/CorpPermissionMode"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CorpPermissionGroups": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["NaN"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["-Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorpPermissionGroupDef"
+            }
+          },
+          "rest": {
+            "$ref": "#/components/schemas/CorpPermissionGroupsRest"
+          }
+        },
+        "required": ["groups"],
+        "additionalProperties": false
+      },
+      "CorpPermissionStateMode": {
+        "type": "string",
+        "enum": ["allow", "ask", "deny", "mixed"]
+      },
+      "CorpPermissionState": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/CorpPermissionStateMode"
+        }
+      },
       "CorpCatalogCard": {
         "type": "object",
         "properties": {
@@ -22272,6 +22377,15 @@
           },
           "permission_model": {
             "$ref": "#/components/schemas/CorpPermissionModel"
+          },
+          "permission_groups": {
+            "$ref": "#/components/schemas/CorpPermissionGroups"
+          },
+          "permission_state": {
+            "$ref": "#/components/schemas/CorpPermissionState"
+          },
+          "type": {
+            "type": "string"
           },
           "connection_status": {
             "type": "string",
@@ -22504,6 +22618,9 @@
           "reauth_required": {
             "type": "boolean"
           },
+          "permission_state": {
+            "$ref": "#/components/schemas/CorpPermissionState"
+          },
           "hub_error": {
             "type": "string",
             "enum": [
@@ -22523,7 +22640,18 @@
             ]
           }
         },
-        "required": ["alias", "status", "preset", "reauth_required"],
+        "required": ["alias", "status", "reauth_required"],
+        "additionalProperties": false
+      },
+      "CorpBadRequestError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["conflicting_body", "missing_body", "permission_groups_unavailable"]
+          }
+        },
+        "required": ["error"],
         "additionalProperties": false
       },
       "ExperimentalCapabilities": {

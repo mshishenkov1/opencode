@@ -40,6 +40,7 @@ import type {
   CorpLoginStartResponses,
   CorpLoginTeamErrors,
   CorpLoginTeamResponses,
+  CorpPermissionMode,
   CorpPermissionsErrors,
   CorpPermissionsResponses,
   CorpStatusErrors,
@@ -1809,7 +1810,7 @@ export class Corp extends HeyApiClient {
   /**
    * Update connector permissions
    *
-   * Обновляет пресет прав в Hub и, для mode:facade, oauth.scope в конфиге.
+   * Тело {preset} — пресет прав в Hub и, для mode:facade, oauth.scope в конфиге. Тело {modes} — режимы групп вида permission_groups: запись в раздел permission конфига пользователя без обращения к Hub.
    */
   public permissions<ThrowOnError extends boolean = false>(
     parameters: {
@@ -1818,6 +1819,9 @@ export class Corp extends HeyApiClient {
       workspace?: string
       preset?: string
       groups?: Array<string>
+      modes?: {
+        [key: string]: CorpPermissionMode
+      }
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1831,6 +1835,7 @@ export class Corp extends HeyApiClient {
             { in: "query", key: "workspace" },
             { in: "body", key: "preset" },
             { in: "body", key: "groups" },
+            { in: "body", key: "modes" },
           ],
         },
       ],

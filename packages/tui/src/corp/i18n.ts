@@ -52,6 +52,37 @@ const ru = {
   "connectors.disconnected": "Отключено вами",
   "connectors.notConnectedHint": "Отключать нечего: подключения нет",
 
+  // Вкладки фильтра витрины и их пустые состояния (S-V11, S-V12, S-T10, ревизия 1.10).
+  "connectors.tabAll": "Все",
+  "connectors.tabConnected": "Подключённые",
+  "connectors.tabNotConnected": "Неподключённые",
+  "connectors.columnName": "Имя",
+  "connectors.columnType": "Тип",
+  "connectors.columnStatus": "Статус",
+  "connectors.resetFilter": "Показать все",
+  "empty.tabConnected": "Пока ничего не подключено",
+  "empty.tabNotConnected": "Подключено всё",
+  "empty.unparsed": "Каталог не разобран: отброшены все карточки ({{dropped}})",
+  "connectors.partial": "Часть карточек каталога не разобрана и не показана: {{dropped}}",
+
+  // Страница коннектора (S-D11, S-T10).
+  "connector.back": "Назад",
+  "connector.owner": "Владелец",
+  "connector.type": "Тип",
+  "connector.docs": "Документация",
+
+  // Экран разрешений по группам (S-V20, S-V23).
+  "permissions.title": "Разрешения",
+  "permissions.allow": "Разрешить",
+  "permissions.ask": "Спрашивать",
+  "permissions.deny": "Запретить",
+  "permissions.allowAll": "Разрешить всё",
+  "permissions.denyAll": "Запретить всё",
+  "permissions.mixed": "Смешанно",
+  "permissions.restTitle": "Остальные возможности",
+  "permissions.restDescription": "Инструменты коннектора, не попавшие ни в одну группу выше",
+  "permissions.saved": "Разрешения сохранены",
+
   "status.connected": "✓ Подключён",
   "status.needs_auth": "⚠ Требуется авторизация",
   "status.not_connected": "○ Не подключён",
@@ -133,6 +164,34 @@ const en: Record<Key, string> = {
   "connectors.disconnected": "Disconnected by you",
   "connectors.notConnectedHint": "Nothing to disconnect: there is no connection",
 
+  "connectors.tabAll": "All",
+  "connectors.tabConnected": "Connected",
+  "connectors.tabNotConnected": "Not connected",
+  "connectors.columnName": "Name",
+  "connectors.columnType": "Type",
+  "connectors.columnStatus": "Status",
+  "connectors.resetFilter": "Show all",
+  "empty.tabConnected": "Nothing connected yet",
+  "empty.tabNotConnected": "Everything is connected",
+  "empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
+  "connectors.partial": "Some catalog cards were not parsed and are hidden: {{dropped}}",
+
+  "connector.back": "Back",
+  "connector.owner": "Owner",
+  "connector.type": "Type",
+  "connector.docs": "Documentation",
+
+  "permissions.title": "Permissions",
+  "permissions.allow": "Allow",
+  "permissions.ask": "Ask",
+  "permissions.deny": "Deny",
+  "permissions.allowAll": "Allow everything",
+  "permissions.denyAll": "Deny everything",
+  "permissions.mixed": "Mixed",
+  "permissions.restTitle": "Other capabilities",
+  "permissions.restDescription": "Connector tools that fall into none of the groups above",
+  "permissions.saved": "Permissions saved",
+
   "status.connected": "✓ Connected",
   "status.needs_auth": "⚠ Needs auth",
   "status.not_connected": "○ Not connected",
@@ -175,6 +234,17 @@ export function language(): "ru" | "en" {
 
 export function t(key: Key): string {
   return language() === "ru" ? ru[key] : en[key]
+}
+
+/**
+ * Текст с подстановками `{{имя}}` (S-I4). Форма подстановки та же, что у словарей Desktop (S-I1):
+ * ключи обеих оболочек зеркальны, и расходиться их тексты не должны.
+ */
+export function format(key: Key, values: Record<string, string | number>): string {
+  return t(key).replace(/\{\{(\w+)\}\}/g, (match, name: string) => {
+    const value = values[name]
+    return value === undefined ? match : String(value)
+  })
 }
 
 /** Текст ошибки по стабильному коду корп-роутов (S-A5); неизвестный код отдаётся как есть. */

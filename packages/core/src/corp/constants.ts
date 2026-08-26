@@ -86,3 +86,16 @@ export function corpUserEmail(user: { email?: string | null }): string | undefin
 export function corpUserLabel(user: { user_id: string; email?: string | null }): string {
   return corpUserEmail(user) ?? user.user_id
 }
+
+/**
+ * Значение колонки «Тип» (S-V22): `type` → при его отсутствии или пустоте `owner` → `undefined`
+ * (пустая ячейка). Правило одно на обе оболочки — как `CorpStatus.compute` (S-Q9): TUI и Desktop
+ * берут значение отсюда и сами его не выводят, поэтому разойтись не могут. Отсюда — потому что
+ * это единственный корп-модуль, который видят и сервер, и `packages/app`, и `packages/tui`.
+ */
+export function connectorType(card: { type?: string; owner?: string }): string | undefined {
+  const type = card.type?.trim()
+  if (type) return card.type
+  const owner = card.owner?.trim()
+  return owner ? card.owner : undefined
+}

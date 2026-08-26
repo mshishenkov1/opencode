@@ -205,13 +205,12 @@ export function permissionState(
  * Значение колонки «Тип» (S-V22): `type` → при его отсутствии или пустоте `owner` → `undefined`
  * (пустая ячейка). Правило одно на обе оболочки — как `CorpStatus.compute` (S-Q9): TUI и Desktop
  * берут значение отсюда и сами его не выводят, поэтому разойтись не могут.
+ *
+ * Живёт в `@opencode-ai/core/corp/constants` — единственном корп-модуле, который видят и сервер, и
+ * `packages/app`, и `packages/tui` (по образцу `corpUserLabel`). Здесь оно переэкспортировано,
+ * чтобы серверный код продолжал брать все правила витрины из одного места.
  */
-export function connectorType(card: { type?: string; owner?: string }): string | undefined {
-  const type = card.type?.trim()
-  if (type) return card.type
-  const owner = card.owner?.trim()
-  return owner ? card.owner : undefined
-}
+export { connectorType } from "@opencode-ai/core/corp/constants"
 
 /** Ссылка «Открыть в Hub» (S-V10, I-3 §17). */
 export function hubServerUrl(hubUrl: string | undefined, alias: string) {

@@ -1,29 +1,33 @@
 import { TextAttributes } from "@opentui/core"
 import type { CorpCatalogCard, CorpCatalogView, CorpPermissionModel } from "@opencode-ai/sdk/v2"
-import { corpUserLabel } from "@opencode-ai/core/corp/constants"
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { connectorType, corpUserLabel } from "@opencode-ai/core/corp/constants"
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { useEvent } from "../../context/event"
 import { useSDK } from "../../context/sdk"
 import { useSync } from "../../context/sync"
 import { useTheme } from "../../context/theme"
-import { connectErrorText, errorText, t } from "../../corp/i18n"
+import { connectErrorText, errorText, format, t } from "../../corp/i18n"
 import { rememberTitles } from "../../corp/state"
 import { useDialog } from "../../ui/dialog"
-import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
+import { DialogSelect, type DialogSelectOption, type DialogSelectRef } from "../../ui/dialog-select"
 import { useToast } from "../../ui/toast"
 import { DialogCorpLogin } from "./dialog-corp-login"
+import { DialogPermissions } from "./dialog-permissions"
 
 /**
- * Витрина коннекторов для TUI (S-T6, S-T7, S-T10, S-V6, S-V11, S-V12, S-V16).
+ * Витрина коннекторов для TUI (S-T6, S-T7, S-T10, S-V6, S-V11, S-V12, S-V16, S-V18, S-V22).
  *
- * Список карточек на штатном `DialogSelect`: `title` — название, `description` — описание и владелец,
- * `footer` — статус витрины цветами темы. Действия: `enter` — подключить/повторить, `d` —
- * отключить, `x` — убрать из списка, `p` — права, `o` — открыть в Hub, `r` — обновить каталог.
+ * Список карточек на штатном `DialogSelect`: строка — маркер подключения, название и «Тип»
+ * (S-V22), `footer` — статус витрины цветами темы. Действия: `enter` — страница коннектора
+ * (S-D11), `c` — подключить/повторить, `d` — отключить, `x` — убрать из списка, `p` — права,
+ * `o` — открыть в Hub, `f` — вкладка фильтра, `r` — обновить каталог.
  *
  * Паритет с Desktop держится не договорённостью, а построением (S-T10): набор действий обе оболочки
  * получают из общего модуля `packages/opencode/src/corp/status.ts` и сами его не вычисляют. Клавиша
  * `d` действует только в состоянии «Подключено», `x` — только в состоянии «Соединение потеряно» /
- * «Отключено вами».
+ * «Отключено вами». Ревизия 1.10 переносит в терминал смысл, а не раскладку Desktop: колонок,
+ * вкладок-«таблеток» и стека диалогов здесь нет — вкладка переключается клавишей и видна в
+ * заголовке, а страница коннектора открывается `dialog.replace`.
  */
 
 const STATUS_KEY = {
@@ -50,7 +54,7 @@ const STATE_KEY = {
  *
  * Цвет и жирное начертание подписи статуса в монохромном терминале недоступны, поэтому признак
  * подключения обязан читаться символом. Ширина маркера одинакова у всех карточек — список не
- * разъезжается.
+ * разъезжается. Ревизия 1.10 роль маркера не меняет: переезд признака в колонку касается Desktop.
  */
 const MARKER = { connected: "● ", other: "  " } as const
 
@@ -86,7 +90,8 @@ function Status(props: { card: CorpCatalogCard; busy: boolean }) {
  * Пресеты карточки для экрана прав (S-V9), по строке таблицы на вид модели прав.
  *
  * Пустой список — модель прав отсутствует, неизвестна или не разобрана (S-V14): выбор недоступен,
- * вместо экрана показывается причина.
+ * вместо экрана показывается причина. Вид `permission_groups` (S-V20) сюда не попадает: у него свой
+ * экран, а пресеты остаются как деградация, когда словаря групп в карточке нет.
  */
 export function presetOptions(model: CorpPermissionModel | undefined) {
   if (!model) return []
@@ -109,7 +114,97 @@ export function presetOptions(model: CorpPermissionModel | undefined) {
   return Object.keys(model.presets).map((value) => ({ value, title: value }))
 }
 
-export function DialogConnectors() {
+/**
+ * Доступно ли действие на карточке (S-V6): набор действий считает сервер, клавиши витрины
+ * повторяют его — как и кнопки в Desktop/web. Правило одно на витрину и на страницу коннектора.
+ */
+function allows(card: CorpCatalogCard | undefined, action: CorpCatalogCard["actions"][number]) {
+  if (!card) return false
+  if (action === "connect") return card.actions.includes("connect") || card.actions.includes("reconnect")
+  return card.actions.includes(action)
+}
+
+/** Вкладки фильтра витрины (S-V11); умолчание — «Все», между запусками выбор не сохраняется. */
+export const TABS = ["all", "connected", "not_connected"] as const
+export type ConnectorTab = (typeof TABS)[number]
+
+const TAB_KEY = {
+  all: "connectors.tabAll",
+  connected: "connectors.tabConnected",
+  not_connected: "connectors.tabNotConnected",
+} as const
+
+/** Пустые состояния 5 и 6 (S-V12): «в этой вкладке пусто» — не «каталога нет». */
+const TAB_EMPTY_KEY = {
+  all: undefined,
+  connected: "empty.tabConnected",
+  not_connected: "empty.tabNotConnected",
+} as const
+
+/** Клавиша `f` идёт циклом «Все → Подключённые → Неподключённые → Все» (S-T10). */
+export function nextTab(tab: ConnectorTab): ConnectorTab {
+  return TABS[(TABS.indexOf(tab) + 1) % TABS.length]!
+}
+
+/**
+ * Видна ли карточка во вкладке (S-V11). «Подключённые» — состояние 4 таблицы S-V16; «Неподключённые»
+ * — все прочие, включая `needs_auth`, `unavailable` и `not_connected`: вкладка отвечает на вопрос
+ * «чем я уже могу пользоваться», а не пересказывает таблицу статусов.
+ */
+export function inTab(card: Pick<CorpCatalogCard, "state">, tab: ConnectorTab) {
+  if (tab === "all") return true
+  const connected = card.state === "connected"
+  return tab === "connected" ? connected : !connected
+}
+
+/**
+ * Поиск витрины (S-V11): подстрока без учёта регистра по `title`, `alias`, `description`, `owner` и
+ * «Типу» (S-V22). Поиск и вкладка перемножаются: строка видна, когда удовлетворяет обоим условиям.
+ */
+export function matches(card: CorpCatalogCard, query: string) {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return true
+  return [card.title, card.alias, card.description, card.owner, card.type].some(
+    (value) => typeof value === "string" && value.toLowerCase().includes(needle),
+  )
+}
+
+/**
+ * Обработчик закрытия экрана, который уводит пользователя на другой корп-экран.
+ *
+ * Два обстоятельства делают его не таким простым, как выглядит. Первое: `dialog.replace` сам зовёт
+ * обработчик закрытия того экрана, что лежит в стеке, — без флага возврат вызвал бы сам себя.
+ * Второе: обработчик `esc` считает новую длину стека **после** вызова, поэтому синхронный
+ * `dialog.replace` внутри него закрыл бы диалог целиком; переход откладывается на микрозадачу — тем
+ * же способом, каким это делает продолжение промиса в `openPermissions`.
+ *
+ * `suppress` гасит обработчик заранее: экран уходит своим ходом и возвращаться ему не нужно.
+ */
+function leaving(next: () => void) {
+  let left = false
+  return {
+    done() {
+      if (left) return
+      left = true
+      queueMicrotask(next)
+    },
+    suppress() {
+      left = true
+    },
+  }
+}
+
+/**
+ * Состояние витрины, которое обязан вернуть `esc` со страницы коннектора (S-D11, S-T10): выбранная
+ * вкладка, строка поиска и выделенная строка.
+ */
+export interface ConnectorsRestore {
+  tab: ConnectorTab
+  query: string
+  alias?: string
+}
+
+export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
   const { theme } = useTheme()
   const sdk = useSDK()
   const sync = useSync()
@@ -124,11 +219,14 @@ export function DialogConnectors() {
   /** Подпись пользователя в заголовке витрины: email, а при неизвестном email — `user_id` (S-A13). */
   const [user, setUser] = createSignal<string>()
   /**
-   * Карточка под курсором: от её состояния зависит подпись `enter` — «Повторить» в состоянии
+   * Карточка под курсором: от её состояния зависит подпись `c` — «Повторить» в состоянии
    * «Соединение потеряно» и «Подключить» в состояниях «Не подключён» и «Подключение не удалось»
    * (S-T10, S-V16). Оболочка подпись выбирает, набор действий — нет.
    */
   const [current, setCurrent] = createSignal<CorpCatalogCard>()
+  /** Вкладка фильтра и строка поиска: возврат со страницы коннектора обязан их сохранить (S-D11). */
+  const [tab, setTab] = createSignal<ConnectorTab>(props.restore?.tab ?? "all")
+  const [query, setQuery] = createSignal(props.restore?.query ?? "")
 
   async function loadUser() {
     const status = await sdk.client.corp.status().catch(() => undefined)
@@ -155,16 +253,6 @@ export function DialogConnectors() {
   async function refreshMcp() {
     const status = await sdk.client.mcp.status().catch(() => undefined)
     if (status?.data) sync.set("mcp", status.data)
-  }
-
-  /**
-   * Доступно ли действие на карточке (S-V6): набор действий считает сервер, клавиши витрины
-   * повторяют его — как и кнопки в Desktop/web.
-   */
-  function allows(card: CorpCatalogCard | undefined, action: CorpCatalogCard["actions"][number]) {
-    if (!card) return false
-    if (action === "connect") return card.actions.includes("connect") || card.actions.includes("reconnect")
-    return card.actions.includes(action)
   }
 
   async function act(card: CorpCatalogCard, action: "connect" | "disconnect" | "forget") {
@@ -207,12 +295,21 @@ export function DialogConnectors() {
       await refreshMcp()
       await load(true)
     }
+    // Свежий каталог нужен и странице коннектора: она перерисовывает свою карточку по нему (S-D11).
+    return view()
   }
 
-  async function openPermissions(card: CorpCatalogCard) {
+  async function openPermissions(card: CorpCatalogCard, back: () => void) {
     if (!allows(card, "permissions")) return
     if (card.blocked) {
       toast.show({ variant: "warning", message: t("connectors.stale") })
+      return
+    }
+    // S-V20: словарь групп — пятый вид модели прав, и у него свой экран. Деградация на прежний
+    // выбор пресетов (S-V9) действует, когда словаря в карточке нет или он не разобрался.
+    const groups = card.permission_groups
+    if (groups && groups.groups.length > 0) {
+      dialog.replace(() => <DialogPermissions card={card} />, leaving(back).done)
       return
     }
     const options = presetOptions(card.permission_model)
@@ -239,21 +336,21 @@ export function DialogConnectors() {
       )
     })
     if (preset === null) {
-      dialog.replace(() => <DialogConnectors />)
+      back()
       return
     }
     const result = await sdk.client.corp.permissions({ alias: card.alias, preset }).catch(() => undefined)
     if (result?.data?.hub_error) toast.show({ variant: "warning", message: errorText(result.data.hub_error) })
     else if (result?.data?.reauth_required) toast.show({ variant: "info", message: t("connectors.reauth") })
     await refreshMcp()
-    dialog.replace(() => <DialogConnectors />)
+    back()
   }
 
   /**
    * Подтверждение «Убрать из списка» (S-V17, S-T10): то же подтверждение, что в Desktop.
    * Действие удаляет запись из конфига и в один клик не отменяется; отмена не меняет ничего.
    */
-  async function openForget(card: CorpCatalogCard) {
+  async function openForget(card: CorpCatalogCard, back: () => void) {
     if (!allows(card, "forget")) return
     const confirmed = await new Promise<boolean>((resolve) => {
       dialog.replace(
@@ -271,11 +368,12 @@ export function DialogConnectors() {
       )
     })
     if (!confirmed) {
-      dialog.replace(() => <DialogConnectors />)
+      back()
       return
     }
     await act(card, "forget")
-    dialog.replace(() => <DialogConnectors />)
+    // Записи больше нет — возвращаться на страницу удалённого коннектора некуда (S-V17).
+    backToList()
   }
 
   async function openHub(card: CorpCatalogCard) {
@@ -286,19 +384,75 @@ export function DialogConnectors() {
     })
   }
 
+  /** Возврат на витрину с сохранённой вкладкой, строкой поиска и выделенной строкой (S-D11, S-T10). */
+  function backToList(alias?: string) {
+    const restore: ConnectorsRestore = {
+      tab: tab(),
+      query: query(),
+      ...(alias === undefined ? {} : { alias }),
+    }
+    dialog.replace(() => <DialogConnectors restore={restore} />)
+  }
+
+  /**
+   * Страница коннектора (S-D11) — `dialog.replace` вместо стека: стека диалогов в терминале нет
+   * (S-T10). `esc` закрывает страницу и возвращает витрину тем же состоянием, из которого ушли.
+   */
+  function openConnector(card: CorpCatalogCard) {
+    const exit = leaving(() => backToList(card.alias))
+    dialog.replace(
+      () => (
+        <DialogConnector
+          card={card}
+          onBack={exit.done}
+          onLeave={exit.suppress}
+          act={act}
+          forget={openForget}
+          permissions={openPermissions}
+          openHub={openHub}
+          open={openConnector}
+        />
+      ),
+      exit.done,
+    )
+  }
+
   const options = createMemo<DialogSelectOption<CorpCatalogCard>[]>(() => {
     const data = view()
     if (!data) return []
     const active = busy()
-    // Порядок карточек и групп — как в каталоге Hub (S-V11, I-1 R-A3).
-    return data.servers.map((card) => ({
-      // S-T10: маркер в начале строки читается и в монохромном терминале, где цвет недоступен.
-      title: `${card.state === "connected" ? MARKER.connected : MARKER.other}${card.title}`,
-      value: card,
-      description: [card.description, card.owner].filter(Boolean).join(" · ") || undefined,
-      category: card.owner || undefined,
-      footer: <Status card={card} busy={active === card.alias} />,
-    }))
+    const filter = tab()
+    const needle = query()
+    // Порядок карточек — как в каталоге Hub (S-V11, I-1 R-A3); группировки по владельцу нет.
+    return data.servers
+      .filter((card) => inTab(card, filter) && matches(card, needle))
+      .map((card) => {
+        const type = connectorType(card)
+        return {
+          // S-T10: маркер в начале строки читается и в монохромном терминале, где цвет недоступен.
+          title: `${card.state === "connected" ? MARKER.connected : MARKER.other}${card.title}`,
+          value: card,
+          // S-V22: «Тип» — в подписи строки; отдельной колонки в терминале нет (S-T10).
+          ...(type === undefined ? {} : { description: type }),
+          footer: <Status card={card} busy={active === card.alias} />,
+        }
+      })
+  })
+
+  /**
+   * Возврат со страницы коннектора обязан вернуть и выделенную строку (S-D11). Выделение ставится
+   * по alias: карточка после действия — уже другой объект.
+   */
+  let selectRef: DialogSelectRef<CorpCatalogCard> | undefined
+  let restored = props.restore?.alias === undefined
+  createEffect(() => {
+    const list = options()
+    if (restored) return
+    const target = list.find((option) => option.value.alias === props.restore?.alias)
+    if (!target) return
+    restored = true
+    const value = target.value
+    setTimeout(() => selectRef?.moveTo(value), 0)
   })
 
   const banner = createMemo(() => {
@@ -310,13 +464,40 @@ export function DialogConnectors() {
     return `${t("connectors.hubDownCached")} ${new Date(data.cached_at).toLocaleString()}`
   })
 
+  /** Предупреждение о числе отброшенных карточек и выброшенных групп (S-V14 п.5, S-V20). */
+  const partial = createMemo(() => {
+    const dropped = view()?.dropped?.length ?? 0
+    if (dropped === 0) return undefined
+    if ((view()?.servers.length ?? 0) === 0) return undefined
+    return format("connectors.partial", { dropped })
+  })
+
+  /**
+   * Шесть пустых состояний витрины (S-V12). Первые четыре — про каталог целиком, пятое и шестое —
+   * про вкладку: «в этой вкладке пусто» не то же самое, что «каталога нет», и действие у них другое.
+   */
   const empty = createMemo(() => {
     const data = view()
     if (loading() || !data) return undefined
-    if (data.servers.length > 0) return undefined
     if (data.hub_error === "unauthorized") return t("connectors.needsLogin")
-    if (data.hub_error) return `${t("connectors.hubDown")} (${errorText(data.hub_error)})`
-    return t("connectors.empty")
+    if (data.servers.length === 0) {
+      if (data.hub_error) return `${t("connectors.hubDown")} (${errorText(data.hub_error)})`
+      const dropped = data.dropped?.length ?? 0
+      if (dropped > 0) return format("empty.unparsed", { dropped })
+      return t("connectors.empty")
+    }
+    const key = TAB_EMPTY_KEY[tab()]
+    // Вкладка «Все»: пусто может быть только из-за поиска — своего состояния у этого случая нет.
+    if (!key) return undefined
+    return `${t(key)} · ${t("connectors.resetFilter")}`
+  })
+
+  /** Вкладки видны всегда, когда показан список; при «Hub недоступен» и «Требуется вход» — нет. */
+  const tabsVisible = createMemo(() => {
+    const data = view()
+    if (!data) return false
+    if (data.hub_error === "unauthorized") return false
+    return data.servers.length > 0
   })
 
   onMount(() => {
@@ -336,13 +517,23 @@ export function DialogConnectors() {
   return (
     <DialogSelect
       title={t("connectors.title")}
-      placeholder={t("connectors.search")}
+      placeholder={query() || t("connectors.search")}
+      ref={(value) => (selectRef = value)}
+      onFilter={setQuery}
+      skipFilter={true}
       titleView={
-        <box flexDirection="row" justifyContent="space-between">
-          <text attributes={TextAttributes.BOLD} fg={theme.text}>
-            {t("connectors.title")}
-          </text>
+        <box flexDirection="row" justifyContent="space-between" flexGrow={1}>
           <box flexDirection="row" gap={2}>
+            <text attributes={TextAttributes.BOLD} fg={theme.text}>
+              {t("connectors.title")}
+            </text>
+            {/* S-V11: текущая вкладка видна в подписи списка — «таблеток» в терминале нет. */}
+            <Show when={tabsVisible()}>
+              <text fg={theme.accent}>{t(TAB_KEY[tab()])}</text>
+            </Show>
+          </box>
+          <box flexDirection="row" gap={2}>
+            <Show when={partial()}>{(value) => <text fg={theme.warning}>{value()}</text>}</Show>
             <Show when={banner()}>{(value) => <text fg={theme.warning}>{value()}</text>}</Show>
             {/* AC-131: пользователь в заголовке — email, а при неизвестном email — `user_id`. */}
             <Show when={user()}>{(value) => <text fg={theme.textMuted}>{value()}</text>}</Show>
@@ -352,9 +543,7 @@ export function DialogConnectors() {
       emptyView={<text fg={theme.textMuted}>{empty() ?? ""}</text>}
       options={options()}
       onMove={(option) => setCurrent(option.value)}
-      onSelect={() => {
-        // Закрываем только по esc; действия — по клавишам ниже (как в dialog-mcp).
-      }}
+      onSelect={(option) => openConnector(option.value)}
       actions={[
         {
           command: "dialog.corp.connect",
@@ -373,13 +562,13 @@ export function DialogConnectors() {
           command: "dialog.corp.forget",
           title: t("connectors.forget"),
           disabled: (option) => !allows(option?.value, "forget"),
-          onTrigger: (option) => void openForget(option.value),
+          onTrigger: (option) => void openForget(option.value, () => backToList(option.value.alias)),
         },
         {
           command: "dialog.corp.permissions",
           title: t("connectors.permissions"),
           disabled: (option) => !allows(option?.value, "permissions"),
-          onTrigger: (option) => void openPermissions(option.value),
+          onTrigger: (option) => void openPermissions(option.value, () => backToList(option.value.alias)),
         },
         {
           command: "dialog.corp.open_hub",
@@ -387,6 +576,14 @@ export function DialogConnectors() {
           side: "right",
           disabled: (option) => !allows(option?.value, "open_hub") || !option?.value.hub_url,
           onTrigger: (option) => void openHub(option.value),
+        },
+        {
+          // S-V11: одна клавиша на все три вкладки; подпись называет ту, куда переключит нажатие.
+          command: "dialog.corp.filter",
+          title: t(TAB_KEY[nextTab(tab())]),
+          side: "right",
+          hidden: !tabsVisible(),
+          onTrigger: () => setTab(nextTab(tab())),
         },
         {
           command: "dialog.corp.refresh",
@@ -400,6 +597,171 @@ export function DialogConnectors() {
           side: "right",
           hidden: view()?.hub_error !== "unauthorized",
           onTrigger: () => dialog.replace(() => <DialogCorpLogin />),
+        },
+      ]}
+    />
+  )
+}
+
+/** Строка страницы коннектора: действие карточки либо возврат на витрину. */
+type ConnectorRow = "connect" | "permissions" | "disconnect" | "open_hub" | "forget" | "back"
+
+export interface DialogConnectorProps {
+  card: CorpCatalogCard
+  /** `esc` и строка «Назад»: закрыть страницу и вернуть витрину (S-D11). */
+  onBack: () => void
+  /**
+   * Уход со страницы своим ходом. Страница живёт в стеке с обработчиком закрытия, и любой её
+   * собственный `dialog.replace` этот обработчик разбудил бы — предупреждаем его заранее.
+   */
+  onLeave: () => void
+  act: (
+    card: CorpCatalogCard,
+    action: "connect" | "disconnect" | "forget",
+  ) => Promise<CorpCatalogView | undefined>
+  forget: (card: CorpCatalogCard, back: () => void) => Promise<void>
+  permissions: (card: CorpCatalogCard, back: () => void) => Promise<void>
+  openHub: (card: CorpCatalogCard) => Promise<void>
+  open: (card: CorpCatalogCard) => void
+}
+
+/**
+ * Страница коннектора (S-D11, S-T10).
+ *
+ * Состав сверху вниз: заголовок с названием и бейджем «устаревший», описание карточки, свойства
+ * «Тип» / «Владелец» / ссылка на документацию (отсутствующее поле строки не рисует), блок статуса с
+ * объяснением ошибки по её классу (S-V19) и список действий по `card.actions` — тот же набор, что
+ * на витрине, и та же семантика клавиш `c`/`d`/`x`/`p`/`o`.
+ */
+export function DialogConnector(props: DialogConnectorProps) {
+  const { theme } = useTheme()
+  const dialog = useDialog()
+
+  const [card, setCard] = createSignal<CorpCatalogCard>(props.card)
+  const [busy, setBusy] = createSignal(false)
+
+  onMount(() => dialog.setSize("large"))
+
+  /** Действие карточки: набор берётся из общего модуля, страница его не пересчитывает (S-T10). */
+  async function run(action: "connect" | "disconnect") {
+    if (busy()) return
+    setBusy(true)
+    const fresh = await props.act(card(), action)
+    setBusy(false)
+    const next = fresh?.servers.find((item) => item.alias === card().alias)
+    if (next) setCard(next)
+  }
+
+  function select(row: ConnectorRow) {
+    const value = card()
+    if (row === "back") return props.onBack()
+    if (row === "open_hub") return void props.openHub(value)
+    if (row === "permissions") {
+      props.onLeave()
+      return void props.permissions(value, () => props.open(value))
+    }
+    if (row === "forget") {
+      props.onLeave()
+      return void props.forget(value, () => props.open(value))
+    }
+    return void run(row)
+  }
+
+  const rows = createMemo<DialogSelectOption<ConnectorRow>[]>(() => {
+    const value = card()
+    const list: DialogSelectOption<ConnectorRow>[] = []
+    if (allows(value, "connect"))
+      list.push({
+        title: value.actions.includes("reconnect") ? t("connectors.retry") : t("connectors.connect"),
+        value: "connect",
+      })
+    // S-D11: блок «Разрешения» — на странице, а не в строке витрины.
+    if (allows(value, "permissions")) list.push({ title: t("permissions.title"), value: "permissions" })
+    if (allows(value, "disconnect")) list.push({ title: t("connectors.disconnect"), value: "disconnect" })
+    if (allows(value, "open_hub") && value.hub_url)
+      list.push({ title: t("connectors.openHub"), value: "open_hub", description: value.hub_url })
+    // S-V17: «Убрать из списка» — со своим подтверждением, правило не изменено.
+    if (allows(value, "forget")) list.push({ title: t("connectors.forget"), value: "forget" })
+    list.push({ title: t("connector.back"), value: "back" })
+    return list
+  })
+
+  return (
+    <DialogSelect
+      title={props.card.title}
+      renderFilter={false}
+      skipFilter={true}
+      locked={busy()}
+      titleView={
+        <Show when={card()} keyed>
+          {(value) => (
+            <box flexDirection="column" flexGrow={1}>
+              <box flexDirection="row" gap={2}>
+                {/* S-I6: название, описание, «Тип» и владелец — данные каталога, как есть. */}
+                <text attributes={TextAttributes.BOLD} fg={theme.text}>
+                  {value.title}
+                </text>
+                <Show when={value.deprecated}>
+                  <text fg={theme.warning}>{t("connectors.deprecated")}</text>
+                </Show>
+              </box>
+              <Show when={value.description}>
+                {(description) => <text fg={theme.textMuted}>{description()}</text>}
+              </Show>
+              <Show when={connectorType(value)}>
+                {(type) => <text fg={theme.textMuted}>{`${t("connector.type")}: ${type()}`}</text>}
+              </Show>
+              <Show when={value.owner}>
+                {(owner) => <text fg={theme.textMuted}>{`${t("connector.owner")}: ${owner()}`}</text>}
+              </Show>
+              <Show when={value.docs_url}>
+                {(docs) => <text fg={theme.textMuted}>{`${t("connector.docs")}: ${docs()}`}</text>}
+              </Show>
+              {/* S-V19: место показа объяснения ошибки — блок страницы, само правило не изменено. */}
+              <text>
+                <Status card={value} busy={false} />
+              </text>
+              <Show when={busy()}>
+                <text fg={theme.textMuted}>{t("connectors.authorizing")}</text>
+              </Show>
+            </box>
+          )}
+        </Show>
+      }
+      options={rows()}
+      onSelect={(option) => select(option.value)}
+      footerHints={[{ title: t("connector.back"), label: "esc" }]}
+      actions={[
+        {
+          command: "dialog.corp.connect",
+          title: card().actions.includes("reconnect") ? t("connectors.retry") : t("connectors.connect"),
+          disabled: () => !allows(card(), "connect"),
+          onTrigger: () => void run("connect"),
+        },
+        {
+          command: "dialog.corp.disconnect",
+          title: t("connectors.disconnect"),
+          disabled: () => !allows(card(), "disconnect"),
+          onTrigger: () => void run("disconnect"),
+        },
+        {
+          command: "dialog.corp.forget",
+          title: t("connectors.forget"),
+          disabled: () => !allows(card(), "forget"),
+          onTrigger: () => select("forget"),
+        },
+        {
+          command: "dialog.corp.permissions",
+          title: t("connectors.permissions"),
+          disabled: () => !allows(card(), "permissions"),
+          onTrigger: () => select("permissions"),
+        },
+        {
+          command: "dialog.corp.open_hub",
+          title: t("connectors.openHub"),
+          side: "right",
+          disabled: () => !allows(card(), "open_hub") || !card().hub_url,
+          onTrigger: () => select("open_hub"),
         },
       ]}
     />

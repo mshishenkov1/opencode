@@ -55,6 +55,58 @@ describe("corp/build.ts — версия (AC-100)", () => {
   }, 60_000)
 })
 
+/**
+ * Автотег после мержа upstream (S-B16).
+ *
+ * `--print-version` — единственный источник имени тега для `corp-release.yml`: версию тега печатает
+ * тот же код, который проставит её артефактам, поэтому разойтись они не могут. Здесь проверяется
+ * контракт вывода (ровно одна строка, ничего не собирается) и стык двух workflow: сообщение,
+ * которым `upstream-sync.yml` коммитит мерж, обязано попадать под условие запуска `corp-release.yml`.
+ */
+describe("corp/build.ts — --print-version и автотег (S-B16)", () => {
+  test("--print-version печатает ровно версию сборки и выходит с кодом 0", async () => {
+    const result = await build(["--print-version"], { CORP_BUILD: "7" })
+    expect(result.code).toBe(0)
+    expect(result.out.trim()).toBe(`${upstreamVersion}-magnit.7`)
+  }, 60_000)
+
+  test("--print-version ничего не собирает и не требует переменных окружения", async () => {
+    const result = await build(["--print-version"])
+    expect(result.code).toBe(0)
+    // Ни предупреждения о ванильной сборке, ни шагов сборки: печать идёт до разбора настроек.
+    expect(result.out).not.toContain("ванильная сборка")
+    expect(result.out).not.toContain("сборка CLI")
+    expect(result.out).not.toContain("канал сборки")
+  }, 60_000)
+
+  test("--print-version не отвергается вместе с неизвестным каналом: тег считается без настроек", async () => {
+    const result = await build(["--print-version", "--channel", "stable"])
+    expect(result.code).toBe(0)
+    expect(result.out.trim()).toBe(`${upstreamVersion}-magnit.${fs.readFileSync(path.join(ROOT, "corp/version"), "utf8").trim()}`)
+  }, 60_000)
+
+  test("S-B16: corp-release.yml берёт версию тега из --print-version, а не набирает её сам", () => {
+    const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/corp-release.yml"), "utf8")
+    expect(workflow).toContain("corp/build.ts --print-version")
+    // Номер сборки пишется в corp/version — единственный источник N для corpVersion().
+    expect(workflow).toContain("corp/version")
+    // Идемпотентность: уже помеченный коммит завершает задание успехом.
+    expect(workflow).toContain("--points-at HEAD")
+  })
+
+  test("S-B16: условие автотега совпадает с сообщением мержа, которым коммитит upstream-sync.yml", () => {
+    const release = fs.readFileSync(path.join(ROOT, ".github/workflows/corp-release.yml"), "utf8")
+    const sync = fs.readFileSync(path.join(ROOT, ".github/workflows/upstream-sync.yml"), "utf8")
+    // Сообщение мержа задаётся в upstream-sync.yml: git merge --no-ff "$TAG" -m "corp: слить upstream $TAG"
+    const message = /-m "([^"$]+)\$TAG"/.exec(sync)?.[1]
+    expect(message).toBe("corp: слить upstream ")
+    expect(release).toContain(`startsWith(github.event.head_commit.message, '${message}')`)
+    // Коммит самого автотега под это условие не подходит — цикла запусков нет.
+    expect(release).toContain('git commit -m "corp: версия сборки')
+    expect("corp: версия сборки 2".startsWith(message!)).toBe(false)
+  })
+})
+
 describe("corp/build.ts — адрес Hub (AC-101, AC-102)", () => {
   test("AC-102: без CORP_HUB_URL печатается предупреждение о ванильной сборке, код выхода 0", async () => {
     const result = await build(["--skip-cli"])

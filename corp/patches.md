@@ -55,4 +55,9 @@
 `packages/opencode/src/server/routes/instance/httpapi/{groups,handlers}/corp.ts`,
 `packages/tui/src/corp/**`, `packages/tui/src/component/corp/**`, `packages/app/src/corp/**`,
 `packages/app/src/components/corp/**`, `packages/app/src/context/corp.ts`,
-`.github/workflows/corp-ci.yml`.
+`.github/workflows/corp-ci.yml`, `.github/workflows/corp-release.yml`,
+`.github/workflows/upstream-sync.yml`.
+
+Ревизия 1.10 (S-B16): цепочка релиза целиком собрана из корп-файлов — автотег
+(`corp-release.yml`), сбор фида и публикация (`corp/build.ts`, `corp/verify-desktop-bundle.ts`,
+`corp-ci.yml`). Правок upstream-файлов в ней нет, поэтому новых строк в таблице выше не появилось.

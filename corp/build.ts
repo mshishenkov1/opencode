@@ -89,6 +89,19 @@ export function distName(target: CliTarget) {
 }
 
 const version = corpVersion()
+
+/**
+ * `--print-version` — версия корп-сборки одной строкой, без сборки и без побочных действий (S-B16).
+ *
+ * Читатель — автотег `.github/workflows/corp-release.yml`: он подставляет напечатанное значение в
+ * `v<версия>`. Печать идёт ДО разбора канала и адресов, чтобы вычисление тега не зависело от
+ * настроек раздачи: тег обязан считаться и в чистом клоне без единой переменной окружения.
+ */
+if (flag("print-version")) {
+  console.log(version)
+  process.exit(0)
+}
+
 // Адрес Hub нормализуется здесь же, как в script/build.ts: хвостовой `/` ломает сравнение адресов.
 const hubUrl = process.env["CORP_HUB_URL"]?.trim().replace(/\/+$/, "")
 /**

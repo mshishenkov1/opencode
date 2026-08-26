@@ -89,7 +89,7 @@ jobs:
             --base "$CORP_BRANCH" \
             --head "sync/$TAG" \
             --title "corp: синхронизация с upstream $TAG" \
-            --body "$(printf 'Автоматический мерж upstream **%s** в `%s`.\n\nМерж чистый — конфликтов нет. Корп-CI прогонит проверки на этом PR; зелёный прогон = можно сливать.\n\n🤖 Создано workflow `upstream-sync`.' "$TAG" "$CORP_BRANCH")"
+            --body "$(printf 'Автоматический мерж upstream **%s** в `%s`.\n\nМерж чистый — конфликтов нет. Корп-CI прогонит проверки на этом PR; зелёный прогон = можно сливать.\n\nПосле мержа workflow `corp-release` сам поставит тег `v<версия upstream>-magnit.<N>` (смена версии upstream сбрасывает N в 1) — тег включает сборку и публикацию в `corp-ci`.\n\n🤖 Создано workflow `upstream-sync`.' "$TAG" "$CORP_BRANCH")"
 
       - name: Открыть issue (конфликты)
         if: steps.need.outputs.needed == 'true' && steps.merge.outputs.clean == 'false'

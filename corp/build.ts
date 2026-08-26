@@ -264,7 +264,11 @@ if (flag("desktop")) {
   for (const dir of [path.join(desktop, "dist"), path.join(desktop, "release")]) {
     if (!fs.existsSync(dir)) continue
     for (const entry of fs.readdirSync(dir)) {
-      if (!/\.(dmg|zip|exe|msi|blockmap)$/.test(entry)) continue
+      // `yml` — фид апдейтера (`magnit-mac.yml`), который electron-builder кладёт рядом с
+      // архивами (S-B11, S-B16). Без него в списке артефактов апдейтеру не по чему сравнивать
+      // версии: бандл собирался с адресом фида, а сам фид оставался на раннере и пропадал вместе
+      // с ним — обновление не докатывалось ни разу.
+      if (!/\.(dmg|zip|exe|msi|blockmap|yml)$/.test(entry)) continue
       artifacts.push({ name: entry, file: path.join(dir, entry) })
     }
   }

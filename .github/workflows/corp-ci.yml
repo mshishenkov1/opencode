@@ -191,6 +191,7 @@ jobs:
             packages/desktop/dist/*.zip
             packages/desktop/dist/*.exe
             packages/desktop/dist/*.blockmap
+            packages/desktop/dist/*.yml
           if-no-files-found: error
 
   release:

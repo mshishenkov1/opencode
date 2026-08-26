@@ -166,7 +166,7 @@ export const DialogCorpLogin: Component = () => {
             {(team) => (
               <div class="w-full flex items-center justify-between gap-x-3">
                 <span class="truncate">{team.team_alias}</span>
-                <span class="text-11-regular text-text-weaker">{team.team_id}</span>
+                <span class="text-12-regular text-text-weak">{team.team_id}</span>
               </div>
             )}
           </List>
@@ -184,13 +184,13 @@ export const DialogCorpLogin: Component = () => {
               <div class="flex flex-col gap-3">
                 <Show when={value().code}>
                   <div class="flex flex-col gap-1">
-                    <div class="text-11-regular text-text-weaker">{language.t("corp.login.code")}</div>
-                    <div class="text-24-medium text-text-strong tracking-widest">{value().code}</div>
+                    <div class="text-12-regular text-text-weak">{language.t("corp.login.code")}</div>
+                    <div class="text-20-medium text-text-strong tracking-widest">{value().code}</div>
                   </div>
                 </Show>
                 <Show when={value().url}>
                   <div class="flex flex-col gap-1">
-                    <div class="text-11-regular text-text-weaker">{language.t("corp.login.open")}</div>
+                    <div class="text-12-regular text-text-weak">{language.t("corp.login.open")}</div>
                     <a class="text-14-regular text-text-strong underline break-all" href={value().url} target="_blank">
                       {value().url}
                     </a>
@@ -215,7 +215,7 @@ export const DialogCorpLogin: Component = () => {
             {(value) => (
               <div class="flex flex-col gap-3">
                 <div class="text-14-regular text-text-strong">{language.t(corpErrorKey(value().code))}</div>
-                <div class="text-11-regular text-text-weaker">{value().code}</div>
+                <div class="text-12-regular text-text-weak">{value().code}</div>
                 <div class="flex items-center gap-2">
                   <Button size="large" onClick={() => void start()}>
                     {language.t("corp.login.retry")}

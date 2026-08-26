@@ -99,11 +99,11 @@ const DialogConnectorPermissions: Component<{ card: CorpCatalogCard }> = (props)
     <Dialog title={language.t("corp.connectors.presetTitle", { title: props.card.title })}>
       <div class="px-3 pb-3 flex flex-col gap-4">
         <Show when={unavailable()}>
-          <div class="text-11-regular text-text-weaker">{language.t("corp.connectors.permissionsUnavailable")}</div>
+          <div class="text-12-regular text-text-weak">{language.t("corp.connectors.permissionsUnavailable")}</div>
         </Show>
         <Show when={tools().length > 0}>
           <div class="flex flex-col gap-1">
-            <div class="text-11-regular text-text-weaker">
+            <div class="text-12-regular text-text-weak">
               {language.t("corp.connectors.toolsPreview", { preset: selected() ?? "" })}
             </div>
             <div class="text-14-regular text-text-base break-all">{tools().join(", ")}</div>
@@ -115,7 +115,7 @@ const DialogConnectorPermissions: Component<{ card: CorpCatalogCard }> = (props)
               <div class="flex items-center justify-between gap-x-3">
                 <span class="text-14-regular text-text-base">{group.title}</span>
                 <Show when={group.preset}>
-                  <span class="text-11-regular text-text-weaker">{group.preset}</span>
+                  <span class="text-12-regular text-text-weak">{group.preset}</span>
                 </Show>
               </div>
             ))}
@@ -123,7 +123,7 @@ const DialogConnectorPermissions: Component<{ card: CorpCatalogCard }> = (props)
         </Show>
         <Show when={always().length > 0}>
           <div class="flex flex-col gap-1">
-            <div class="text-11-regular text-text-weaker">{language.t("corp.connectors.always")}</div>
+            <div class="text-12-regular text-text-weak">{language.t("corp.connectors.always")}</div>
             <div class="text-14-regular text-text-base break-all">{always().join(", ")}</div>
           </div>
         </Show>
@@ -272,7 +272,7 @@ export const DialogConnectors: Component = () => {
       action={
         <div class="flex items-center gap-2">
           {/* AC-131: пользователь в заголовке — email, а при неизвестном email — `user_id`. */}
-          <Show when={user()}>{(value) => <span class="text-11-regular text-text-weaker">{value()}</span>}</Show>
+          <Show when={user()}>{(value) => <span class="text-12-regular text-text-weak">{value()}</span>}</Show>
           <Show when={needsLogin()}>
             <Button size="small" onClick={() => void openLogin()}>
               {language.t("corp.connectors.login")}
@@ -284,8 +284,8 @@ export const DialogConnectors: Component = () => {
         </div>
       }
     >
-      <Show when={banner()}>{(value) => <div class="px-3 pb-2 text-11-regular text-text-weaker">{value()}</div>}</Show>
-      <Show when={partial()}>{(value) => <div class="px-3 pb-2 text-11-regular text-text-weaker">{value()}</div>}</Show>
+      <Show when={banner()}>{(value) => <div class="px-3 pb-2 text-12-regular text-text-weak">{value()}</div>}</Show>
+      <Show when={partial()}>{(value) => <div class="px-3 pb-2 text-12-regular text-text-weak">{value()}</div>}</Show>
       <List
         class="px-3"
         search={{ placeholder: language.t("corp.connectors.search"), autofocus: true }}
@@ -313,22 +313,22 @@ export const DialogConnectors: Component = () => {
                   <Tag class="corp-tag-connected">{language.t("corp.connectors.connected")}</Tag>
                 </Show>
                 {/* Подпись статуса сохраняется — бейдж её дополняет, а не заменяет (S-V18). */}
-                <span class="text-11-regular text-text-weaker">{language.t(STATUS_KEY[card.status])}</span>
+                <span class="text-12-regular text-text-weak">{language.t(STATUS_KEY[card.status])}</span>
                 <Show when={STATE_KEY[card.state]}>
-                  {(key) => <span class="text-11-regular text-text-weaker">{language.t(key())}</span>}
+                  {(key) => <span class="text-12-regular text-text-weak">{language.t(key())}</span>}
                 </Show>
                 <Show when={card.deprecated}>
                   <Tag>{language.t("corp.connectors.deprecated")}</Tag>
                 </Show>
                 <Show when={card.preset}>
-                  <span class="text-11-regular text-text-weaker">{card.preset}</span>
+                  <span class="text-12-regular text-text-weak">{card.preset}</span>
                 </Show>
               </div>
               {/* S-V19: ошибка подключения не остаётся голым кодом — рядом объяснение своего класса.
                   Предлагаемое действие показывается тем же элементом, которым оно выполняется
                   («Повторить»/«Подключить» и «Открыть в Hub»), отдельной кнопкой-советом — нет. */}
               <Show when={explain(card) || card.description}>
-                <span class="text-11-regular text-text-weaker truncate">{explain(card) ?? card.description}</span>
+                <span class="text-12-regular text-text-weak truncate">{explain(card) ?? card.description}</span>
               </Show>
             </div>
             <div class="flex items-center gap-1 shrink-0" onClick={(event) => event.stopPropagation()}>
@@ -353,7 +353,7 @@ export const DialogConnectors: Component = () => {
                 {/* S-V9, строка 4: вид модели прав неизвестен или не разобран — действие видно,
                     но заблокировано, а рядом показана причина. Остальные действия работают. */}
                 <Show when={!card.permission_model}>
-                  <span class="text-11-regular text-text-weaker truncate max-w-64">
+                  <span class="text-12-regular text-text-weak truncate max-w-64">
                     {language.t("corp.connectors.permissionsUnavailable")}
                   </span>
                 </Show>
@@ -393,7 +393,7 @@ export const DialogConnectors: Component = () => {
               </Show>
               <Show when={card.actions.includes("open_hub") && card.hub_url}>
                 <a
-                  class="text-11-regular text-text-weaker underline whitespace-nowrap"
+                  class="text-12-regular text-text-weak underline whitespace-nowrap"
                   href={card.hub_url}
                   target="_blank"
                   rel="noreferrer"

@@ -1,6 +1,9 @@
 import type { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import type { ConfigMCPV1 } from "@opencode-ai/core/v1/config/mcp"
-import type * as CorpSchema from "./schema"
+import type { ConfigPermissionV1 } from "@opencode-ai/core/v1/config/permission"
+import { McpCatalog } from "@/mcp/catalog"
+import { Permission } from "@/permission"
+import * as CorpSchema from "./schema"
 import { DEFAULT_PRESET, oauthScope } from "./status"
 
 /**
@@ -69,6 +72,145 @@ export function needsReauth(previous: string | undefined, next: string, hubStatu
   if (hubStatus === "needs_reauth") return true
   if (previous === undefined) return false
   return previous !== next
+}
+
+// --- S-V21: применение разрешений по группам (ревизия 1.10) ---
+
+/**
+ * Ключ раздела `permission`, соответствующий инструменту `tool` коннектора `alias` (S-V21).
+ *
+ * Та же функция, которой именуются инструменты MCP (`McpCatalog.sanitize`, F48, F19), и та же
+ * склейка через `_`, что в `MCP.tools`: иначе записанное правило не совпало бы с именем, по которому
+ * инструмент спрашивает разрешение. Дефис в alias `sanitize` сохраняет (D-8).
+ */
+export function permissionKey(alias: string, tool: string) {
+  return McpCatalog.sanitize(alias) + "_" + McpCatalog.sanitize(tool)
+}
+
+/**
+ * Ключ-wildcard блока alias (S-V21): им накрыты инструменты вне групп — в том числе появившиеся у
+ * сервера после публикации словаря. `*` не пропускается через `sanitize`: это шаблон, а не имя.
+ */
+export function permissionWildcardKey(alias: string) {
+  return McpCatalog.sanitize(alias) + "_*"
+}
+
+/** Префикс блока alias: по нему и только по нему опознаётся «своё» в разделе `permission` (S-V21). */
+export function permissionPrefix(alias: string) {
+  return McpCatalog.sanitize(alias) + "_"
+}
+
+export interface PermissionGroupsDecision {
+  /** Разобранный словарь групп карточки (S-V20): он задаёт и состав ключей, и их порядок. */
+  groups: CorpSchema.PermissionGroups
+  /**
+   * Выбранные режимы по `id` группы; ключ `rest` — режим группы «Остальное». Группа, которой в
+   * решении нет, сохраняет `default` каталога.
+   */
+  modes: Record<string, CorpSchema.PermissionMode>
+  /**
+   * Ключи раздела `permission` действующего конфига. Из них удаляются принадлежащие alias — знать,
+   * что именно там лежало, иначе неоткуда: `patchJsonc` удаляет по имени ключа, а не по шаблону.
+   */
+  existing: readonly string[]
+}
+
+export interface PermissionGroupsPatch {
+  /**
+   * Вызов 1 (S-V21): все ключи `^<sanitize(alias)>_` гасятся значением `undefined` — тем же
+   * способом, что `forgetPatch` удаляет `mcp.<alias>` (F21). Без этого шага в конфиге остались бы
+   * ключи снятых инструментов, а порядок блока зависел бы от истории правок.
+   */
+  clear: ConfigV1.Info
+  /**
+   * Вызов 2 (S-V21): блок пишется целиком, **wildcard первым**. `Permission.evaluate` берёт
+   * последнее совпавшее правило (`findLast`, F47), поэтому обратный порядок молча отменил бы все
+   * явные правила. Порядок ключей — часть контракта записи (D-36).
+   */
+  write: ConfigV1.Info
+  /** Ключи блока в порядке записи: первый — wildcard. Порядок здесь и есть результат правила. */
+  keys: string[]
+}
+
+/**
+ * Патчи детерминированной перезаписи блока alias (S-V21).
+ *
+ * Возвращаются **два** патча, а не один: сохранение выполняется двумя вызовами `Config.updateGlobal`
+ * в этом порядке. Инкрементальная правка отдельных ключей запрещена спецификацией.
+ *
+ * Инструмент, попавший сразу в две группы, получает один ключ — по первой группе в порядке каталога:
+ * повторная запись того же ключа сдвинула бы значение, но не позицию, и порядок перестал бы читаться
+ * из словаря.
+ */
+export function permissionGroupsPatch(alias: string, input: PermissionGroupsDecision): PermissionGroupsPatch {
+  const prefix = permissionPrefix(alias)
+  const clear: Record<string, undefined> = {}
+  for (const key of input.existing) if (key.startsWith(prefix)) clear[key] = undefined
+
+  const restMode = input.modes[CorpSchema.REST_GROUP_ID] ?? input.groups.rest?.default ?? CorpSchema.REST_DEFAULT_MODE
+  // Первым — wildcard: режим `rest` для всего, что не названо явно ниже (S-V21, ПРАВИЛО ПОРЯДКА).
+  const write: Record<string, CorpSchema.PermissionMode> = { [permissionWildcardKey(alias)]: restMode }
+  for (const group of input.groups.groups) {
+    const mode = input.modes[group.id] ?? group.default ?? CorpSchema.REST_DEFAULT_MODE
+    for (const tool of group.tools) {
+      const key = permissionKey(alias, tool)
+      if (key in write) continue
+      write[key] = mode
+    }
+  }
+
+  return {
+    clear: { permission: clear } as unknown as ConfigV1.Info,
+    write: { permission: write } as unknown as ConfigV1.Info,
+    keys: Object.keys(write),
+  }
+}
+
+/**
+ * Свёртка действующих режимов групп (S-V23).
+ *
+ * Режим одного инструмента — результат `Permission.evaluate` по **действующему** конфигу для ключа
+ * `<sanitize(alias)>_<sanitize(tool)>`, а не чтение ключа: правило-wildcard и вышележащие слои
+ * конфига обязаны учитываться. Шаблон запроса — `"*"`, как у любого MCP-инструмента (`Session.tools`).
+ *
+ * Все инструменты группы в одном режиме → этот режим, иначе `mixed`. Ключ `rest` есть всегда и
+ * считается по wildcard: пустой группы не бывает, поэтому `mixed` не может означать «пусто».
+ */
+export function permissionState(
+  alias: string,
+  groups: CorpSchema.PermissionGroups,
+  permission: ConfigPermissionV1.Info | undefined,
+): CorpSchema.PermissionState {
+  const ruleset = Permission.fromConfig(permission ?? {})
+  const modeOf = (key: string) => Permission.evaluate(key, "*", ruleset).action
+
+  const state: Record<string, CorpSchema.PermissionStateMode> = {}
+  for (const group of groups.groups) {
+    let folded: CorpSchema.PermissionStateMode | undefined
+    for (const tool of group.tools) {
+      const mode = modeOf(permissionKey(alias, tool))
+      if (folded === undefined) folded = mode
+      else if (folded !== mode) {
+        folded = "mixed"
+        break
+      }
+    }
+    state[group.id] = folded ?? "mixed"
+  }
+  state[CorpSchema.REST_GROUP_ID] = modeOf(permissionWildcardKey(alias))
+  return state
+}
+
+/**
+ * Значение колонки «Тип» (S-V22): `type` → при его отсутствии или пустоте `owner` → `undefined`
+ * (пустая ячейка). Правило одно на обе оболочки — как `CorpStatus.compute` (S-Q9): TUI и Desktop
+ * берут значение отсюда и сами его не выводят, поэтому разойтись не могут.
+ */
+export function connectorType(card: { type?: string; owner?: string }): string | undefined {
+  const type = card.type?.trim()
+  if (type) return card.type
+  const owner = card.owner?.trim()
+  return owner ? card.owner : undefined
 }
 
 /** Ссылка «Открыть в Hub» (S-V10, I-3 §17). */

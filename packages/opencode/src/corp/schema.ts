@@ -118,6 +118,66 @@ export const PermissionModel = Schema.Union([PermissionHeaderGroups, PermissionT
 )
 export type PermissionModel = Schema.Schema.Type<typeof PermissionModel>
 
+// --- S-V20: пятый вид модели прав — курируемый словарь групп (ревизия 1.10) ---
+
+/** Режим группы разрешений (S-V20): ровно три значения, иное делает группу неразобранной. */
+export const PermissionMode = Schema.Literals(["allow", "ask", "deny"]).annotate({
+  identifier: "CorpPermissionMode",
+})
+export type PermissionMode = Schema.Schema.Type<typeof PermissionMode>
+
+/**
+ * Группа словаря разрешений (S-V20).
+ *
+ * `title` и `description` — **данные каталога** (S-I6, D-38): приходят по-русски, рендерятся как есть,
+ * клиентом не переводятся и словарём не подменяются. `tools` — имена инструментов MCP-сервера в том
+ * виде, в котором их отдаёт сервер; ключ `permission` из них считает клиент (S-V21).
+ */
+export const PermissionGroupDef = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  description: Schema.optional(Schema.String),
+  default: Schema.optional(PermissionMode),
+  tools: Schema.mutable(Schema.Array(Schema.String)),
+}).annotate({ identifier: "CorpPermissionGroupDef" })
+export type PermissionGroupDef = Schema.Schema.Type<typeof PermissionGroupDef>
+
+/**
+ * Группа «Остальное» (S-V20): инструменты коннектора, не попавшие ни в одну группу.
+ *
+ * Блок необязателен; при его отсутствии действует `default: "ask"`, а тексты берутся из словаря
+ * клиента (`corp.permissions.restTitle`, `…restDescription`) — единственное место, где тексты групп
+ * не из каталога. Поэтому разбор оставляет `title`/`description` отсутствующими, а не подставляет
+ * заглушку: подставить их — дело оболочки.
+ */
+export const PermissionGroupsRest = Schema.Struct({
+  title: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  default: Schema.optional(PermissionMode),
+}).annotate({ identifier: "CorpPermissionGroupsRest" })
+export type PermissionGroupsRest = Schema.Schema.Type<typeof PermissionGroupsRest>
+
+export const PermissionGroups = Schema.Struct({
+  version: Schema.optional(Schema.Number),
+  groups: Schema.mutable(Schema.Array(PermissionGroupDef)),
+  rest: Schema.optional(PermissionGroupsRest),
+}).annotate({ identifier: "CorpPermissionGroups" })
+export type PermissionGroups = Schema.Schema.Type<typeof PermissionGroups>
+
+/**
+ * Действующий режим группы (S-V23): свёртка режимов её инструментов по действующему конфигу.
+ * `mixed` — инструменты группы разошлись; пустой группы не бывает (S-V20 требует непустой `tools`).
+ */
+export const PermissionStateMode = Schema.Literals(["allow", "ask", "deny", "mixed"]).annotate({
+  identifier: "CorpPermissionStateMode",
+})
+export type PermissionStateMode = Schema.Schema.Type<typeof PermissionStateMode>
+
+export const PermissionState = Schema.Record(Schema.String, PermissionStateMode).annotate({
+  identifier: "CorpPermissionState",
+})
+export type PermissionState = Schema.Schema.Type<typeof PermissionState>
+
 export const Connection = Schema.Struct({
   status: ConnectionStatus,
   preset: Schema.optional(Schema.String),
@@ -149,6 +209,14 @@ export const CatalogServer = Schema.Struct({
   mode: ServerMode,
   mcp_url: Schema.String,
   permission_model: Schema.optional(Schema.Unknown),
+  /**
+   * Словарь разрешений (S-V20) — **дословно, как пришло от Hub**, ровно по тем же причинам, что
+   * `permission_model` (S-V3): версия формата, которой эта сборка не понимает, обязана дожить до
+   * следующей неискажённой. Разобранная форма считается отдельно — `parsePermissionGroups`.
+   */
+  permission_groups: Schema.optional(Schema.Unknown),
+  /** Человеческий тип коннектора на языке каталога (S-V22): данные, а не код — клиент их не переводит. */
+  type: Schema.optional(Schema.String),
   auth_kind: Schema.optional(Schema.String),
   connection: Schema.optional(Connection),
 }).annotate({ identifier: "CorpCatalogServer" })
@@ -202,6 +270,103 @@ export function parsePermissionModel(value: unknown): PermissionModel | undefine
   return decode(PermissionModel, value)
 }
 
+/** Версия формата `permission_groups`, которую понимает эта сборка (S-V20). */
+export const PERMISSION_GROUPS_VERSION = 1
+
+/** Режим группы «Остальное» по умолчанию, когда блок `rest` каталогом не прислан (S-V20). */
+export const REST_DEFAULT_MODE: PermissionMode = "ask"
+
+/** Идентификатор группы «Остальное» в `permission_state` и в теле роута прав (S-V23). */
+export const REST_GROUP_ID = "rest"
+
+export interface ParsedPermissionGroups {
+  /** Разобранный словарь: только те группы, которые разобрались, в порядке каталога. */
+  groups: PermissionGroups
+  /**
+   * Сколько групп выброшено разбором (S-V20, «частичная порча мягче»). Их инструменты отдельного
+   * ключа не получают и потому подчиняются wildcard, то есть переходят в `rest` (S-V21).
+   */
+  dropped: number
+}
+
+/**
+ * Разбор словаря разрешений (S-V20), по образцу `parsePermissionModel`.
+ *
+ * `undefined` — «клиент словаря не понял»: поля нет, нарушен конверт (`version` не число, `groups` не
+ * массив), версия старше известной либо не разобралась **ни одна** группа. Карточка при этом не
+ * отбрасывается (S-V14): экран прав деградирует на `permission_model` прежними видами (S-V9).
+ *
+ * Частичная порча мягче: неразобранная отдельная группа выбрасывается, остальные работают, а их
+ * число возвращается наружу — оно доезжает до пользователя тем же средством, что число отброшенных
+ * карточек (`corp.connectors.partial`, S-V14 п.5).
+ */
+export function parsePermissionGroups(value: unknown): ParsedPermissionGroups | undefined {
+  if (value === undefined || value === null) return undefined
+  const raw = record(value)
+  if (!raw) return undefined
+  const version = raw["version"]
+  if (typeof version !== "number") return undefined
+  // Формат новее известного разбирать нечем: экран деградирует, но дословное значение уцелело (S-V3).
+  if (version > PERMISSION_GROUPS_VERSION) return undefined
+  const rawGroups = raw["groups"]
+  if (!Array.isArray(rawGroups)) return undefined
+
+  const groups: PermissionGroupDef[] = []
+  const seen = new Set<string>()
+  let dropped = 0
+  for (const entry of rawGroups) {
+    const group = parsePermissionGroup(entry, seen)
+    if (group === undefined) {
+      dropped += 1
+      continue
+    }
+    seen.add(group.id)
+    groups.push(group)
+  }
+  // Ни одна группа не разобралась — словарь бесполезен, действует деградация на прежний экран.
+  if (groups.length === 0) return undefined
+
+  return { groups: { version, groups, rest: parsePermissionGroupsRest(raw["rest"]) }, dropped }
+}
+
+/**
+ * Разбор одной группы (S-V20). `undefined` — группа неразобрана: пустой `title` («строка без
+ * названия — не выбор, а загадка»), `default` вне перечисления, пустой или нестроковый `tools`,
+ * повторный `id` внутри карточки.
+ */
+function parsePermissionGroup(value: unknown, seen: ReadonlySet<string>): PermissionGroupDef | undefined {
+  const raw = record(value)
+  if (!raw) return undefined
+  const id = coreString(raw["id"])
+  if (id === undefined || seen.has(id)) return undefined
+  const title = coreString(raw["title"])
+  if (title === undefined) return undefined
+  const mode = decode(PermissionMode, raw["default"])
+  if (mode === undefined) return undefined
+  const rawTools = raw["tools"]
+  if (!Array.isArray(rawTools)) return undefined
+  const tools = rawTools.filter((tool): tool is string => typeof tool === "string" && tool.length > 0)
+  if (tools.length === 0 || tools.length !== rawTools.length) return undefined
+  const description = optionalString(raw["description"])
+  return { id, title, default: mode, tools, ...(description === undefined ? {} : { description }) }
+}
+
+/**
+ * Разбор блока `rest` (S-V20). Блок необязателен, а его порча группу «Остальное» не убирает: она
+ * всегда есть, и без пригодного `default` действует `ask` — неизвестное спрашивает, а не разрешает.
+ */
+function parsePermissionGroupsRest(value: unknown): PermissionGroupsRest {
+  const raw = record(value)
+  const mode = raw === undefined ? undefined : decode(PermissionMode, raw["default"])
+  const title = raw === undefined ? undefined : coreString(raw["title"])
+  const description = raw === undefined ? undefined : optionalString(raw["description"])
+  return {
+    default: mode ?? REST_DEFAULT_MODE,
+    ...(title === undefined ? {} : { title }),
+    ...(description === undefined ? {} : { description }),
+  }
+}
+
 export type ServerResult = { ok: true; server: CatalogServer } | { ok: false; alias?: string; reason: string }
 
 /**
@@ -228,6 +393,8 @@ export function parseCatalogServer(value: unknown): ServerResult {
   const contact = optionalString(raw["contact"])
   const docsUrl = optionalString(raw["docs_url"])
   const status = decode(ServerStatus, raw["status"])
+  // S-V22: значение неизвестного вида равносильно отсутствию поля и на приём карточки не влияет.
+  const type = optionalString(raw["type"])
   const authKind = optionalString(raw["auth_kind"])
   const connection = raw["connection"] === undefined ? undefined : decode(Connection, raw["connection"])
 
@@ -243,9 +410,12 @@ export function parseCatalogServer(value: unknown): ServerResult {
       ...(contact === undefined ? {} : { contact }),
       ...(docsUrl === undefined ? {} : { docs_url: docsUrl }),
       ...(status === undefined ? {} : { status }),
+      ...(type === undefined ? {} : { type }),
       ...(authKind === undefined ? {} : { auth_kind: authKind }),
       // Дословно: разбирается модель отдельно, а в кэш и наружу уходит исходное значение Hub (S-V3).
       ...(raw["permission_model"] === undefined ? {} : { permission_model: raw["permission_model"] }),
+      // То же требование ревизия 1.10 распространяет на словарь разрешений (S-V20, S-V3).
+      ...(raw["permission_groups"] === undefined ? {} : { permission_groups: raw["permission_groups"] }),
       ...(connection === undefined ? {} : { connection }),
     },
   }
@@ -478,6 +648,16 @@ export const CatalogCard = Schema.Struct({
   mode: Schema.optional(ServerMode),
   mcp_url: Schema.optional(Schema.String),
   permission_model: Schema.optional(PermissionModel),
+  /**
+   * Разобранный словарь разрешений (S-V20). Отсутствие поля — деградация на прежний экран по
+   * `permission_model` (S-V9), а не пустой экран. Предпочитается `permission_model`, если карточка
+   * отдаёт оба (D-35).
+   */
+  permission_groups: Schema.optional(PermissionGroups),
+  /** Действующий режим каждой группы по конфигу (S-V23); считает сервер, клиент его не вычисляет. */
+  permission_state: Schema.optional(PermissionState),
+  /** Значение колонки «Тип» (S-V22) — как пришло из каталога, без перевода. */
+  type: Schema.optional(Schema.String),
   connection_status: Schema.optional(ConnectionStatus),
   preset: Schema.optional(Schema.String),
   status: CardStatus,
@@ -535,11 +715,20 @@ export const ForgetResult = Schema.Struct({
 }).annotate({ identifier: "CorpForgetResult" })
 export type ForgetResult = Schema.Schema.Type<typeof ForgetResult>
 
+/**
+ * Ответ роута прав (S-V1).
+ *
+ * Ревизия 1.10 сделала `preset` необязательным и добавила `permission_state`: у вида
+ * `permission_groups` пресета нет вовсе — Hub в записи не участвует (D-35), а показывать нужно
+ * пересчитанный по конфигу режим каждой группы (S-V23). Для прежних видов оба поля ведут себя как
+ * прежде: `preset` заполнен, `permission_state` отсутствует.
+ */
 export const PermissionsResult = Schema.Struct({
   alias: Schema.String,
   status: CardStatus,
-  preset: Schema.String,
+  preset: Schema.optional(Schema.String),
   reauth_required: Schema.Boolean,
+  permission_state: Schema.optional(PermissionState),
   hub_error: Schema.optional(Code),
 }).annotate({ identifier: "CorpPermissionsResult" })
 export type PermissionsResult = Schema.Schema.Type<typeof PermissionsResult>

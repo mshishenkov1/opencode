@@ -27,6 +27,12 @@ export interface DialogSelectProps<T> {
   footer?: JSX.Element
   emptyView?: JSX.Element
   options: DialogSelectOption<T>[]
+  /**
+   * corp (S-T10, S-D11): начальное значение строки поиска. Поле ввода неуправляемое, и экран,
+   * который при возврате пересоздаётся, иначе не может вернуть пользователя туда, откуда он ушёл.
+   * Значение читается один раз при создании; дальше строкой владеет само поле.
+   */
+  initialFilter?: string
   flat?: boolean
   ref?: (ref: DialogSelectRef<T>) => void
   onMove?: (option: DialogSelectOption<T>) => void
@@ -88,7 +94,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
 
   const [store, setStore] = createStore({
     selected: 0,
-    filter: "",
+    filter: props.initialFilter ?? "",
     input: "keyboard" as "keyboard" | "mouse",
   })
   const [focusedAction, setFocusedAction] = createSignal<number>()
@@ -499,6 +505,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         <Show when={props.renderFilter !== false}>
           <box paddingTop={1}>
             <input
+              value={props.initialFilter}
               onInput={(e) => {
                 if (props.locked) return
                 batch(() => {

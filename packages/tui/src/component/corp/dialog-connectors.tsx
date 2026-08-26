@@ -517,7 +517,11 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
   return (
     <DialogSelect
       title={t("connectors.title")}
-      placeholder={query() || t("connectors.search")}
+      placeholder={t("connectors.search")}
+      // S-D11, S-T10: возврат со страницы коннектора обязан вернуть и строку поиска — не только
+      // отфильтрованный ею список. Поле ввода `DialogSelect` неуправляемое, поэтому прежний запрос
+      // отдаётся ему начальным значением, а дальше строкой владеет само поле.
+      initialFilter={props.restore?.query}
       ref={(value) => (selectRef = value)}
       onFilter={setQuery}
       skipFilter={true}

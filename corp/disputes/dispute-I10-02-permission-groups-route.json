@@ -1,0 +1,19 @@
+{
+  "id": "DISPUTE-I10-02-01",
+  "step": "I-10 / 10.2",
+  "agent": "dev-agent",
+  "subject": "Роут применения разрешений по группам: промпт требует новый путь и новое тело, спека — расширение существующего",
+  "claim": "Промпт шага 10.2 просит завести новый роут PUT /corp/connectors/:alias/permission-groups с телом {groups: {<id>: режим}, all?: режим}. Спецификация ревизии 1.10 (S-V1, коммит d466fa0b5d) фиксирует другое: тот же путь PUT /corp/connectors/:alias/permissions и тело {modes: {<groupId>: allow|ask|deny}}, взаимоисключающее с прежним {preset}. Поля all в спеке нет вовсе. Реализовано по спеке — она главнее промпта.",
+  "evidence": [
+    "spec.md §6.1 S-V1, таблица: `| PUT /corp/connectors/:alias/permissions | {preset} | {modes: {<groupId>: \"allow\"|\"ask\"|\"deny\"}} | {alias, status, preset?, reauth_required, permission_state?} |`",
+    "spec.md §6.1 S-V1, абзац «Ревизия 1.10»: «Тело PUT …/permissions принимает два взаимоисключающих вида… Одновременная передача обоих — ошибка запроса, ничего не записывается»",
+    "acceptance-criteria.yaml AC-239: «given: коннектор с permission_groups, роут PUT /corp/connectors/<alias>/permissions; when: отправлено тело с полем modes… тело с одновременно переданными preset и modes отвергнуто как ошибка запроса»"
+  ],
+  "resolution_applied": {
+    "route": "PUT /corp/connectors/:alias/permissions (существующий, тело расширено полем modes)",
+    "body": "{preset?, groups?, modes?} — preset и modes взаимоисключающи; при обоих 400 CorpBadRequestError {error:\"conflicting_body\"}, конфиг не трогается",
+    "all_field": "не заведено: групповой селектор по S-V23 «ставит режим всем группам сразу… тем же правилом S-V21 (одна перезапись блока)», то есть клиент присылает один и тот же режим для каждой группы в modes. Отдельное поле all дало бы второй способ выразить то же самое и второй путь в коде без критерия, который бы его проверял"
+  },
+  "impact_on_ui_agents": "Клиенты Desktop/TUI должны звать sdk.corp.permissions({alias, modes}) — метода corp.permissionGroups() в SDK нет и по спеке быть не должно. Ответ: {alias, status, reauth_required:false, permission_state}, поле preset при виде permission_groups отсутствует (в SDK стало необязательным).",
+  "proposed_resolution": "Оставить реализацию по спеке. Если заказчик действительно хочет отдельный путь и поле all — это правка S-V1 и AC-239 в спеке, а не расхождение реализации."
+}

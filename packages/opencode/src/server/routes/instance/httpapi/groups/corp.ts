@@ -34,9 +34,24 @@ export class CorpHubError extends Schema.ErrorClass<CorpHubError>("CorpHubError"
  *
  * Отдельный класс, а не `CorpHubError`: Hub здесь ни при чём — у вида `permission_groups` запроса к
  * нему не выполняется вовсе (D-35), а 502 сказал бы пользователю неправду о причине.
+ *
+ * **Ревизия 1.11 (S-C10 п.7–8).** Сюда же добавлены два отказа сборки без Hub: `facade_needs_hub` —
+ * «Подключить» у карточки `mode:"facade"` (S-V7) и `permissions_need_hub` — тело `{preset}` у
+ * Hub-зависимых видов модели прав (S-V9). Это не `corp_disabled`: корп-функции включены, каталог
+ * работает — недоступен ровно один шов, и он назван. Ни один из них ничего не записывает; текст
+ * пользователю подставляет оболочка по ключам `corp.connectors.facadeNeedsHub` и
+ * `corp.connectors.permissionsNeedHub` (S-I1).
  */
 export class CorpBadRequestError extends Schema.ErrorClass<CorpBadRequestError>("CorpBadRequestError")(
-  { error: Schema.Literals(["conflicting_body", "missing_body", "permission_groups_unavailable"]) },
+  {
+    error: Schema.Literals([
+      "conflicting_body",
+      "missing_body",
+      "permission_groups_unavailable",
+      "facade_needs_hub",
+      "permissions_need_hub",
+    ]),
+  },
   { httpApiStatus: 400 },
 ) {}
 
@@ -156,12 +171,14 @@ export const CorpApi = HttpApi.make("corp")
           query: WorkspaceRoutingQuery,
           payload: ConnectPayload,
           success: described(CorpSchema.ConnectorResult, "Коннектор подключён"),
-          error: CorpDisabledError,
+          // S-C10 п.8: у карточки `facade` в сборке без Hub действие отвергается с названной причиной.
+          error: [CorpDisabledError, CorpBadRequestError],
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "corp.connect",
             summary: "Connect connector",
-            description: "Пишет mcp.<alias> в глобальный конфиг и запускает штатный MCP-OAuth.",
+            description:
+              "Пишет mcp.<alias> в глобальный конфиг и запускает штатный MCP-OAuth. В сборке без Hub карточка mode:facade отвергается (facade_needs_hub) и запись не создаётся.",
           }),
         ),
         HttpApiEndpoint.post("disconnect", CorpPaths.disconnect, {

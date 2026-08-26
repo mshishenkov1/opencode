@@ -1,6 +1,7 @@
 import { Auth } from "@/auth"
 import { Config } from "@/config/config"
 import { MCP } from "@/mcp"
+import * as CorpCatalog from "@/corp/catalog"
 import * as CorpCatalogCache from "@/corp/catalog-cache"
 import * as CorpConfig from "@/corp/config"
 import * as CorpConnections from "@/corp/connections"
@@ -43,11 +44,39 @@ const CATALOG_MEMO_MS = 60_000
 /**
  * Memo каталога на процесс сервера.
  *
- * Ключ — рабочий каталог инстанса, workspace и адрес Hub: карточки зависят от конфига и локальных
- * статусов MCP конкретного инстанса (S-V5), а один процесс обслуживает несколько рабочих каталогов
- * (InstanceContextMiddleware). Общий ключ отдал бы второму каталогу карточки, посчитанные для первого.
+ * Ключ — рабочий каталог инстанса, workspace и адреса источников каталога: карточки зависят от
+ * конфига и локальных статусов MCP конкретного инстанса (S-V5), а один процесс обслуживает
+ * несколько рабочих каталогов (InstanceContextMiddleware). Общий ключ отдал бы второму каталогу
+ * карточки, посчитанные для первого.
  */
 const memo = new Map<string, { at: number; view: CorpSchema.CatalogView }>()
+
+/**
+ * Действующие корпоративные адреса (S-C5, S-C10 п.1–3).
+ *
+ * Их два и они независимы: `hub` — вход по SSO, фасад и записи подключений; `catalog` — статический
+ * список карточек. Корп-функции включены, если задан **любой** (D-40).
+ *
+ * `identity` — адрес, которым именуются локальные артефакты пользователя (файл признака подключений
+ * S-V15): адрес Hub, а в сборке без Hub — адрес каталога. Он всегда определён.
+ */
+interface Addresses {
+  hub?: string
+  catalog?: string
+  identity: string
+}
+
+/** Результат выбора источника каталога (S-C10 п.3). */
+interface LoadedCatalog {
+  source: "hub" | "static" | "cache"
+  version: string
+  servers: CorpSchema.CatalogServer[]
+  dropped: CorpSchema.Dropped[]
+  cachedAt?: number
+  stale: boolean
+  /** Ошибка последнего опрошенного сетевого источника (S-V3): её показывает баннер витрины. */
+  error?: CorpErrors.Code
+}
 
 export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handlers) =>
   Effect.gen(function* () {
@@ -56,11 +85,38 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
     const mcpSvc = yield* MCP.Service
 
     const hubUrl = () => CorpConfig.corpHubUrl()
+    const catalogUrl = () => CorpConfig.corpCatalogUrl()
 
+    /**
+     * Требование Hub (S-C5): вход по SSO и ветки, идущие через Hub-фасад.
+     *
+     * Ревизия 1.11 (S-C10 п.7) сузила область этой проверки: витрина и каталог через неё больше не
+     * проходят — им достаточно любого источника (`requireCatalog`). Здесь остались только швы, у
+     * которых без Hub нет ни данных, ни адресата: вход, `{preset}` и подключение `user_token`.
+     */
     const requireHub = Effect.fnUntraced(function* () {
       const url = hubUrl()
       if (!url) return yield* new CorpDisabledError({ error: "corp_disabled" })
       return url
+    })
+
+    /**
+     * Требование каталога (S-C10 п.2): корп-функции включены, если задан **любой** адрес.
+     *
+     * Витрина, действия над локальным состоянием и разрешения вида `permission_groups` работают в
+     * сборке без Hub: каталог не требует ни ключа, ни сессии, ни аудита (D-40).
+     */
+    const requireCatalog = Effect.fnUntraced(function* () {
+      const hub = hubUrl()
+      const catalog = catalogUrl()
+      const identity = hub ?? catalog
+      if (!identity) return yield* new CorpDisabledError({ error: "corp_disabled" })
+      const addresses: Addresses = {
+        ...(hub === undefined ? {} : { hub }),
+        ...(catalog === undefined ? {} : { catalog }),
+        identity,
+      }
+      return addresses
     })
 
     /** Ключ провайдера `magnit_prod` из auth-store (D-3); наружу не отдаётся. */
@@ -69,16 +125,36 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return record?.type === "api" ? record.key : undefined
     })
 
-    /** Ключ memo каталога: инстанс (рабочий каталог + workspace) и адрес Hub. */
-    const memoKey = Effect.fnUntraced(function* (url: string) {
+    /** Ключ memo каталога: инстанс (рабочий каталог + workspace) и оба адреса источников. */
+    const memoKey = Effect.fnUntraced(function* (addr: Addresses) {
       const instance = yield* InstanceRef
       const workspace = yield* WorkspaceRef
-      return [instance?.directory ?? "", workspace ?? "", url].join("\u0000")
+      return [instance?.directory ?? "", workspace ?? "", addr.hub ?? "", addr.catalog ?? ""].join("\u0000")
     })
 
     /** Сбрасывает memo текущего инстанса после действий витрины (S-V7…S-V9). */
-    const dropMemo = Effect.fnUntraced(function* (url: string) {
-      memo.delete(yield* memoKey(url))
+    const dropMemo = Effect.fnUntraced(function* (addr: Addresses) {
+      memo.delete(yield* memoKey(addr))
+    })
+
+    /** Источники каталога в порядке проб (S-C10 п.3): статический адрес, затем Hub. */
+    const sourcesOf = (addr: Addresses) =>
+      CorpCatalog.sources({
+        ...(addr.catalog === undefined ? {} : { catalogUrl: addr.catalog }),
+        ...(addr.hub === undefined ? {} : { hubUrl: addr.hub }),
+      })
+
+    /**
+     * Кэш каталога в порядке источников (S-C10 п.3, S-V3): файл ключуется адресом того источника,
+     * из которого каталог получен, поэтому и читается он в том же порядке, в каком пробуются
+     * источники. Кэша чужого адреса тут просто нет — записи прежнего стенда не «оживают».
+     */
+    const readCache = Effect.fnUntraced(function* (addr: Addresses) {
+      for (const source of sourcesOf(addr)) {
+        const cached = yield* Effect.promise(() => CorpCatalogCache.read(source.url))
+        if (cached) return cached
+      }
+      return undefined
     })
 
     // --- Вход (S-A2…S-A5) ---
@@ -201,11 +277,18 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
 
     const status = Effect.fn("CorpHttpApi.status")(function* () {
       const url = hubUrl()
+      const catalog = catalogUrl()
       const key = yield* corpKey()
-      if (!url) return { enabled: false, authenticated: false }
-      const cached = yield* Effect.promise(() => CorpCatalogCache.read(url))
+      // S-C10 п.2: выключено только при отсутствии обоих адресов; сборка без Hub, но с каталогом
+      // остаётся корпоративной, и `hub_url` в её ответе просто отсутствует.
+      if (!url && !catalog) return { enabled: false, authenticated: false }
+      const cached = yield* readCache({
+        ...(url === undefined ? {} : { hub: url }),
+        ...(catalog === undefined ? {} : { catalog }),
+        identity: url ?? catalog!,
+      })
       const base: CorpSchema.CorpStatus = {
-        hub_url: url,
+        ...(url === undefined ? {} : { hub_url: url }),
         enabled: true,
         authenticated: key !== undefined,
         ...(cached === undefined
@@ -216,7 +299,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
               catalog_stale: CorpCatalogCache.isStale(cached, Date.now()),
             }),
       }
-      if (!key) return base
+      if (!url || !key) return base
       const hub = CorpHub.make({ hubUrl: url, key })
       const health = yield* Effect.promise(() => hub.health())
       const me = yield* Effect.promise(() => hub.me())
@@ -273,7 +356,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return next
     })
 
-    const toCards = Effect.fnUntraced(function* (url: string, servers: CorpSchema.CatalogServer[], stale: boolean) {
+    /**
+     * Карточки витрины по карточкам каталога (S-V5, S-V6).
+     *
+     * `addr.hub` здесь решает три вопроса ревизии 1.11 (S-C10 п.7–8): есть ли у карточки ссылка
+     * «Открыть в Hub», доступно ли подключение `facade` и не заблокирован ли экран прав
+     * Hub-зависимого вида. `addr.identity` именует файл признака подключений (S-V15 п.2).
+     */
+    const toCards = Effect.fnUntraced(function* (addr: Addresses, servers: CorpSchema.CatalogServer[], stale: boolean) {
       const { statuses, configured, permission } = yield* localState()
       const known = new Set(servers.map((server) => server.alias))
       // S-V20: группы, выброшенные разбором словаря, — та же новость, что отброшенные карточки,
@@ -293,7 +383,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           observations.push(server.alias)
       for (const alias of configured)
         if (!known.has(alias) && statuses[alias]?.status === "connected") observations.push(alias)
-      const connections = yield* rememberConnections(yield* readConnections(url), observations)
+      const connections = yield* rememberConnections(yield* readConnections(addr.identity), observations)
 
       const cards: CorpSchema.CatalogCard[] = servers.map((server) => {
         const local = statuses[server.alias]
@@ -310,7 +400,12 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           ...(local && "error" in local ? { localError: local.error } : {}),
           everConnectedLocally: CorpConnections.has(connections, server.alias),
           stale,
+          hubConfigured: addr.hub !== undefined,
         })
+        // S-V9, S-C10 п.7: три вида модели прав подтверждаются в Hub — без его адреса экран прав
+        // заблокирован с названной причиной. Вид `permission_groups` целиком локален, а непонятый
+        // вид блокируется прежней причиной («модель прав не поддерживается»), и подменять её нельзя.
+        const permissionsNeedHub = addr.hub === undefined && groups === undefined && permissions !== undefined
         return {
           alias: server.alias,
           title: server.title,
@@ -337,6 +432,8 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
               }),
           ...(server.connection === undefined ? {} : { connection_status: server.connection.status }),
           ...(server.connection?.preset === undefined ? {} : { preset: server.connection.preset }),
+          ...(card.connectNeedsHub === true ? { connect_needs_hub: true } : {}),
+          ...(permissionsNeedHub ? { permissions_need_hub: true } : {}),
           status: card.status,
           actions: card.actions,
           state: card.state,
@@ -346,7 +443,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           configured: configured.has(server.alias),
           ...(card.error === undefined ? {} : { error: card.error }),
           ...(card.errorClass === undefined ? {} : { error_class: card.errorClass }),
-          hub_url: CorpConnectors.hubServerUrl(url, server.alias),
+          hub_url: CorpConnectors.hubServerUrl(addr.hub, server.alias),
         }
       })
       // Правило 1 S-V6: alias есть в конфиге, но пропал из каталога — карточку всё равно показываем.
@@ -359,6 +456,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           stale,
           ...(local ? { local: local.status } : {}),
           everConnectedLocally: CorpConnections.has(connections, alias),
+          hubConfigured: addr.hub !== undefined,
         })
         cards.push({
           alias,
@@ -372,101 +470,180 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           configured: true,
           ...(card.error === undefined ? {} : { error: card.error }),
           ...(card.errorClass === undefined ? {} : { error_class: card.errorClass }),
-          hub_url: CorpConnectors.hubServerUrl(url, alias),
+          hub_url: CorpConnectors.hubServerUrl(addr.hub, alias),
         })
       }
       return { cards, dropped }
     })
 
-    const catalog = Effect.fn("CorpHttpApi.catalog")(function* (ctx: { query: { refresh?: string } }) {
-      const url = yield* requireHub()
-      const refresh = ctx.query.refresh === "true"
-      const now = Date.now()
-      const key = yield* memoKey(url)
-      const cachedView = memo.get(key)
-      if (!refresh && cachedView && now - cachedView.at < CATALOG_MEMO_MS) return cachedView.view
+    /**
+     * Выбор источника каталога (S-C10 п.3, S-V3, D-42).
+     *
+     * Источники пробуются в фиксированном порядке — статический адрес, Hub, дисковый кэш, — а
+     * источник с незаданным адресом пропускается целиком и запросом не является. Отказ источника
+     * (сеть, не-2xx, неразобранный конверт) **переводит выбор на следующий** и в кэш не пишется ни
+     * дословно, ни частично: одна опечатка в статическом файле не стирает последний рабочий каталог.
+     */
+    const loadCatalog = Effect.fnUntraced(function* (addr: Addresses, now: number) {
+      let error: CorpErrors.Code | undefined
 
-      const corpApiKey = yield* corpKey()
-      if (!corpApiKey) {
-        // S-V4: без ключа витрина показывает состояние «Требуется вход».
-        return { version: "", source: "cache" as const, stale: true, servers: [], hub_error: "unauthorized" as const }
-      }
+      for (const source of sourcesOf(addr)) {
+        if (source.kind === "static") {
+          const result = yield* Effect.promise(() => CorpCatalog.fetchStatic(source.url))
+          if (!result.ok) {
+            // S-V14 п.7: отказ конверта статического источника не показывается пользователю как
+            // `hub_invalid_response` — он переводит выбор дальше. Но молчаливая деградация
+            // запрещена так же, как молчаливо пустой экран, поэтому запись в лог обязательна.
+            yield* Effect.logWarning("corp catalog: источник каталога отклонён", {
+              source: source.url,
+              reason: CorpCatalog.failureReason(result),
+            })
+            error = "hub_unavailable"
+            continue
+          }
+          yield* Effect.promise(() =>
+            CorpCatalogCache.write({
+              hubUrl: source.url,
+              fetchedAt: now,
+              version: result.version,
+              servers: result.servers,
+            }),
+          )
+          const loaded: LoadedCatalog = {
+            source: "static",
+            version: result.version,
+            servers: result.servers,
+            dropped: result.dropped,
+            cachedAt: now,
+            stale: false,
+          }
+          return loaded
+        }
 
-      const hub = CorpHub.make({ hubUrl: url, key: corpApiKey })
-      const fresh = yield* Effect.promise(() => hub.catalog())
-      if (fresh.ok) {
-        const built = yield* toCards(url, fresh.data.servers, false)
-        // S-V14 п.5 и S-V20: отброшенные карточки и выброшенные группы словаря — один список.
-        const dropped = [...(fresh.dropped ?? []), ...built.dropped]
-        if (dropped.length > 0) {
-          // S-V14 п.5: отброшенные карточки не исчезают молча. В лог уходят только alias и путь к
-          // полю — ни тела ответа Hub, ни ключа провайдера, ни `poll_secret`.
-          yield* Effect.logWarning("corp catalog: cards dropped", {
-            count: dropped.length,
-            cards: dropped.map((entry) => ({
-              ...(entry.alias === undefined ? {} : { alias: entry.alias }),
-              field: entry.reason,
-            })),
-          })
+        // S-V4 относится к источнику Hub и только к нему (S-C10 п.6): без ключа Hub не спрашивают.
+        const key = yield* corpKey()
+        if (!key) {
+          error = "unauthorized"
+          continue
+        }
+        const hub = CorpHub.make({ hubUrl: source.url, key })
+        const fresh = yield* Effect.promise(() => hub.catalog())
+        if (!fresh.ok) {
+          error = fresh.code
+          continue
         }
         yield* Effect.promise(() =>
           CorpCatalogCache.write({
-            hubUrl: url,
+            hubUrl: source.url,
             fetchedAt: now,
             version: fresh.data.version,
             servers: fresh.data.servers,
           }),
         )
-        const view: CorpSchema.CatalogView = {
-          version: fresh.data.version,
+        const loaded: LoadedCatalog = {
           source: "hub",
-          cached_at: now,
+          version: fresh.data.version,
+          servers: fresh.data.servers,
+          dropped: fresh.dropped ?? [],
+          cachedAt: now,
           stale: false,
-          servers: built.cards,
-          ...(dropped.length === 0 ? {} : { dropped }),
         }
+        return loaded
+      }
+
+      // Источник 3 — дисковый кэш (S-V3, D-12). Отдача из кэша даёт `source:"cache"` независимо от
+      // того, каким источником кэш был наполнен.
+      const cached = yield* readCache(addr)
+      const fromCache: LoadedCatalog =
+        cached === undefined
+          ? {
+              source: "cache",
+              version: "",
+              servers: [],
+              dropped: [],
+              stale: true,
+              ...(error === undefined ? {} : { error }),
+            }
+          : {
+              source: "cache",
+              version: cached.version,
+              servers: cached.servers,
+              dropped: [],
+              cachedAt: cached.fetchedAt,
+              stale: CorpCatalogCache.isStale(cached, now),
+              ...(error === undefined ? {} : { error }),
+            }
+      return fromCache
+    })
+
+    const catalog = Effect.fn("CorpHttpApi.catalog")(function* (ctx: { query: { refresh?: string } }) {
+      const addr = yield* requireCatalog()
+      const refresh = ctx.query.refresh === "true"
+      const now = Date.now()
+      const key = yield* memoKey(addr)
+      const cachedView = memo.get(key)
+      if (!refresh && cachedView && now - cachedView.at < CATALOG_MEMO_MS) return cachedView.view
+
+      // S-V4: в сборке, где единственный источник каталога — Hub, отсутствие ключа даёт состояние
+      // «Требуется вход» до всякого запроса. При заданном адресе статического каталога правило не
+      // срабатывает: тот источник ключа не требует вовсе (S-C10 п.6).
+      if (addr.catalog === undefined) {
+        const corpApiKey = yield* corpKey()
+        if (!corpApiKey)
+          return {
+            version: "",
+            source: "cache" as const,
+            hub_configured: true,
+            stale: true,
+            servers: [],
+            hub_error: "unauthorized" as const,
+          }
+      }
+
+      const loaded = yield* loadCatalog(addr, now)
+      const built = yield* toCards(addr, loaded.servers, loaded.stale)
+      // S-V14 п.5 и S-V20: отброшенные карточки и выброшенные группы словаря — один список.
+      const dropped = [...loaded.dropped, ...built.dropped]
+      if (dropped.length > 0) {
+        // S-V14 п.5: отброшенные карточки не исчезают молча. В лог уходят только alias и путь к
+        // полю — ни тела ответа источника, ни ключа провайдера, ни `poll_secret`. Правило одно на
+        // оба источника: одинаковое тело даёт одинаковые записи в логе (S-V14 п.7).
+        yield* Effect.logWarning("corp catalog: cards dropped", {
+          count: dropped.length,
+          cards: dropped.map((entry) => ({
+            ...(entry.alias === undefined ? {} : { alias: entry.alias }),
+            field: entry.reason,
+          })),
+        })
+      }
+
+      const view: CorpSchema.CatalogView = {
+        version: loaded.version,
+        source: loaded.source,
+        hub_configured: addr.hub !== undefined,
+        ...(loaded.cachedAt === undefined ? {} : { cached_at: loaded.cachedAt }),
+        stale: loaded.stale,
+        servers: built.cards,
+        ...(dropped.length === 0 ? {} : { dropped }),
+        ...(loaded.error === undefined ? {} : { hub_error: loaded.error }),
+      }
+      // Memo хранит только ответ живого источника: деградация на кэш должна перепроверяться каждым
+      // открытием витрины, иначе источник, вернувшийся в строй, ждал бы окна свежести.
+      if (loaded.source !== "cache") {
         // Записи других инстансов старше окна свежести больше не нужны — memo не растёт бесконечно.
         for (const [entry, value] of memo) if (now - value.at >= CATALOG_MEMO_MS) memo.delete(entry)
         memo.set(key, { at: now, view })
-        return view
       }
-
-      // Деградация на кэш (S-V3, D-12).
-      const cached = yield* Effect.promise(() => CorpCatalogCache.read(url))
-      if (!cached) {
-        return {
-          version: "",
-          source: "cache" as const,
-          stale: true,
-          servers: [],
-          hub_error: fresh.code,
-        }
-      }
-      const stale = CorpCatalogCache.isStale(cached, now)
-      const built = yield* toCards(url, cached.servers, stale)
-      return {
-        version: cached.version,
-        source: "cache" as const,
-        cached_at: cached.fetchedAt,
-        stale,
-        servers: built.cards,
-        ...(built.dropped.length === 0 ? {} : { dropped: built.dropped }),
-        hub_error: fresh.code,
-      }
+      return view
     })
 
     /**
-     * Карточка каталога по alias — из свежего ответа Hub, иначе из кэша.
+     * Карточка каталога по alias — из действующего источника (S-C10 п.3), иначе из кэша.
      * Вместе с карточкой возвращается признак протухшего источника (S-V3), нужный правилу 2 S-V6.
      */
-    const serverFor = Effect.fnUntraced(function* (url: string, alias: string) {
-      const key = yield* corpKey()
-      if (key) {
-        const hub = CorpHub.make({ hubUrl: url, key })
-        const fresh = yield* Effect.promise(() => hub.catalog())
-        if (fresh.ok) return { server: fresh.data.servers.find((server) => server.alias === alias), stale: false }
-      }
-      return yield* cachedServerFor(url, alias)
+    const serverFor = Effect.fnUntraced(function* (addr: Addresses, alias: string) {
+      const loaded = yield* loadCatalog(addr, Date.now())
+      return { server: loaded.servers.find((server) => server.alias === alias), stale: loaded.stale }
     })
 
     /**
@@ -475,8 +652,8 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
      * Нужна действиям, которым обращаться к Hub запрещено: у вида `permission_groups` запроса к Hub
      * не выполняется вовсе (S-V1, D-35), а словарь групп взять всё равно откуда-то надо.
      */
-    const cachedServerFor = Effect.fnUntraced(function* (url: string, alias: string) {
-      const cached = yield* Effect.promise(() => CorpCatalogCache.read(url))
+    const cachedServerFor = Effect.fnUntraced(function* (addr: Addresses, alias: string) {
+      const cached = yield* readCache(addr)
       if (!cached) return { server: undefined, stale: true }
       return {
         server: cached.servers.find((server) => server.alias === alias),
@@ -494,11 +671,11 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
      * `source` — уже прочитанная карточка: им пользуются действия, которым запрещено ходить в Hub.
      */
     const cardFor = Effect.fnUntraced(function* (
-      url: string,
+      addr: Addresses,
       alias: string,
       source?: { server: CorpSchema.CatalogServer | undefined; stale: boolean },
     ) {
-      const { server, stale } = source ?? (yield* serverFor(url, alias))
+      const { server, stale } = source ?? (yield* serverFor(addr, alias))
       const { statuses, configured } = yield* localState()
       const local = statuses[alias]
       // S-V15: наблюдение фиксируется и после отдельного действия — состояние карточки в ответе
@@ -507,7 +684,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         ...(local === undefined ? {} : { local: local.status }),
         ...(server?.connection === undefined ? {} : { connection: server.connection.status }),
       })
-      const connections = yield* rememberConnections(yield* readConnections(url), observed ? [alias] : [])
+      const connections = yield* rememberConnections(yield* readConnections(addr.identity), observed ? [alias] : [])
       return CorpStatus.compute({
         alias,
         ...(server === undefined ? {} : { server }),
@@ -516,6 +693,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         ...(local && "error" in local ? { localError: local.error } : {}),
         everConnectedLocally: CorpConnections.has(connections, alias),
         stale,
+        hubConfigured: addr.hub !== undefined,
       }).status
     })
 
@@ -525,9 +703,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       params: { alias: string }
       payload: { preset?: string }
     }) {
-      const url = yield* requireHub()
+      const addr = yield* requireCatalog()
       const alias = ctx.params.alias
-      const { server } = yield* serverFor(url, alias)
+      const { server } = yield* serverFor(addr, alias)
       if (!server)
         return {
           alias,
@@ -537,12 +715,18 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           error_class: CorpErrors.connectErrorClass({ code: "not_found" }),
         }
 
+      // S-V7, S-C10 п.8: `native` подключается штатным MCP OAuth клиента и Hub в этом не участвует
+      // никогда. `facade` подключается способом `user_token` через Hub-фасад — без адреса Hub этот
+      // способ недоступен: шаг 1 не выполняется и запись `mcp.<alias>` не создаётся.
+      if (addr.hub === undefined && server.mode === "facade")
+        return yield* new CorpBadRequestError({ error: "facade_needs_hub" })
+
       const preset = ctx.payload.preset ?? CorpStatus.DEFAULT_PRESET
       const patch = CorpConnectors.connectPatch(server, preset)
       // Шаг 1 (D-7): персист через updateGlobal, а не через runtime-only POST /mcp/:name/connect (F17).
       yield* configSvc.updateGlobal(patch)
       yield* mcpSvc.add(alias, patch.mcp[alias])
-      yield* dropMemo(url)
+      yield* dropMemo(addr)
 
       // Шаг 2: штатный MCP-OAuth сервера — браузер и ожидание callback 19876 (F15/F16).
       const status = yield* mcpSvc
@@ -554,7 +738,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         // S-V19: ошибка не остаётся необъяснённой — класс определяется всегда, в том числе `unknown`.
         return {
           alias,
-          status: yield* cardFor(url, alias),
+          status: yield* cardFor(addr, alias),
           error: status.error,
           error_class: CorpErrors.connectErrorClass({
             local: status.status,
@@ -562,21 +746,23 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           }),
         }
       }
-      return { alias, status: yield* cardFor(url, alias) }
+      return { alias, status: yield* cardFor(addr, alias) }
     })
 
     const disconnect = Effect.fn("CorpHttpApi.disconnect")(function* (ctx: { params: { alias: string } }) {
-      const url = yield* requireHub()
+      const addr = yield* requireCatalog()
       const alias = ctx.params.alias
       yield* mcpSvc.removeAuth(alias)
       yield* mcpSvc.disconnect(alias).pipe(Effect.catch(() => Effect.void))
       yield* configSvc.updateGlobal(CorpConnectors.disconnectPatch(alias))
-      yield* dropMemo(url)
+      yield* dropMemo(addr)
 
       const key = yield* corpKey()
       let hubError: CorpErrors.Code | undefined
-      if (key) {
-        const hub = CorpHub.make({ hubUrl: url, key })
+      // S-C10 п.7: при незаданном адресе Hub шаг **пропускается**, а не считается отказом Hub —
+      // ни предупреждения, ни поля `hub_error`. «Нечего звать» и «позвали, не ответил» — разное.
+      if (key && addr.hub !== undefined) {
+        const hub = CorpHub.make({ hubUrl: addr.hub, key })
         const removed = yield* Effect.promise(() => hub.removeConnection(alias))
         // S-V8: отказ Hub не откатывает локальные шаги, но показывается предупреждением.
         if (!removed.ok) hubError = removed.code
@@ -597,7 +783,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
      * пользователя приведено в порядок в любом случае (AC-176).
      */
     const forget = Effect.fn("CorpHttpApi.forget")(function* (ctx: { params: { alias: string } }) {
-      const url = yield* requireHub()
+      const addr = yield* requireCatalog()
       const alias = ctx.params.alias
       // Шаг 1: те же локальные шаги, что у S-V8.
       yield* mcpSvc.removeAuth(alias)
@@ -605,16 +791,18 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // Шаг 2: ключ `mcp.<alias>` удаляется целиком; прочий конфиг пользователя не трогается (S-C7).
       yield* configSvc.updateGlobal(CorpConnectors.forgetPatch(alias))
       // Шаг 3: признак «подключение состоялось» снимается — единственный способ его снять (S-V15 п.3).
-      const connections = yield* readConnections(url)
+      const connections = yield* readConnections(addr.identity)
       const without = CorpConnections.forget(connections, alias)
       if (without) yield* Effect.promise(() => CorpConnections.write(without))
-      yield* dropMemo(url)
+      yield* dropMemo(addr)
 
       // Шаг 4 необязателен: без ключа и при недоступном Hub он пропускается, а не откатывает шаги 1–3.
+      // При незаданном адресе Hub шага 4 **не существует** (S-C10 п.7): предупреждение о
+      // недоступности Hub в сборке, где Hub не настроен, — ложная тревога.
       const key = yield* corpKey()
       let hubError: CorpErrors.Code | undefined
-      if (key) {
-        const hub = CorpHub.make({ hubUrl: url, key })
+      if (key && addr.hub !== undefined) {
+        const hub = CorpHub.make({ hubUrl: addr.hub, key })
         const removed = yield* Effect.promise(() => hub.removeConnection(alias))
         if (!removed.ok) hubError = removed.code
       }
@@ -634,14 +822,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
      * строго этом порядке; правило порядка ключей внутри блока держит `permissionGroupsPatch`.
      */
     const applyPermissionGroups = Effect.fnUntraced(function* (
-      url: string,
+      addr: Addresses,
       alias: string,
       modes: Record<string, CorpSchema.PermissionMode>,
     ) {
       // Словарь берётся из кэша каталога, а не из Hub: «запрос к Hub не выполняется вовсе» (S-V1)
       // относится и к чтению — экран разрешений открывается с витрины, которая кэш только что
       // перезаписала (S-V3).
-      const source = yield* cachedServerFor(url, alias)
+      const source = yield* cachedServerFor(addr, alias)
       const parsed =
         source.server === undefined ? undefined : CorpSchema.parsePermissionGroups(source.server.permission_groups)
       // Словаря нет — применять режимы не к чему: состав ключей выводится только из него.
@@ -657,13 +845,13 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       })
       yield* configSvc.updateGlobal(patch.clear)
       yield* configSvc.updateGlobal(patch.write)
-      yield* dropMemo(url)
+      yield* dropMemo(addr)
 
       // Состояние считается по конфигу **после** записи — и тем же правилом, что на витрине (S-V23).
       const config = yield* configSvc.get()
       return {
         alias,
-        status: yield* cardFor(url, alias, source),
+        status: yield* cardFor(addr, alias, source),
         reauth_required: false,
         permission_state: CorpConnectors.permissionState(alias, parsed.groups, config.permission),
       }
@@ -673,7 +861,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       params: { alias: string }
       payload: { preset?: string; groups?: string[]; modes?: Record<string, CorpSchema.PermissionMode> }
     }) {
-      const url = yield* requireHub()
+      const addr = yield* requireCatalog()
       const alias = ctx.params.alias
       // S-V1: два вида тела взаимоисключающи. Оба сразу — ошибка запроса, и ничего не записывается:
       // молча предпочесть один вид значило бы применить не то, о чём просил клиент.
@@ -686,26 +874,33 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         return yield* new CorpBadRequestError({ error: "missing_body" })
 
       // Ветка `modes` уходит до чтения каталога из Hub: в ней Hub не участвует ни на шаг (D-35).
-      if (ctx.payload.modes !== undefined) return yield* applyPermissionGroups(url, alias, ctx.payload.modes)
+      // Она же — единственная, работающая в сборке без Hub (S-C10 п.7): вид `permission_groups`
+      // целиком локален и от источника каталога не зависит.
+      if (ctx.payload.modes !== undefined) return yield* applyPermissionGroups(addr, alias, ctx.payload.modes)
 
-      const { server } = yield* serverFor(url, alias)
+      // Тело `{preset}` подтверждается в Hub (S-V9): без его адреса роут отвечает отказом с
+      // названной причиной и **ничего не записывает** ни в конфиг, ни в Hub (S-C10 п.7).
+      if (addr.hub === undefined) return yield* new CorpBadRequestError({ error: "permissions_need_hub" })
+      const hubAddress = addr.hub
+
+      const { server } = yield* serverFor(addr, alias)
       const preset = ctx.payload.preset ?? CorpStatus.DEFAULT_PRESET
       const key = yield* corpKey()
       if (!key)
         return {
           alias,
-          status: yield* cardFor(url, alias),
+          status: yield* cardFor(addr, alias),
           preset,
           reauth_required: false,
           hub_error: "unauthorized" as const,
         }
 
-      const hub = CorpHub.make({ hubUrl: url, key })
+      const hub = CorpHub.make({ hubUrl: hubAddress, key })
       const updated = yield* Effect.promise(() => hub.setPermissions(alias, preset, ctx.payload.groups))
       if (!updated.ok)
         return {
           alias,
-          status: yield* cardFor(url, alias),
+          status: yield* cardFor(addr, alias),
           preset,
           reauth_required: false,
           hub_error: updated.code,
@@ -718,14 +913,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         const patch = CorpConnectors.permissionsPatch(server, preset)
         if (patch) yield* configSvc.updateGlobal(patch)
       }
-      yield* dropMemo(url)
+      yield* dropMemo(addr)
 
       if (reauth) {
         yield* mcpSvc.authenticate(alias).pipe(Effect.catch(() => Effect.void))
       }
       return {
         alias,
-        status: yield* cardFor(url, alias),
+        status: yield* cardFor(addr, alias),
         preset,
         reauth_required: reauth,
       }

@@ -29,6 +29,16 @@ export interface Input {
   everConnectedLocally?: boolean
   /** Каталог отдан из протухшего кэша (S-V3). */
   stale: boolean
+  /**
+   * Задан ли адрес Hub в этой сборке (S-C10 п.7, S-V16, D-43).
+   *
+   * `false` убирает `open_hub` из **всех** наборов действий — заблокированным оно не показывается:
+   * ссылка, которая никуда не ведёт, хуже её отсутствия. У карточек `mode:"facade"` тем же
+   * признаком снимаются `connect`/`reconnect` (S-V7, S-C10 п.8).
+   *
+   * Умолчание — «Hub задан»: сборка с Hub ревизией 1.11 не меняется ни в одном наборе дословно.
+   */
+  hubConfigured?: boolean
 }
 
 export interface Card {
@@ -50,6 +60,11 @@ export interface Card {
    * действие, не дожидаясь новой попытки подключения. У состояний без ошибки поля нет.
    */
   errorClass?: CorpErrors.ErrorClass
+  /**
+   * Подключение доступно только через Hub-фасад, а Hub в этой сборке нет (S-V7, S-C10 п.8):
+   * действие снято из набора, и на его месте оболочка называет причину.
+   */
+  connectNeedsHub?: boolean
 }
 
 const NEEDS_AUTH_LOCAL: ReadonlySet<string> = new Set(["needs_auth", "needs_client_registration"])
@@ -72,6 +87,28 @@ const ACTIONS: Record<CorpSchema.CardState, CorpSchema.CardAction[]> = {
   connected: ["permissions", "disconnect", "open_hub"],
 }
 
+/**
+ * Удаление действий, которых в сборке без Hub не существует (S-C10 п.7, D-43).
+ *
+ * `open_hub` уходит из набора целиком: заблокированный элемент обещает, что когда-нибудь
+ * заработает, а ссылка в никуда не заработает никогда. Условие проверяется здесь — в том же общем
+ * модуле, что и сам набор, — поэтому TUI и Desktop разойтись по этому вопросу не могут.
+ */
+function withoutHubActions(actions: CorpSchema.CardAction[], input: Input) {
+  if (input.hubConfigured !== false) return actions
+  return actions.filter((action) => action !== "open_hub")
+}
+
+/**
+ * Подключение карточки `mode:"facade"` идёт через Hub-фасад (`user_token`), и без адреса Hub его
+ * выполнить нечем (S-V7, S-C10 п.8). Карточка остаётся в витрине со статусом по S-V6, но действие
+ * из набора снимается: запись `mcp.<alias>` создавать нельзя, а кнопка, которая гарантированно
+ * не сработает, — та же ссылка в никуда. `mode:"native"` от источника каталога не зависит вовсе.
+ */
+function facadeNeedsHub(input: Input) {
+  return input.hubConfigured === false && input.server?.mode === "facade"
+}
+
 export function compute(input: Input): Card {
   const deprecated = input.server?.status === "deprecated"
   const connection = input.server?.connection?.status
@@ -87,7 +124,8 @@ export function compute(input: Input): Card {
     return {
       alias: input.alias,
       status: "unavailable",
-      actions: ["disconnect", "open_hub"],
+      // S-C10 п.7: ветка правила 1 теряет `open_hub` вместе с Hub — прочие действия дословно те же.
+      actions: withoutHubActions(["disconnect", "open_hub"], input),
       state: input.local === "connected" ? "connected" : everConnected ? "lost" : "never",
       everConnected,
       deprecated,
@@ -155,7 +193,22 @@ export function compute(input: Input): Card {
   if (blocked)
     actions = actions.filter((action) => action !== "connect" && action !== "permissions" && action !== "reconnect")
 
-  const card: Card = { alias: input.alias, status, actions, state, everConnected, deprecated, blocked }
+  // S-C10 п.7–8: сборка без Hub теряет «Открыть в Hub» у всех состояний, а карточка `facade` —
+  // ещё и «Подключить»/«Повторить». Причину показывает оболочка по признаку `connectNeedsHub`.
+  actions = withoutHubActions(actions, input)
+  const needsHubToConnect = facadeNeedsHub(input)
+  if (needsHubToConnect) actions = actions.filter((action) => action !== "connect" && action !== "reconnect")
+
+  const card: Card = {
+    alias: input.alias,
+    status,
+    actions,
+    state,
+    everConnected,
+    deprecated,
+    blocked,
+    ...(needsHubToConnect ? { connectNeedsHub: true } : {}),
+  }
 
   // S-V19: неудачная попытка не оставляет пользователя без ответа на два вопроса — что пошло не так
   // и что теперь делать. Класс считается и здесь, а не только в ответе `connect`: карточка обязана

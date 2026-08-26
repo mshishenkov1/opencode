@@ -669,6 +669,20 @@ export const CatalogCard = Schema.Struct({
   deprecated: Schema.Boolean,
   blocked: Schema.Boolean,
   configured: Schema.Boolean,
+  /**
+   * Подключение этой карточки выполняется через Hub-фасад, а адрес Hub не задан (S-V7, S-C10 п.8).
+   *
+   * Действия `connect`/`reconnect` в наборе отсутствуют, а на месте кнопки оболочка показывает
+   * причину недоступности (`corp.connectors.facadeNeedsHub`) — там же, где была бы кнопка.
+   */
+  connect_needs_hub: Schema.optional(Schema.Boolean),
+  /**
+   * Экран прав этой карточки Hub-зависим (`header_groups`/`tool_filter`/`consent`), а адрес Hub не
+   * задан (S-V9, S-C10 п.7): экран показывается заблокированным с причиной
+   * (`corp.connectors.permissionsNeedHub`). Вид `permission_groups` целиком локален, и признак у
+   * него не выставляется.
+   */
+  permissions_need_hub: Schema.optional(Schema.Boolean),
   error: Schema.optional(Schema.String),
   /** Класс ошибки состояний 2 и 3 таблицы S-V16 (S-V19): по нему карточка выбирает объяснение. */
   error_class: Schema.optional(ConnectErrorClass),
@@ -678,7 +692,22 @@ export type CatalogCard = Schema.Schema.Type<typeof CatalogCard>
 
 export const CatalogView = Schema.Struct({
   version: Schema.String,
-  source: Schema.Literals(["hub", "cache"]),
+  /**
+   * Источник каталога (S-V1, S-C10 п.3). `"static"` — ответ статического адреса `CATALOG_URL`,
+   * `"hub"` — ответ `GET {hub}/api/catalog`, `"cache"` — отдача из дискового кэша независимо от
+   * того, каким источником этот кэш был наполнен.
+   */
+  source: Schema.Literals(["hub", "static", "cache"]),
+  /**
+   * Задан ли адрес Hub в этой сборке (S-C10 п.7, D-43).
+   *
+   * По нему оболочка выбирает, каким источником называть недоступность («Hub недоступен» против
+   * «Каталог недоступен», S-V12 п.3) и показывать ли причины `facadeNeedsHub`/`permissionsNeedHub`.
+   * Признак вьюшный, а не карточный: он один на весь экран и не зависит от того, какой источник
+   * ответил в этот раз. Поле необязательно только ради совместимости ответа: отсутствие значит
+   * «сборка с Hub» — поведение до ревизии 1.11.
+   */
+  hub_configured: Schema.optional(Schema.Boolean),
   cached_at: Schema.optional(Schema.Number),
   stale: Schema.Boolean,
   servers: Schema.mutable(Schema.Array(CatalogCard)),

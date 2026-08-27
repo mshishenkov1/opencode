@@ -5,6 +5,7 @@ import fsp from "fs/promises"
 import os from "os"
 import path from "path"
 import { Effect } from "effect"
+import * as CorpErrors from "./errors"
 import * as CorpHub from "./hub"
 import * as CorpLogin from "./login"
 import * as CorpLogout from "./logout"
@@ -321,7 +322,7 @@ describe("corp/logout — выход (S-A14, S-Q3; AC-279, AC-283)", () => {
 
 describe("corp/logout — четыре исхода отзыва (S-A14 п.1, S-Q3; AC-280)", () => {
   test("AC-280: таймаут, 502, 500 и нечитаемое тело 200 дают hub:\"unavailable\", ключ всё равно удалён", async () => {
-    const cases: { name: string; fetchImpl: typeof fetch; hubError: string }[] = [
+    const cases: { name: string; fetchImpl: typeof fetch; hubError: CorpErrors.Code }[] = [
       {
         name: "таймаут/сетевая ошибка",
         fetchImpl: (async () => {
@@ -344,7 +345,7 @@ describe("corp/logout — четыре исхода отзыва (S-A14 п.1, S-
       const { auth, store } = mockAuth({ magnit_prod: CURRENT_KEY })
       const outcome = await Effect.runPromise(CorpLogout.perform({ auth, hubUrl: "https://hub.test", fetch: fetchImpl }))
       expect(outcome.hub, name).toBe("unavailable")
-      expect(outcome.hubError, name).toBe(hubError as never)
+      expect(outcome.hubError, name).toBe(hubError)
       // Отказ Hub локальную часть не откладывает и не отменяет (D-49) — ключ удалён несмотря на отказ.
       expect(outcome.keyRemoved, name).toBe(true)
       expect(store["magnit_prod"], name).toBeUndefined()

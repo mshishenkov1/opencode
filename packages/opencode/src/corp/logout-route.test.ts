@@ -226,13 +226,17 @@ describe("CorpConfig.enableProviderPatch — правка ровно одног�
   })
 
   test("AC-293: снят ровно один элемент magnit_prod, прочие сохранены в прежнем порядке", () => {
-    const patch = CorpConfig.enableProviderPatch(["magnit_prod", "other"])
-    expect(patch).toEqual({ disabled_providers: ["other"] })
+    // "other" нарочно не в алфавитном порядке относительно magnit_prod: результат совпал бы со
+    // случайной сортировкой и тест не отличал бы «порядок сохранён» от «порядок пересчитан».
+    const patch = CorpConfig.enableProviderPatch(["zeta", "magnit_prod", "other"])
+    expect(patch).toEqual({ disabled_providers: ["zeta", "other"] })
   })
 
   test("AC-293: порядок элементов и повторы (если были) не переставляются, кроме снятого", () => {
-    const patch = CorpConfig.enableProviderPatch(["a", "magnit_prod", "b", "c"])
-    expect(patch).toEqual({ disabled_providers: ["a", "b", "c"] })
+    // Не по алфавиту (c, magnit_prod, a, z, b) — случайная сортировка результата дала бы другой
+    // порядок и тест бы это поймал.
+    const patch = CorpConfig.enableProviderPatch(["c", "magnit_prod", "a", "z", "b"])
+    expect(patch).toEqual({ disabled_providers: ["c", "a", "z", "b"] })
   })
 
   test("AC-301 п.4: массив, ставший пустым, остаётся пустым массивом, а не null/undefined", () => {

@@ -124,6 +124,25 @@ function allows(card: CorpCatalogCard | undefined, action: CorpCatalogCard["acti
   return card.actions.includes(action)
 }
 
+/**
+ * Задан ли адрес Hub в этой сборке (S-C10 п.7, D-43). Отсутствие поля означает «сборка с Hub»:
+ * поведение до ревизии 1.11 не меняется ни в одной ветке. Признак вьюшный, а не карточный — он
+ * один на весь экран и не зависит от того, какой источник ответил в этот раз.
+ */
+export function hubConfigured(view: CorpCatalogView | undefined) {
+  return view?.hub_configured !== false
+}
+
+/** Подключение идёт через Hub-фасад, а Hub в сборке нет (S-V7, S-C10 п.8). */
+export function connectNeedsHub(card: CorpCatalogCard) {
+  return card.connect_needs_hub === true
+}
+
+/** Экран прав Hub-зависимого вида модели, а Hub в сборке нет (S-V9, S-C10 п.7). */
+export function permissionsNeedHub(card: CorpCatalogCard) {
+  return card.permissions_need_hub === true
+}
+
 /** Вкладки фильтра витрины (S-V11); умолчание — «Все», между запусками выбор не сохраняется. */
 export const TABS = ["all", "connected", "not_connected"] as const
 export type ConnectorTab = (typeof TABS)[number]
@@ -305,6 +324,13 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
       toast.show({ variant: "warning", message: t("connectors.stale") })
       return
     }
+    // S-V9, S-C10 п.7: подтверждение Hub-зависимых видов уходит в Hub, а его в этой сборке нет —
+    // экран показывается заблокированным с названной причиной. Причина другая, чем у строки
+    // «модель прав не поддерживается», поэтому и ключ другой.
+    if (permissionsNeedHub(card)) {
+      toast.show({ variant: "warning", message: t("connectors.permissionsNeedHub") })
+      return
+    }
     // S-V20: словарь групп — пятый вид модели прав, и у него свой экран. Деградация на прежний
     // выбор пресетов (S-V9) действует, когда словаря в карточке нет или он не разобрался.
     const groups = card.permission_groups
@@ -374,6 +400,19 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
     await act(card, "forget")
     // Записи больше нет — возвращаться на страницу удалённого коннектора некуда (S-V17).
     backToList()
+  }
+
+  /**
+   * Вход по SSO (S-C5, S-C10 п.6). В сборке без Hub входить некуда: экран называет причину и не
+   * шлёт запрос на незаданный адрес. Проверка живёт здесь, а не только в самом экране входа,
+   * чтобы отказ был один и тот же, каким бы путём вход ни открыли.
+   */
+  function openLogin() {
+    if (!hubConfigured(view())) {
+      toast.show({ variant: "warning", message: t("login.needsHub") })
+      return
+    }
+    dialog.replace(() => <DialogCorpLogin />)
   }
 
   async function openHub(card: CorpCatalogCard) {
@@ -455,13 +494,26 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
     setTimeout(() => selectRef?.moveTo(value), 0)
   })
 
+  /**
+   * Недоступный **источник** каталога (S-V12 п.3, S-C10, D-43): в сборке без Hub он называется
+   * каталогом, а не Hub, и код ошибки к тексту не приписывается — расшифровки кодов говорят про
+   * Hub, а в такой сборке это слово пользователю не показывается нигде.
+   */
+  function sourceDown() {
+    const data = view()
+    if (!hubConfigured(data)) return t("connectors.catalogUnavailable")
+    return `${t("connectors.hubDown")} (${errorText(data?.hub_error)})`
+  }
+
   const banner = createMemo(() => {
     const data = view()
     if (!data) return undefined
     if (data.hub_error === "unauthorized") return t("connectors.needsLogin")
     if (!data.hub_error) return undefined
-    if (!data.cached_at) return `${t("connectors.hubDown")} (${errorText(data.hub_error)})`
-    return `${t("connectors.hubDownCached")} ${new Date(data.cached_at).toLocaleString()}`
+    if (!data.cached_at) return sourceDown()
+    const at = new Date(data.cached_at).toLocaleString()
+    if (!hubConfigured(data)) return `${t("connectors.catalogUnavailable")} · ${at}`
+    return `${t("connectors.hubDownCached")} ${at}`
   })
 
   /** Предупреждение о числе отброшенных карточек и выброшенных групп (S-V14 п.5, S-V20). */
@@ -481,7 +533,8 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
     if (loading() || !data) return undefined
     if (data.hub_error === "unauthorized") return t("connectors.needsLogin")
     if (data.servers.length === 0) {
-      if (data.hub_error) return `${t("connectors.hubDown")} (${errorText(data.hub_error)})`
+      // Состояние 3 (S-V12): называет недоступный источник каталога, а не Hub безусловно.
+      if (data.hub_error) return sourceDown()
       const dropped = data.dropped?.length ?? 0
       if (dropped > 0) return format("empty.unparsed", { dropped })
       return t("connectors.empty")
@@ -578,6 +631,10 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
           command: "dialog.corp.open_hub",
           title: t("connectors.openHub"),
           side: "right",
+          // S-C10 п.7, D-43: без адреса Hub пункт не рисуется вовсе — заблокированный обещал бы,
+          // что когда-нибудь заработает, а ссылка в никуда не заработает никогда. Набор действий
+          // при этом считает сервер: `open_hub` уходит из `card.actions` там же.
+          hidden: !allows(current(), "open_hub") || !current()?.hub_url,
           disabled: (option) => !allows(option?.value, "open_hub") || !option?.value.hub_url,
           onTrigger: (option) => void openHub(option.value),
         },
@@ -600,7 +657,7 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
           title: t("connectors.login"),
           side: "right",
           hidden: view()?.hub_error !== "unauthorized",
-          onTrigger: () => dialog.replace(() => <DialogCorpLogin />),
+          onTrigger: () => openLogin(),
         },
       ]}
     />
@@ -608,7 +665,15 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
 }
 
 /** Строка страницы коннектора: действие карточки либо возврат на витрину. */
-type ConnectorRow = "connect" | "permissions" | "disconnect" | "open_hub" | "forget" | "back"
+type ConnectorRow =
+  | "connect"
+  /** Не действие, а причина его отсутствия: строка стоит там, где была бы «Подключить». */
+  | "connect_needs_hub"
+  | "permissions"
+  | "disconnect"
+  | "open_hub"
+  | "forget"
+  | "back"
 
 export interface DialogConnectorProps {
   card: CorpCatalogCard
@@ -659,6 +724,8 @@ export function DialogConnector(props: DialogConnectorProps) {
   function select(row: ConnectorRow) {
     const value = card()
     if (row === "back") return props.onBack()
+    // Строка причины — не действие: нажатие на неё ничего не делает, текст уже на экране.
+    if (row === "connect_needs_hub") return
     if (row === "open_hub") return void props.openHub(value)
     if (row === "permissions") {
       props.onLeave()
@@ -679,6 +746,10 @@ export function DialogConnector(props: DialogConnectorProps) {
         title: value.actions.includes("reconnect") ? t("connectors.retry") : t("connectors.connect"),
         value: "connect",
       })
+    // S-V7, S-C10 п.8: подключение `mode:"facade"` идёт через Hub-фасад, и без адреса Hub его
+    // выполнить нечем. Действие сервер из набора снял, а на его месте — там же, где была бы
+    // строка «Подключить», а не в другой части экрана, — стоит причина недоступности.
+    else if (connectNeedsHub(value)) list.push({ title: t("connectors.facadeNeedsHub"), value: "connect_needs_hub" })
     // S-D11: блок «Разрешения» — на странице, а не в строке витрины.
     if (allows(value, "permissions")) list.push({ title: t("permissions.title"), value: "permissions" })
     if (allows(value, "disconnect")) list.push({ title: t("connectors.disconnect"), value: "disconnect" })
@@ -764,6 +835,8 @@ export function DialogConnector(props: DialogConnectorProps) {
           command: "dialog.corp.open_hub",
           title: t("connectors.openHub"),
           side: "right",
+          // S-C10 п.7, D-43: без адреса Hub пункта нет — ни в списке строк, ни в подвале.
+          hidden: !allows(card(), "open_hub") || !card().hub_url,
           disabled: () => !allows(card(), "open_hub") || !card().hub_url,
           onTrigger: () => select("open_hub"),
         },

@@ -27,6 +27,8 @@ type Step =
   | { kind: "waiting"; loginID: string; code: string; url: string }
   | { kind: "teams"; loginID: string; teams: CorpTeam[] }
   | { kind: "error"; code: string }
+  /** Адрес Hub в этой сборке не задан: входить некуда, экран называет причину (S-C10 п.6). */
+  | { kind: "unavailable" }
 
 export function DialogCorpLogin() {
   const { theme } = useTheme()
@@ -101,6 +103,14 @@ export function DialogCorpLogin() {
     stopped = false
     const status = await sdk.client.corp.status().catch(() => undefined)
     setHub(status?.data?.hub_url)
+    // S-C5, S-C10 п.6: корп-функции включает любой из двух адресов, но вход по SSO остаётся
+    // зависимым от Hub. Без его адреса экран называет причину вместо запроса на незаданный адрес
+    // и вместо неправды «режим не настроен». Недоступность самого `corp.status` этим случаем не
+    // является — там прежний путь с кодом ошибки.
+    if (status?.data?.enabled && !status.data.hub_url) {
+      setStep({ kind: "unavailable" })
+      return
+    }
     const started = await sdk.client.corp.login.start().catch(() => undefined)
     const data = started?.data
     if (!data) {
@@ -223,6 +233,9 @@ export function DialogCorpLogin() {
                 <text fg={theme.textMuted}>{t("login.waiting")}</text>
               </box>
             )}
+          </Show>
+          <Show when={step().kind === "unavailable"}>
+            <text fg={theme.error}>{t("login.needsHub")}</text>
           </Show>
           <Show
             when={step().kind === "error" ? (step() as Extract<Step, { kind: "error" }>) : undefined}

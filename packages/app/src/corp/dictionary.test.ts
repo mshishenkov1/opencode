@@ -276,17 +276,23 @@ describe("i18n corp.* — тексты витрины-таблицы и экра
   const dictEn = en as Record<string, string>
   const dictRu = ru as Record<string, string>
 
-  /** Ключи, добавленные ревизией 1.10, — по разделам состава страницы и витрины. */
+  /**
+   * Ключи, добавленные ревизией 1.10, — по разделам состава страницы и витрины.
+   *
+   * `corp.connectors.tabNotConnected` и `corp.empty.tabNotConnected` ревизией 1.12 удалены вместе
+   * со вкладкой «Неподключённые» (S-I1: «Удаление ключа из словарей не является удалением
+   * идентификатора S- или AC- и правил стабильности спецификации не нарушает»; AC-221 отдельно требует
+   * их ОТСУТСТВИЯ во всех трёх словарях) — держать их в списке обязательных ключей значило бы
+   * требовать того, что спека явно запретила.
+   */
   const KEYS = [
     "corp.connectors.tabAll",
     "corp.connectors.tabConnected",
-    "corp.connectors.tabNotConnected",
     "corp.connectors.columnName",
     "corp.connectors.columnType",
     "corp.connectors.columnStatus",
     "corp.connectors.resetFilter",
     "corp.empty.tabConnected",
-    "corp.empty.tabNotConnected",
     "corp.connector.back",
     "corp.connector.type",
     "corp.connector.owner",
@@ -301,6 +307,16 @@ describe("i18n corp.* — тексты витрины-таблицы и экра
     "corp.permissions.restTitle",
     "corp.permissions.restDescription",
   ] as const
+
+  /** Ключи ревизии 1.10, снятые ревизией 1.12 (D-53) — обязаны отсутствовать во всех словарях (AC-221). */
+  const REMOVED_KEYS = ["corp.connectors.tabNotConnected", "corp.empty.tabNotConnected"] as const
+
+  test("AC-221: снятые ключи вкладки «Неподключённые» отсутствуют в обоих словарях", () => {
+    for (const key of REMOVED_KEYS) {
+      expect(dictEn[key as keyof typeof dictEn], `${key} остался в en.ts`).toBeUndefined()
+      expect(dictRu[key as keyof typeof dictRu], `${key} остался в ru.ts`).toBeUndefined()
+    }
+  })
 
   test("AC-233: все ключи есть в обоих словарях и непусты", () => {
     for (const key of KEYS) {
@@ -327,14 +343,14 @@ describe("i18n corp.* — тексты витрины-таблицы и экра
     }
   })
 
-  test("AC-233: три подписи вкладок и три заголовка колонок различимы", () => {
+  // Было «три подписи вкладок»: третьей вкладки не существует с ревизии 1.12 (D-53), а прежняя
+  // формулировка проходила «случайно» — `corp.connectors.tabNotConnected` даёт `undefined`, и
+  // `new Set([...,"a","b",undefined])` тоже имеет размер 3, так что удаление ключа тест не красило.
+  // Найдено попутно при разборе AC-233, не входит в перечень 11 падений итерации.
+  test("AC-233: две подписи вкладок и три заголовка колонок различимы", () => {
     for (const dict of [dictEn, dictRu]) {
-      const tabs = [
-        dict["corp.connectors.tabAll"],
-        dict["corp.connectors.tabConnected"],
-        dict["corp.connectors.tabNotConnected"],
-      ]
-      expect(new Set(tabs).size).toBe(3)
+      const tabs = [dict["corp.connectors.tabAll"], dict["corp.connectors.tabConnected"]]
+      expect(new Set(tabs).size).toBe(2)
       const columns = [
         dict["corp.connectors.columnName"],
         dict["corp.connectors.columnType"],
@@ -344,7 +360,9 @@ describe("i18n corp.* — тексты витрины-таблицы и экра
     }
   })
 
-  test("AC-233: шесть пустых состояний различимы текстом в обоих языках", () => {
+  // S-V12 (ревизия 1.12): было шесть пустых состояний, стало пять — шестое («Подключено всё» во
+  // вкладке «Неподключённые») исчезло вместе с самой вкладкой (D-53).
+  test("AC-233: пять пустых состояний различимы текстом в обоих языках", () => {
     for (const dict of [dictEn, dictRu]) {
       const texts = [
         dict["corp.connectors.empty"],
@@ -352,10 +370,9 @@ describe("i18n corp.* — тексты витрины-таблицы и экра
         dict["corp.connectors.hubDown"],
         dict["corp.connectors.needsLogin"],
         dict["corp.empty.tabConnected"],
-        dict["corp.empty.tabNotConnected"],
       ]
-      expect(texts.filter(Boolean)).toHaveLength(6)
-      expect(new Set(texts).size).toBe(6)
+      expect(texts.filter(Boolean)).toHaveLength(5)
+      expect(new Set(texts).size).toBe(5)
     }
   })
 

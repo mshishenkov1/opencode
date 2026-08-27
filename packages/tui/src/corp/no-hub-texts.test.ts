@@ -145,13 +145,13 @@ function branches(hub: boolean, dict: Dict): { name: string; text: string }[] {
     list.push({ name, text: text! })
   }
 
-  // Шесть пустых состояний (S-V12).
+  // Пять пустых состояний (S-V12, ревизия 1.12: было шесть — состояние «Подключено всё» во
+  // вкладке «Неподключённые» исчезло вместе с самой вкладкой, D-53).
   push("S-V12 состояние 1 «Каталог пуст»", empty({ servers: [], dropped: [] }))
   push("S-V12 состояние 2 «Каталог не разобран»", empty({ servers: [], dropped: [{ reason: "alias" }] }))
   push("S-V12 состояние 3 «источник недоступен»", empty({ servers: [], hub_error: "hub_unavailable" }))
   push("S-V12 состояние 4 «Требуется вход»", empty({ servers: [], hub_error: "unauthorized" }))
   push("S-V12 состояние 5 «вкладка Подключённые»", empty({ servers: one }, "connected"))
-  push("S-V12 состояние 6 «вкладка Неподключённые»", empty({ servers: one }, "not_connected"))
   // Баннер над непустым списком: свежая ошибка и данные из кэша.
   push("баннер: источник недоступен", banner({ servers: one, hub_error: "hub_unavailable" }))
   push("баннер: данные из кэша", banner({ servers: one, hub_error: "hub_unavailable", cached_at: 1_700_000_000_000 }))
@@ -216,10 +216,10 @@ describe("tui/corp — сборка без Hub не показывает сло�
     // Таблицы витрины совпадают с перечислениями сервера ключ в ключ — новое значение валит тест.
     expect(Object.keys(STATUS_KEY).sort()).toEqual([...CARD_STATUSES].sort())
     expect(Object.keys(STATE_KEY).sort()).toEqual([...CARD_STATES].sort())
-    // Шесть пустых состояний — все шесть и попарно различимы.
+    // Пять пустых состояний — все пять и попарно различимы (ревизия 1.12, D-53).
     const empties = list.filter((branch) => branch.name.startsWith("S-V12 состояние"))
-    expect(empties.length).toBe(6)
-    expect(new Set(empties.map((branch) => branch.text)).size).toBe(6)
+    expect(empties.length).toBe(5)
+    expect(new Set(empties.map((branch) => branch.text)).size).toBe(5)
   })
 
   test("AC-275: те же ветви в сборке С Hub показывают прежние тексты", () => {

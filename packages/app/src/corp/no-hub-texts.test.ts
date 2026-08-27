@@ -201,7 +201,8 @@ function branches(hub: boolean, dict: Record<string, string>): Branch[] {
 
   const one = [{ alias: "tag" }]
   const list: Branch[] = [
-    // Шесть пустых состояний (S-V12).
+    // Пять пустых состояний (S-V12, ревизия 1.12: было шесть — состояние «Подключено всё» во
+    // вкладке «Неподключённые» исчезло вместе с самой вкладкой, D-53).
     { name: "пусто: каталог пуст", key: "", args: undefined },
   ]
   list.length = 0
@@ -218,7 +219,6 @@ function branches(hub: boolean, dict: Record<string, string>): Branch[] {
   push("S-V12 состояние 3 без ответа источника", empty(undefined))
   push("S-V12 состояние 4 «Требуется вход»", empty({ servers: [], hub_error: "unauthorized" }))
   push("S-V12 состояние 5 «вкладка Подключённые»", empty({ servers: one }, { tab: "connected", cards: one }))
-  push("S-V12 состояние 6 «вкладка Неподключённые»", empty({ servers: one }, { tab: "not_connected", cards: one }))
   // Баннер над непустым списком: свежая ошибка и данные из кэша.
   push("баннер: источник недоступен", banner({ servers: one, hub_error: "hub_unavailable" }))
   push("баннер: данные из кэша", banner({ servers: one, hub_error: "hub_unavailable", cached_at: 1_700_000_000_000 }))
@@ -281,10 +281,12 @@ describe("сборка без Hub — слово «Hub» не показывае
       expect(list.some((branch) => branch.name.includes(`mode=${mode}`)), mode).toBe(true)
     for (const cls of ERROR_CLASSES)
       expect(list.some((branch) => branch.name.includes(`ошибка подключения ${cls}`)), cls).toBe(true)
-    // Шесть пустых состояний — все шесть в матрице и попарно различимы.
+    // Пять пустых состояний — все пять в матрице и попарно различимы (состояние 3 даёт две ветви:
+    // «источник недоступен» с известным кодом и «без ответа источника» без него, — поэтому записей
+    // в матрице на одну больше, чем различимых состояний).
     const empties = list.filter((branch) => branch.name.startsWith("S-V12 состояние"))
-    expect(empties.length).toBe(7)
-    expect(new Set(empties.map((branch) => branch.args!["rendered"])).size).toBe(6)
+    expect(empties.length).toBe(6)
+    expect(new Set(empties.map((branch) => branch.args!["rendered"])).size).toBe(5)
     // Перечисления взяты из кода, а не выписаны: таблицы витрины совпадают с ними ключ в ключ.
     expect(Object.keys(STATE_KEY).sort()).toEqual([...CARD_STATES].sort())
     expect(Object.keys(STATUS_KEY).sort()).toEqual([...CARD_STATUSES].sort())

@@ -356,13 +356,24 @@ describe("витрина — плоская таблица, вкладки и п
     expect(source).toContain("skipFilter={() => true}")
   })
 
-  test("AC-218: вкладки дают две, три и пять строк, а «Неподключённые» собирает все прочие", () => {
+  // AC-218 переформулирован ревизией 1.12 к двум вкладкам (см. блок ревизии 1.12 в начале
+  // acceptance-criteria.yaml: «сценарий вкладок приведён к двум, прежние проверки умолчания и
+  // неперсистентности сохранены дословно, добавлена проверка отсутствия третьей вкладки»); само
+  // тело критерия AC-218 этой правки не получило и до сих пор перечисляет вкладку «Неподключённые»
+  // — расхождение зафиксировано в corp/disputes/dispute-AC218-body-not-updated.json. Тест здесь
+  // приведён к действующему правилу S-V11 («вкладок ДВЕ… изменилось лишь то, что противоположной
+  // вкладки больше нет») и к однозначным соседним критериям AC-221/AC-225 (тоже про исчезновение
+  // вкладки), а не к неотредактированному телу AC-218.
+  test("AC-218: «Подключённые» — две строки, «Все» — пять, третьей вкладки не существует", () => {
     const visible = (tab: string) => catalog.filter((card) => matchesTab(card, tab)).map((card) => card.alias)
     expect(visible("connected")).toEqual(["gitlab", "tag"])
-    expect(visible("not_connected")).toEqual(["jira", "wiki", "old"])
     expect(visible("all")).toEqual(["gitlab", "tag", "jira", "wiki", "old"])
     // Порядок строк — порядок каталога при любой вкладке.
     expect(visible("all")).toEqual(catalog.map((card) => card.alias))
+    // AC-221: вкладки «Неподключённые» нет ни в разметке, ни в наборе доступных фильтров —
+    // `matchesTab` не различает её от «Подключённые» специальным случаем, значения `ConnectorsTab`
+    // исчерпываются двумя.
+    expect(source).toContain('export type ConnectorsTab = "all" | "connected"')
   })
 
   test("AC-218: умолчание — «Все», и выбор вкладки между запусками не сохраняется", () => {
@@ -377,7 +388,6 @@ describe("витрина — плоская таблица, вкладки и п
       catalog.filter((card) => matchesTab(card, tab) && matchesQuery(card, query)).map((card) => card.alias)
     expect(visible("connected", "ai lab")).toEqual(["gitlab"])
     expect(visible("all", "ai lab")).toEqual(["gitlab", "jira", "old"])
-    expect(visible("not_connected", "ai lab")).toEqual(["jira", "old"])
     // Поиск — подстрока без учёта регистра по title, alias, description, owner и «Типу» (S-V22).
     expect(matchesQuery(catalog[1]!, "мессендж")).toBe(true)
     expect(matchesQuery(catalog[1]!, "ТЭГ")).toBe(true)
@@ -417,11 +427,12 @@ describe("витрина — плоская таблица, вкладки и п
 describe("витрина — композиция и неподвижная шапка (AC-225, AC-226)", () => {
   const source = SOURCE.connectors
 
-  test("AC-225: окно — CorpDialog, фильтр — TabsV2 variant=pill с тремя вкладками, шапка на месте", () => {
+  test("AC-225: окно — CorpDialog, фильтр — TabsV2 variant=pill с двумя вкладками, шапка на месте", () => {
     expect(source).toContain("<CorpDialog")
     expect(source).toContain('<TabsV2\n            variant="pill"')
-    for (const value of ["all", "connected", "not_connected"])
-      expect(source, value).toContain(`<TabsV2.Trigger value="${value}">`)
+    // AC-225 (ревизия 1.12): «ДВУМЯ вкладками» — литерально в теле критерия, третьей не существует.
+    for (const value of ["all", "connected"]) expect(source, value).toContain(`<TabsV2.Trigger value="${value}">`)
+    expect(source, "not_connected").not.toContain('<TabsV2.Trigger value="not_connected">')
     // Вкладки — единственный орган фильтрации: ни чекбоксов, ни выпадающих списков витрина не заводит.
     expect(source).not.toContain("<Checkbox")
     expect(source).not.toContain("<SelectV2")

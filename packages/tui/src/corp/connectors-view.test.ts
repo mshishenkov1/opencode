@@ -67,17 +67,24 @@ const catalog: Card[] = [
 ]
 
 describe("tui/corp — вкладки фильтра витрины (S-V11, S-T10; AC-217, AC-218)", () => {
-  test("AC-218: «Подключённые» — состояние 4, «Неподключённые» — все прочие, «Все» — пять строк", () => {
+  // AC-218 переформулирован ревизией 1.12 к двум вкладкам (см. блок ревизии 1.12 в начале
+  // acceptance-criteria.yaml: «сценарий вкладок приведён к двум… добавлена проверка отсутствия
+  // третьей вкладки»); тело самого критерия AC-218 этой правки не получило и до сих пор
+  // перечисляет «Неподключённые» — расхождение зафиксировано в
+  // corp/disputes/dispute-AC218-body-not-updated.json. Тесты здесь приведены к действующему
+  // правилу S-V11 (ревизии 1.12: «вкладок ДВЕ… изменилось лишь то, что противоположной вкладки
+  // больше нет») и к соседним AC-221/AC-225, переформулированным явно.
+  test("AC-218: «Подключённые» — состояние 4, «Все» — пять строк, третьей вкладки не существует", () => {
     const visible = (tab: string) => catalog.filter((card) => inTab(card, tab)).map((card) => card.alias)
     expect(visible("connected")).toEqual(["gitlab", "tag"])
-    expect(visible("not_connected")).toEqual(["jira", "wiki", "old"])
     expect(visible("all")).toEqual(catalog.map((card) => card.alias))
+    // AC-221: значения `ConnectorTab` исчерпываются двумя, третьей вкладки в перечислении нет.
+    expect(TABS).toEqual(["all", "connected"])
   })
 
-  test("AC-218: клавиша f идёт циклом и возвращается к «Все»; умолчание — «Все»", () => {
+  test("AC-218: клавиша f идёт циклом «Все → Подключённые → Все»; умолчание — «Все»", () => {
     expect(nextTab("all")).toBe("connected")
-    expect(nextTab("connected")).toBe("not_connected")
-    expect(nextTab("not_connected")).toBe("all")
+    expect(nextTab("connected")).toBe("all")
     expect(source).toContain('createSignal<ConnectorTab>(props.restore?.tab ?? "all")')
     // Клавиша объявлена и подписана той вкладкой, куда переключит нажатие.
     expect(keybinds).toContain('"dialog.corp.filter": keybind("f"')
@@ -112,7 +119,6 @@ describe("tui/corp — поиск перемножается с вкладкой
       catalog.filter((card) => inTab(card, tab) && matches(card, query)).map((card) => card.alias)
     expect(visible("connected", "ai lab")).toEqual(["gitlab"])
     expect(visible("all", "ai lab")).toEqual(["gitlab", "jira", "old"])
-    expect(visible("not_connected", "ai lab")).toEqual(["jira", "old"])
   })
 
   test("AC-219: поиск — подстрока без учёта регистра по title, alias, description, owner и «Типу»", () => {
@@ -189,7 +195,8 @@ describe("tui/corp — пустые состояния и признак под�
     const table = source.slice(source.indexOf("const TAB_EMPTY_KEY"), source.indexOf("export function nextTab"))
     expect(table).toContain("all: undefined")
     expect(table).toContain('connected: "empty.tabConnected"')
-    expect(table).toContain('not_connected: "empty.tabNotConnected"')
+    // AC-221: ключ снятой вкладки «Неподключённые» не появляется в таблице пустых состояний.
+    expect(table).not.toContain("tabNotConnected")
   })
 
   test("AC-222: прежние четыре состояния сохранены и различимы", () => {

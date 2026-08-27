@@ -65,13 +65,11 @@ const ru = {
   // Вкладки фильтра витрины и их пустые состояния (S-V11, S-V12, S-T10, ревизия 1.10).
   "connectors.tabAll": "Все",
   "connectors.tabConnected": "Подключённые",
-  "connectors.tabNotConnected": "Неподключённые",
   "connectors.columnName": "Имя",
   "connectors.columnType": "Тип",
   "connectors.columnStatus": "Статус",
   "connectors.resetFilter": "Показать все",
   "empty.tabConnected": "Пока ничего не подключено",
-  "empty.tabNotConnected": "Подключено всё",
   "empty.unparsed": "Каталог не разобран: отброшены все карточки ({{dropped}})",
   "connectors.partial": "Часть карточек каталога не разобрана и не показана: {{dropped}}",
 
@@ -185,13 +183,11 @@ const en: Record<Key, string> = {
 
   "connectors.tabAll": "All",
   "connectors.tabConnected": "Connected",
-  "connectors.tabNotConnected": "Not connected",
   "connectors.columnName": "Name",
   "connectors.columnType": "Type",
   "connectors.columnStatus": "Status",
   "connectors.resetFilter": "Show all",
   "empty.tabConnected": "Nothing connected yet",
-  "empty.tabNotConnected": "Everything is connected",
   "empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
   "connectors.partial": "Some catalog cards were not parsed and are hidden: {{dropped}}",
 

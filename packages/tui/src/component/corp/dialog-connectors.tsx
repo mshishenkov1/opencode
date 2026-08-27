@@ -143,37 +143,45 @@ export function permissionsNeedHub(card: CorpCatalogCard) {
   return card.permissions_need_hub === true
 }
 
-/** Вкладки фильтра витрины (S-V11); умолчание — «Все», между запусками выбор не сохраняется. */
-export const TABS = ["all", "connected", "not_connected"] as const
+/**
+ * Вкладки фильтра витрины (S-V11); умолчание — «Все», между запусками выбор не сохраняется.
+ *
+ * Ревизия 1.12 убрала «Неподключённые»: у неё почти всегда тот же состав, что у «Все», и
+ * различить их на глаз было нельзя. Оставшаяся пара отвечает на вопрос «чем я уже могу
+ * пользоваться», а полный список остаётся вкладкой «Все».
+ */
+export const TABS = ["all", "connected"] as const
 export type ConnectorTab = (typeof TABS)[number]
 
 const TAB_KEY = {
   all: "connectors.tabAll",
   connected: "connectors.tabConnected",
-  not_connected: "connectors.tabNotConnected",
 } as const
 
-/** Пустые состояния 5 и 6 (S-V12): «в этой вкладке пусто» — не «каталога нет». */
+/**
+ * Пустое состояние вкладки (S-V12, состояние 5): «в этой вкладке пусто» — не «каталога нет».
+ *
+ * Ревизия 1.12 оставила пустых состояний пять: шестое исчезло вместе со вкладкой
+ * «Неподключённые». Номера остальных не сдвинуты, их тексты и действия не изменены.
+ */
 const TAB_EMPTY_KEY = {
   all: undefined,
   connected: "empty.tabConnected",
-  not_connected: "empty.tabNotConnected",
 } as const
 
-/** Клавиша `f` идёт циклом «Все → Подключённые → Неподключённые → Все» (S-T10). */
+/** Клавиша `f` идёт циклом «Все → Подключённые → Все» (S-T10, S-V11 ревизии 1.12). */
 export function nextTab(tab: ConnectorTab): ConnectorTab {
   return TABS[(TABS.indexOf(tab) + 1) % TABS.length]!
 }
 
 /**
- * Видна ли карточка во вкладке (S-V11). «Подключённые» — состояние 4 таблицы S-V16; «Неподключённые»
- * — все прочие, включая `needs_auth`, `unavailable` и `not_connected`: вкладка отвечает на вопрос
- * «чем я уже могу пользоваться», а не пересказывает таблицу статусов.
+ * Видна ли карточка во вкладке (S-V11). «Подключённые» — состояние 4 таблицы S-V16, а не пересказ
+ * таблицы статусов: вкладка отвечает на вопрос «чем я уже могу пользоваться». Определение
+ * ревизией 1.12 не изменено — убрана только вкладка «Неподключённые».
  */
 export function inTab(card: Pick<CorpCatalogCard, "state">, tab: ConnectorTab) {
   if (tab === "all") return true
-  const connected = card.state === "connected"
-  return tab === "connected" ? connected : !connected
+  return card.state === "connected"
 }
 
 /**

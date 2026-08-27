@@ -1090,6 +1090,10 @@ export const dict = {
   "corp.connectors.always": "Always available",
   "corp.connectors.permissionsUnavailable":
     "This app version does not support the connector permission model — manage permissions in the Hub",
+  // Та же причина без совета идти в Hub — для сборки, где Hub нет (S-V9, S-I1, D-43). Ключ ревизии
+  // 1.7 выше не переименовывается и не переписывается: он остаётся текстом сборки **с** Hub.
+  "corp.connectors.permissionsUnavailableNoHub":
+    "Choosing permissions for this connector is not supported by this version of the app",
   "corp.connectors.toolsPreview": "Tools in the {{preset}} preset",
   "corp.connectors.partial": "Some catalog cards were not parsed and are hidden: {{dropped}}",
   "corp.connectors.connected": "Connected",

@@ -988,6 +988,10 @@ export const dict = {
   "corp.connectors.always": "Всегда доступно",
   "corp.connectors.permissionsUnavailable":
     "Модель прав не поддерживается этой версией приложения — правами можно управлять в Hub",
+  // Та же причина без совета идти в Hub — для сборки, где Hub нет (S-V9, S-I1, D-43). Ключ ревизии
+  // 1.7 выше не переименовывается и не переписывается: он остаётся текстом сборки **с** Hub.
+  "corp.connectors.permissionsUnavailableNoHub":
+    "Выбор прав для этого коннектора не поддерживается этой версией приложения",
   "corp.connectors.toolsPreview": "Инструменты пресета {{preset}}",
   "corp.connectors.partial": "Часть карточек каталога не разобрана и не показана: {{dropped}}",
   "corp.connectors.connected": "Подключено",

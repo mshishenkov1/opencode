@@ -121,10 +121,28 @@ export function aggregateMode(modes: (CorpPermissionMode | undefined)[]): CorpPe
 }
 
 /**
+ * Ключ причины для последней строки таблицы S-V9 — «модель прав не разобрана» (микроревизия 1.11.1).
+ *
+ * Текст ревизии 1.7 заканчивается советом «правами можно управлять в Hub». В сборке без Hub это
+ * совет пойти туда, чего у пользователя нет (D-43), поэтому там показывается та же причина без
+ * совета. Заменяется **только** совет: сообщение о деградации разбора (S-V14) остаётся видимым —
+ * оно про дефект данных, а не про Hub.
+ *
+ * Признак — тот же, которым определяется наличие действия `open_hub` (S-V16, S-C10 п.7): сервер
+ * убирает `open_hub` из наборов ровно при незаданном адресе Hub и тем же значением заполняет
+ * `hub_configured` вьюшки. Оболочка берёт его из данных и build-константу второй раз не читает.
+ */
+export function permissionsUnavailableKey(hubConfigured: boolean) {
+  return hubConfigured ? "corp.connectors.permissionsUnavailable" : "corp.connectors.permissionsUnavailableNoHub"
+}
+
+/**
  * Прежний экран пресетов (S-V9) — деградация для видов модели прав, отличных от `permission_groups`
  * (S-V20). Содержимое общее у страницы коннектора и у отдельного окна `DialogConnectorPermissions`.
  */
-const ConnectorPresets: Component<{ card: CorpCatalogCard; onApplied?: () => void }> = (props) => {
+const ConnectorPresets: Component<{ card: CorpCatalogCard; hubConfigured: boolean; onApplied?: () => void }> = (
+  props,
+) => {
   const language = useLanguage()
   const action = useConnectorAction()
 
@@ -147,7 +165,9 @@ const ConnectorPresets: Component<{ card: CorpCatalogCard; onApplied?: () => voi
       {/* S-V9, строка 5: вид модели прав неизвестен или не разобран — выбор заблокирован, причина
           названа; «Открыть в Hub», «Подключить» и «Отключить» при этом работают как обычно. */}
       <Show when={unavailable()}>
-        <div class="text-12-regular text-text-weak">{language.t("corp.connectors.permissionsUnavailable")}</div>
+        <div class="text-12-regular text-text-weak">
+          {language.t(permissionsUnavailableKey(props.hubConfigured))}
+        </div>
       </Show>
       <Show when={tools().length > 0}>
         <div class="flex flex-col gap-1">
@@ -208,11 +228,16 @@ const ConnectorPresets: Component<{ card: CorpCatalogCard; onApplied?: () => voi
 export const DialogConnectorPermissions: Component<{ card: CorpCatalogCard }> = (props) => {
   const language = useLanguage()
   const dialog = useDialog()
+  const catalog = useCorpCatalog(() => true)
 
   return (
     <CorpDialog title={language.t("corp.connectors.presetTitle", { title: props.card.title })}>
       <div class="corp-connector">
-        <ConnectorPresets card={props.card} onApplied={() => dialog.close()} />
+        <ConnectorPresets
+          card={props.card}
+          hubConfigured={catalog.data?.hub_configured !== false}
+          onApplied={() => dialog.close()}
+        />
       </div>
     </CorpDialog>
   )
@@ -397,6 +422,12 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
   const card = createMemo(() => catalog.data?.servers.find((entry) => entry.alias === props.alias))
 
   /**
+   * Задан ли адрес Hub в этой сборке (S-C10 п.7). Тот же признак, которым сервер решает судьбу
+   * `open_hub`; отсутствие поля означает «сборка с Hub» — поведение до ревизии 1.11.
+   */
+  const hubConfigured = createMemo(() => catalog.data?.hub_configured !== false)
+
+  /**
    * Подпись ошибки подключения (S-V19): объяснение своего класса плюс код ошибки как есть.
    * Класс есть у любой неудачи, включая `unknown`, поэтому необъяснённой ошибки не бывает (D-32).
    * Ревизией 1.10 изменилось только место показа — блок страницы вместо подписи строки витрины.
@@ -572,7 +603,7 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                       fallback={
                         <>
                           <span class="text-12-regular text-text-weak">{language.t("corp.permissions.title")}</span>
-                          <ConnectorPresets card={entry()} />
+                          <ConnectorPresets card={entry()} hubConfigured={hubConfigured()} />
                         </>
                       }
                     >

@@ -23,6 +23,22 @@ const ru = {
   // без него оно пользователю не показывается нигде (D-43).
   "login.needsHub": "Вход по корпоративному SSO в этой сборке не настроен",
 
+  // Выход из корпоративного аккаунта (S-A14, S-A16, S-T11). Пара `*Local` — тексты сборки без
+  // Hub: там говорить о сервере нечего, а не «то же самое другими словами» (D-43).
+  "logout.action": "Выйти",
+  "logout.confirm": "Выйти из корпоративного аккаунта? Ключ будет отозван на сервере и удалён на этом компьютере.",
+  "logout.confirmLocal": "Выйти из корпоративного аккаунта? Ключ будет удалён на этом компьютере.",
+  "logout.done": "Выход выполнен: ключ отозван на сервере и удалён на этом компьютере",
+  "logout.doneLocal": "Выход выполнен: ключ удалён на этом компьютере",
+  "logout.revokeFailed": "Ключ удалён на этом компьютере, отозвать его на сервере не удалось: {{reason}}",
+  "logout.notSignedIn": "Вы не выполняли вход",
+
+  // Возврат выключенного провайдера (S-C11, S-T11).
+  "provider.disabledTitle": "Провайдер Magnit Copilot выключен в вашем конфиге, файл {{file}}",
+  "provider.enable": "Включить",
+  "provider.enableConfirm": "Включить провайдера Magnit Copilot? Будет изменён файл {{file}}.",
+  "provider.enableForeignLayer": "Запись лежит в файле {{file}} — приложение его не редактирует, измените вручную",
+
   "connectors.title": "Коннекторы",
   "connectors.command": "Витрина коннекторов",
   "connectors.loginCommand": "Вход через корпоративный SSO",
@@ -145,6 +161,19 @@ const en: Record<Key, string> = {
   "login.success": "Signed in",
   "login.cancelled": "Sign-in cancelled",
   "login.needsHub": "Corporate SSO sign-in is not configured in this build",
+
+  "logout.action": "Sign out",
+  "logout.confirm": "Sign out of the corporate account? The key will be revoked on the server and deleted on this computer.",
+  "logout.confirmLocal": "Sign out of the corporate account? The key will be deleted on this computer.",
+  "logout.done": "Signed out: the key was revoked on the server and deleted on this computer",
+  "logout.doneLocal": "Signed out: the key was deleted on this computer",
+  "logout.revokeFailed": "The key was deleted on this computer, but revoking it on the server failed: {{reason}}",
+  "logout.notSignedIn": "You are not signed in",
+
+  "provider.disabledTitle": "The Magnit Copilot provider is disabled in your config, file {{file}}",
+  "provider.enable": "Enable",
+  "provider.enableConfirm": "Enable the Magnit Copilot provider? The file {{file}} will be changed.",
+  "provider.enableForeignLayer": "The entry is in {{file}} — the app does not edit that file, so change it yourself",
 
   "connectors.title": "Connectors",
   "connectors.command": "Connector catalog",

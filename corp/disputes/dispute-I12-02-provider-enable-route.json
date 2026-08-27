@@ -1,0 +1,19 @@
+{
+  "id": "DISPUTE-I12-02-01",
+  "step": "I-12 / серверная часть ревизии 1.12",
+  "agent": "dev-agent",
+  "subject": "Действие «Включить» требует роута, которого нет в таблице S-A1",
+  "claim": "S-C11 п.4 требует, чтобы приложение снимало magnit_prod с disabled_providers через Config.updateGlobal, а S-T11 требует, чтобы Desktop и TUI брали результат из одного роута. При этом таблица роутов S-A1 (§5.1) роута для этого действия не называет: ревизия 1.12 добавляет в неё только POST /corp/logout и поле provider_disabled. Пробел в спеке, а не расхождение с ней.",
+  "evidence": [
+    "spec.md §5.1 S-A1: «Ревизия 1.12 добавляет POST /corp/logout (S-A14) и необязательное поле provider_disabled ответа GET /corp/status… Прочие поля не изменены» — роут действия не упомянут",
+    "spec.md §4.1 S-C11 п.4: «Удаляет ровно один элемент magnit_prod из массива disabled_providers через существующий механизм патча конфига (Config.updateGlobal, S-C7)»",
+    "spec.md §7 S-T11: «Оба экрана берут результат из одного роута POST /corp/logout (S-A14) и сами ничего не вычисляют» — тот же принцип применён к возврату провайдера"
+  ],
+  "resolution_applied": {
+    "route": "POST /corp/provider/enable",
+    "response": "{changed: boolean, provider_disabled?: {file}, reason?: \"foreign_layer\" | \"not_disabled\"}",
+    "sdk": "client.corp.providerEnable() — идентификатор OpenAPI corp.providerEnable оставлен двухсегментным намеренно: точка внутри имени заводит вложенный класс SDK (corp.provider.enable()), а соседи группы плоские",
+    "note": "Имя и форма ответа совпали с тем, что независимо ожидает app-агент в packages/app/src/context/corp.ts (useProviderEnable → client.corp.providerEnable(), проверки result.changed, result.reason === \"foreign_layer\", result.provider_disabled?.file) — контракт сошёлся без правок с обеих сторон"
+  },
+  "proposed_resolution": "Дописать строку `POST /corp/provider/enable` в таблицу S-A1 при следующей правке спеки. Поведение правилу S-C11 соответствует полностью; спорно только то, что путь не зафиксирован спекой."
+}

@@ -84,13 +84,19 @@ describe("i18n corp.* (AC-93, AC-99)", () => {
 })
 
 describe("корп-экраны Desktop/web (AC-85, AC-98)", () => {
-  test("AC-98: в корп-экранах нет строковых литералов с кириллицей", () => {
-    for (const file of [
-      path.join(APP_SRC, "corp/enabled.ts"),
-      path.join(APP_SRC, "context/corp.ts"),
-      path.join(APP_SRC, "components/corp/dialog-connectors.tsx"),
-      path.join(APP_SRC, "components/corp/dialog-corp-login.tsx"),
-    ]) {
+  test("AC-98, AC-233: в корп-экранах нет строковых литералов с кириллицей", () => {
+    // Ревизия 1.10 добавила корп-компоненты (страница коннектора, экран разрешений), поэтому список
+    // расширен до всего каталога `components/corp/**`: перечислять файлы поимённо значило бы
+    // пропускать каждый новый экран.
+    const corp = fs
+      .readdirSync(path.join(APP_SRC, "components/corp"))
+      .filter((file) => file.endsWith(".tsx"))
+      .map((file) => path.join(APP_SRC, "components/corp", file))
+    const files = [path.join(APP_SRC, "corp/enabled.ts"), path.join(APP_SRC, "context/corp.ts"), ...corp]
+    // Проверяются все экраны, а не «какие-то»: пустой список молча прошёл бы.
+    expect(corp.length).toBeGreaterThanOrEqual(4)
+
+    for (const file of files) {
       const source = fs.readFileSync(file, "utf8")
       const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1")
       const literals = withoutComments.match(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g) ?? []
@@ -134,13 +140,23 @@ describe("i18n corp.* — тексты устойчивого разбора к�
   })
 
   test("AC-166: тексты витрины подставляются из словаря, а не захардкожены в коде", () => {
-    const source = fs.readFileSync(path.join(APP_SRC, "components/corp/dialog-connectors.tsx"), "utf8")
+    // Ревизией 1.10 экран прав и предупреждение о неполном каталоге разъехались по двум файлам
+    // (S-D11), поэтому ключ ищется во всём каталоге корп-компонентов, а не в одной витрине.
+    // Требование при этом усилено: тексты не должны встречаться **ни в одном** корп-компоненте.
+    const sources = fs
+      .readdirSync(path.join(APP_SRC, "components/corp"))
+      .filter((file) => file.endsWith(".tsx"))
+      .map((file) => ({ file, text: fs.readFileSync(path.join(APP_SRC, "components/corp", file), "utf8") }))
+    const all = sources.map((entry) => entry.text).join("\n")
+
     for (const key of REVISION_17_KEYS) {
-      // Ключ используется экраном...
-      expect(source, key).toContain(key)
-      // ...а его тексты в исходнике не встречаются ни на одном языке.
-      expect(source, key).not.toContain((ru as Record<string, string>)[key]!)
-      expect(source, key).not.toContain((en as Record<string, string>)[key]!)
+      // Ключ используется каким-то из корп-экранов...
+      expect(all, key).toContain(key)
+      // ...а его тексты не встречаются ни в одном из них ни на одном языке.
+      for (const { file, text } of sources) {
+        expect(text, `${file}: ${key} (ru)`).not.toContain((ru as Record<string, string>)[key]!)
+        expect(text, `${file}: ${key} (en)`).not.toContain((en as Record<string, string>)[key]!)
+      }
     }
   })
 
@@ -245,5 +261,130 @@ describe("i18n corp.* — состояния карточки и классы о
       // Текст называет ошибку с её кодом (S-V19, строка `unknown`).
       expect(unknown).toContain("{{code}}")
     }
+  })
+})
+
+/**
+ * Тексты оболочки ревизии 1.10 (S-I1, S-I3, S-I5, S-I6; AC-233, AC-234).
+ *
+ * Подписи вкладок, колонок, режимов разрешений, пустых состояний вкладок и свойств страницы
+ * коннектора — тексты **оболочки**: они есть в обоих языках, различаются между ними и присутствуют в
+ * словаре TUI. Значения каталога (`title`/`description` групп, `type`) сюда не входят — это данные,
+ * и ключей на них в словарях нет (S-I6).
+ */
+describe("i18n corp.* — тексты витрины-таблицы и экрана разрешений (AC-233)", () => {
+  const dictEn = en as Record<string, string>
+  const dictRu = ru as Record<string, string>
+
+  /** Ключи, добавленные ревизией 1.10, — по разделам состава страницы и витрины. */
+  const KEYS = [
+    "corp.connectors.tabAll",
+    "corp.connectors.tabConnected",
+    "corp.connectors.tabNotConnected",
+    "corp.connectors.columnName",
+    "corp.connectors.columnType",
+    "corp.connectors.columnStatus",
+    "corp.connectors.resetFilter",
+    "corp.empty.tabConnected",
+    "corp.empty.tabNotConnected",
+    "corp.connector.back",
+    "corp.connector.type",
+    "corp.connector.owner",
+    "corp.connector.docs",
+    "corp.permissions.title",
+    "corp.permissions.allow",
+    "corp.permissions.ask",
+    "corp.permissions.deny",
+    "corp.permissions.allowAll",
+    "corp.permissions.denyAll",
+    "corp.permissions.mixed",
+    "corp.permissions.restTitle",
+    "corp.permissions.restDescription",
+  ] as const
+
+  test("AC-233: все ключи есть в обоих словарях и непусты", () => {
+    for (const key of KEYS) {
+      expect(dictEn[key], `${key} отсутствует в en.ts`).toBeString()
+      expect(dictRu[key], `${key} отсутствует в ru.ts`).toBeString()
+      expect(String(dictEn[key]).trim().length, key).toBeGreaterThan(0)
+      expect(String(dictRu[key]).trim().length, key).toBeGreaterThan(0)
+    }
+  })
+
+  test("AC-233: значения ru не равны значениям en — перевод не забыт", () => {
+    for (const key of KEYS) expect(dictRu[key], key).not.toBe(dictEn[key])
+  })
+
+  test("AC-233: три названия режима различимы между собой в обоих языках", () => {
+    for (const dict of [dictEn, dictRu]) {
+      const modes = [dict["corp.permissions.allow"], dict["corp.permissions.ask"], dict["corp.permissions.deny"]]
+      expect(new Set(modes).size).toBe(3)
+      // Групповой селектор говорит «всё»: он ставит режим всем группам сразу (S-V23).
+      expect(dict["corp.permissions.allowAll"]).not.toBe(dict["corp.permissions.allow"])
+      expect(dict["corp.permissions.denyAll"]).not.toBe(dict["corp.permissions.deny"])
+      // «Смешанно» — отдельный текст, а не один из трёх режимов.
+      expect(modes).not.toContain(dict["corp.permissions.mixed"])
+    }
+  })
+
+  test("AC-233: три подписи вкладок и три заголовка колонок различимы", () => {
+    for (const dict of [dictEn, dictRu]) {
+      const tabs = [
+        dict["corp.connectors.tabAll"],
+        dict["corp.connectors.tabConnected"],
+        dict["corp.connectors.tabNotConnected"],
+      ]
+      expect(new Set(tabs).size).toBe(3)
+      const columns = [
+        dict["corp.connectors.columnName"],
+        dict["corp.connectors.columnType"],
+        dict["corp.connectors.columnStatus"],
+      ]
+      expect(new Set(columns).size).toBe(3)
+    }
+  })
+
+  test("AC-233: шесть пустых состояний различимы текстом в обоих языках", () => {
+    for (const dict of [dictEn, dictRu]) {
+      const texts = [
+        dict["corp.connectors.empty"],
+        dict["corp.empty.unparsed"],
+        dict["corp.connectors.hubDown"],
+        dict["corp.connectors.needsLogin"],
+        dict["corp.empty.tabConnected"],
+        dict["corp.empty.tabNotConnected"],
+      ]
+      expect(texts.filter(Boolean)).toHaveLength(6)
+      expect(new Set(texts).size).toBe(6)
+    }
+  })
+
+  test("AC-233: те же тексты есть в словаре TUI — обе оболочки говорят одно и то же", async () => {
+    // Спецификатор собирается переменной по той же причине, что в `channel.test.ts`.
+    const specifier = "../../../tui/src/corp/i18n"
+    const tui = (await import(specifier)) as {
+      dictionaries: { ru: Record<string, string>; en: Record<string, string> }
+    }
+    const tuiKey = (key: string) => key.replace(/^corp\./, "")
+    for (const key of KEYS) {
+      const short = tuiKey(key)
+      expect(tui.dictionaries.ru[short], `${short} отсутствует в словаре TUI (ru)`).toBeString()
+      expect(tui.dictionaries.en[short], `${short} отсутствует в словаре TUI (en)`).toBeString()
+      expect(tui.dictionaries.ru[short], short).not.toBe(tui.dictionaries.en[short])
+    }
+  })
+
+  test("AC-234: ключей на значения каталога в словарях нет — это данные, а не тексты оболочки", () => {
+    // «Мессенджер», «Трекер задач» и прочие значения `type` (S-V22) и названия групп разрешений
+    // приходят из каталога и в словарь не попадают: словарь клиента не может содержать ключа на
+    // каждое значение каталога.
+    for (const dict of [dictEn, dictRu]) {
+      const corp = Object.keys(dict).filter((key) => key.startsWith("corp."))
+      expect(corp.filter((key) => key.startsWith("corp.type."))).toEqual([])
+      expect(corp.filter((key) => /^corp\.permissions\.group\./.test(key))).toEqual([])
+    }
+    // Единственные тексты групп в словаре — «Остальное»: её каталог присылать не обязан (S-V20).
+    expect(dictRu["corp.permissions.restTitle"]).toBeString()
+    expect(dictRu["corp.permissions.restDescription"]).toBeString()
   })
 })

@@ -2320,6 +2320,8 @@ export type CorpCatalogCard = {
   deprecated: boolean
   blocked: boolean
   configured: boolean
+  connect_needs_hub?: boolean
+  permissions_need_hub?: boolean
   error?: string
   error_class?: "token_rejected" | "method_unavailable" | "hub_unreachable" | "unknown"
   hub_url?: string
@@ -2332,7 +2334,8 @@ export type CorpDropped = {
 
 export type CorpCatalogView = {
   version: string
-  source: "hub" | "cache"
+  source: "hub" | "static" | "cache"
+  hub_configured?: boolean
   cached_at?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
   stale: boolean
   servers: Array<CorpCatalogCard>
@@ -2372,6 +2375,15 @@ export type CorpConnectorResult = {
     | "unauthorized"
     | "not_found"
     | "invalid_request"
+}
+
+export type CorpBadRequestError = {
+  error:
+    | "conflicting_body"
+    | "missing_body"
+    | "permission_groups_unavailable"
+    | "facade_needs_hub"
+    | "permissions_need_hub"
 }
 
 export type CorpForgetResult = {
@@ -2414,10 +2426,6 @@ export type CorpPermissionsResult = {
     | "unauthorized"
     | "not_found"
     | "invalid_request"
-}
-
-export type CorpBadRequestError = {
-  error: "conflicting_body" | "missing_body" | "permission_groups_unavailable"
 }
 
 export type ExperimentalCapabilities = {
@@ -6046,9 +6054,9 @@ export type CorpConnectData = {
 
 export type CorpConnectErrors = {
   /**
-   * Bad request
+   * CorpBadRequestError | InvalidRequestError
    */
-  400: BadRequestError
+  400: CorpBadRequestError | InvalidRequestError
   /**
    * CorpDisabledError
    */

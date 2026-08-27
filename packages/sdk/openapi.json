@@ -1282,11 +1282,18 @@
             }
           },
           "400": {
-            "description": "Bad request",
+            "description": "CorpBadRequestError | InvalidRequestError",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/CorpBadRequestError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InvalidRequestError"
+                    }
+                  ]
                 }
               }
             }
@@ -1302,7 +1309,7 @@
             }
           }
         },
-        "description": "Пишет mcp.<alias> в глобальный конфиг и запускает штатный MCP-OAuth.",
+        "description": "Пишет mcp.<alias> в глобальный конфиг и запускает штатный MCP-OAuth. В сборке без Hub карточка mode:facade отвергается (facade_needs_hub) и запись не создаётся.",
         "summary": "Connect connector",
         "requestBody": {
           "content": {
@@ -22421,6 +22428,12 @@
           "configured": {
             "type": "boolean"
           },
+          "connect_needs_hub": {
+            "type": "boolean"
+          },
+          "permissions_need_hub": {
+            "type": "boolean"
+          },
           "error": {
             "type": "string"
           },
@@ -22466,7 +22479,10 @@
           },
           "source": {
             "type": "string",
-            "enum": ["hub", "cache"]
+            "enum": ["hub", "static", "cache"]
+          },
+          "hub_configured": {
+            "type": "boolean"
           },
           "cached_at": {
             "anyOf": [
@@ -22567,6 +22583,23 @@
         "required": ["alias", "status"],
         "additionalProperties": false
       },
+      "CorpBadRequestError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "conflicting_body",
+              "missing_body",
+              "permission_groups_unavailable",
+              "facade_needs_hub",
+              "permissions_need_hub"
+            ]
+          }
+        },
+        "required": ["error"],
+        "additionalProperties": false
+      },
       "CorpForgetResult": {
         "type": "object",
         "properties": {
@@ -22641,17 +22674,6 @@
           }
         },
         "required": ["alias", "status", "reauth_required"],
-        "additionalProperties": false
-      },
-      "CorpBadRequestError": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "string",
-            "enum": ["conflicting_body", "missing_body", "permission_groups_unavailable"]
-          }
-        },
-        "required": ["error"],
         "additionalProperties": false
       },
       "ExperimentalCapabilities": {

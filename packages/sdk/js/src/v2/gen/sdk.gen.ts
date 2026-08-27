@@ -1707,7 +1707,7 @@ export class Corp extends HeyApiClient {
   /**
    * Connect connector
    *
-   * Пишет mcp.<alias> в глобальный конфиг и запускает штатный MCP-OAuth.
+   * Пишет mcp.<alias> в глобальный конфиг и запускает штатный MCP-OAuth. В сборке без Hub карточка mode:facade отвергается (facade_needs_hub) и запись не создаётся.
    */
   public connect<ThrowOnError extends boolean = false>(
     parameters: {

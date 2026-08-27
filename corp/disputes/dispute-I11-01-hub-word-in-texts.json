@@ -1,0 +1,22 @@
+{
+  "id": "DISPUTE-I11-01-01",
+  "step": "I-11 / догоняющая задача TUI",
+  "agent": "dev-agent",
+  "status": "open",
+  "subject": "Тексты corp.connectors.facadeNeedsHub и corp.connectors.permissionsNeedHub в словаре packages/app называют Hub, а S-I1 ревизии 1.11 запрещает это слово в текстах, показываемых в сборке без Hub",
+  "claim": "S-I1 (ревизия 1.11) вводит эти два ключа и тут же ограничивает их формулировку: «В сборке без Hub слово „Hub“ не появляется ни в одном показанном пользователю тексте: тексты, называющие Hub, относятся к сборке с Hub (D-43)». Оба ключа показываются ровно и только в сборке без Hub — при заданном адресе Hub признаки connect_needs_hub и permissions_need_hub сервером не выставляются вовсе. Тексты в packages/app/src/i18n называют Hub прямо: «…выполняется через Hub, которого нет в этой сборке». Требование оркестратора «тексты TUI обязаны совпадать с en/ru-словарём app по нормализации» и требование S-I1 на этих двух ключах несовместимы: выполнить можно только одно. Словарь TUI оставлен спека-совместимым (слова «Hub» в нём нет), паритет по этим двум ключам не выполнен и вынесен сюда, а не улажен молча.",
+  "evidence": [
+    "spec.md §11 S-I1, ревизия 1.11: «corp.connectors.facadeNeedsHub — причина недоступности действия „Подключить“ у карточки mode:\"facade\" (S-V7), corp.connectors.permissionsNeedHub — причина заблокированного экрана прав у Hub-зависимых видов модели прав (S-V9)… В сборке без Hub слово „Hub“ не появляется ни в одном показанном пользователю тексте: тексты, называющие Hub, относятся к сборке с Hub (D-43)»",
+    "spec.md §14 D-43: «Тексты и действия, называющие Hub, исчезают вместе с Hub… „Hub недоступен“ там же — ответ на вопрос, которого пользователь не задавал»",
+    "packages/app/src/i18n/ru.ts: \"corp.connectors.facadeNeedsHub\": \"Подключение этого коннектора выполняется через Hub, которого нет в этой сборке\"; \"corp.connectors.permissionsNeedHub\": \"Настройка прав этого коннектора выполняется через Hub, которого нет в этой сборке\"",
+    "packages/app/src/i18n/en.ts: \"corp.connectors.facadeNeedsHub\": \"This connector is connected through a Hub, which this build does not have\"; \"corp.connectors.permissionsNeedHub\": \"Permissions for this connector are managed through a Hub, which this build does not have\"",
+    "packages/opencode/src/corp/status.ts, commit d6bf8956a6: connectNeedsHub выставляется только при hubConfigured === false — то есть текст виден только в сборке без Hub"
+  ],
+  "resolution_applied": {
+    "tui_texts": "оставлены спека-совместимыми: «Подключение этого коннектора в этой сборке не настроено» / «Управление правами этого коннектора в этой сборке не настроено» (ru) и «Connecting this connector is not configured in this build» / «Managing permissions for this connector is not configured in this build» (en) — слова «Hub» нет",
+    "matched_keys": "corp.connectors.catalogUnavailable и corp.login.needsHub с app совпадают по нормализации дословно — по ним расхождения нет",
+    "not_done": "нормализованный паритет по facadeNeedsHub и permissionsNeedHub"
+  },
+  "impact_on_test_agent": "Тест нормализованного паритета словарей (dictionary.test.ts) на этих двух ключах упадёт, пока формулировки не сведены. Тест запрета слова «Hub» в текстах сборки без Hub (S-I1, D-43) упадёт на словаре app. Оба падения указывают на одно и то же расхождение, а не на два разных дефекта.",
+  "proposed_resolution": "Привести тексты в packages/app/src/i18n/{ru,en}.ts к формулировке без слова «Hub» (можно взять словарь TUI дословно) — тогда выполняются и S-I1, и паритет. Правка в зоне app-агента, поэтому здесь не выполнена. Альтернатива — снять из S-I1 ревизии 1.11 фразу про отсутствие слова «Hub» и оставить в силе только D-43 (действия и пустое состояние), но тогда причина, названная пользователю, снова говорит про сущность, которой в его сборке нет."
+}

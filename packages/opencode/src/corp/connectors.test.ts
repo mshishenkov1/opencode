@@ -336,7 +336,14 @@ describe("corp/connectors — экран прав по таблице S-V9 (AC-1
       pageSource.indexOf("const ConnectorPresets"),
       pageSource.indexOf("export const DialogConnectorPermissions"),
     )
-    expect(screen).toContain("corp.connectors.permissionsUnavailable")
+    // Причина названа всегда. Микроревизия 1.11.1 развела её на два текста по признаку «адрес Hub
+    // задан» (S-C10 п.7): ключ выбирает `permissionsUnavailableKey`, и оба текста — про одну и ту
+    // же причину, поэтому проверка не ослаблена, а идёт на шаг глубже.
+    expect(screen).toContain("language.t(permissionsUnavailableKey(props.hubConfigured))")
+    const key = pageSource.slice(pageSource.indexOf("export function permissionsUnavailableKey("))
+    const chooser = key.slice(0, key.indexOf("\n}"))
+    expect(chooser).toContain('"corp.connectors.permissionsUnavailable"')
+    expect(chooser).toContain('"corp.connectors.permissionsUnavailableNoHub"')
     // Единственный источник запроса прав — перебор предложенных пресетов: пустой список => нет запроса.
     const options = screen.indexOf("<For each={options()}>")
     expect(options, "перебор пресетов не найден").toBeGreaterThan(-1)

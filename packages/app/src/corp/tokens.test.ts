@@ -167,17 +167,24 @@ function resolve(tokens: Token[], dark: boolean, corpCss: string = read(CORP_CSS
   const probes = tokens
     .map((token, at) => `<span data-slot="probe" id="probe-${at}" style="--probe: ${token.expression}"></span>`)
     .join("")
+  // Кнопка `variant="secondary"` в состоянии `disabled` — внутри корп-окна и вне его: по ней видно
+  // и то, что алиас `--surface-disabled` работает, и то, что он не протекает наружу (AC-276, AC-277).
+  const disabledButton = (id: string) =>
+    `<button data-component="button" data-variant="secondary" id="${id}" disabled
+       style="--probe: var(--surface-disabled)"></button>`
   document.body.innerHTML = `
     <div data-component="dialog-v2" data-size="x-large">
       <div data-slot="dialog-container">
         <div data-slot="dialog-content" class="corp-dialog corp-dialog-v2">
           <div data-slot="dialog-body">
             <div data-slot="segmented-control-v2">${probes}</div>
+            ${disabledButton("button-inside")}
           </div>
         </div>
       </div>
     </div>
-    <span id="outside" style="--probe: var(--text-text-base)"></span>`
+    <span id="outside" style="--probe: var(--text-text-base)"></span>
+    ${disabledButton("button-outside")}`
 
   return tokens.map((token, at) => ({
     ...token,
@@ -315,5 +322,100 @@ describe("корп-окна — алиасы живут в корп-CSS, а не
     resolve([], false)
     const outside = getComputedStyle(document.getElementById("outside")!).getPropertyValue("--probe")
     expect(outside.trim()).toBe("")
+  })
+})
+
+/**
+ * Восьмой алиас и граница приёма (S-D12, S-Q12, D-47, F57; AC-276, AC-277).
+ *
+ * `--surface-disabled` просит `button.css` в правиле `&:disabled` варианта `secondary`, и не
+ * объявляет ни одна тема (BUG-I10-001). Микроревизия 1.11.1 закрывает пробел тем же приёмом, что и
+ * семь переменных `SegmentedControlV2`, — алиасом на контейнере корп-окна, — и **называет границу
+ * приёма явно**: вне корп-окна переменная по-прежнему не разрешается. Оба утверждения проверяются
+ * делом, потому что второе легко нарушить, объявив алиас на `:root`.
+ */
+describe("корп-окна — восьмой алиас --surface-disabled (S-D12, S-Q12; AC-276, AC-277)", () => {
+  const corpCss = read(CORP_CSS)
+  const DISABLED = "--surface-disabled"
+
+  test("AC-276: алиас объявлен в корп-CSS на контейнере корп-окна вместе с семью прежними", () => {
+    const block = /\.corp-dialog,\s*\n\.corp-dialog-v2\s*\{([^}]*)\}/.exec(corpCss)
+    expect(block, "блок алиасов объявлен не на контейнере корп-окна").not.toBeNull()
+    expect(block![1]!).toContain(`${DISABLED}: var(--surface-weak);`)
+    // Прежние семь никуда не делись — алиасов ровно восемь, и все в одном блоке.
+    for (const name of SEGMENTED_ALIASES) expect(block![1]!, name).toContain(`${name}: var(`)
+    const declared = [...block![1]!.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((match) => match[1]!)
+    expect(declared.sort()).toEqual([...SEGMENTED_ALIASES, DISABLED].sort())
+  })
+
+  test("AC-276: переменная и фон отключённой кнопки непусты в обеих темах", () => {
+    for (const dark of [false, true]) {
+      resolve([], dark)
+      const inside = getComputedStyle(document.getElementById("button-inside")!)
+      expect(inside.getPropertyValue("--probe").trim(), `dark=${dark}`).not.toBe("")
+      // Токен взят соседним объявленным токеном той же группы, а не выдуман: у него есть значение.
+      expect(inside.getPropertyValue("--probe").trim(), `dark=${dark}`).not.toBe("var(--surface-weak)")
+    }
+  })
+
+  test("AC-276: значение алиаса действительно приходит из темы и различается между темами", () => {
+    resolve([], false)
+    const light = getComputedStyle(document.getElementById("button-inside")!).getPropertyValue("--probe")
+    resolve([], true)
+    const dark = getComputedStyle(document.getElementById("button-inside")!).getPropertyValue("--probe")
+    expect(light.trim()).not.toBe("")
+    expect(dark.trim()).not.toBe("")
+    expect(light).not.toBe(dark)
+  })
+
+  test("AC-277: вне контейнера корп-окна переменная не разрешается — алиас не протекает", () => {
+    for (const dark of [false, true]) {
+      resolve([], dark)
+      const outside = getComputedStyle(document.getElementById("button-outside")!)
+      expect(outside.getPropertyValue("--probe").trim(), `dark=${dark}`).toBe("")
+      // Та же граница у семи прежних алиасов — она общая, а не частный случай восьмого.
+      expect(
+        getComputedStyle(document.getElementById("outside")!).getPropertyValue("--probe").trim(),
+        `dark=${dark}`,
+      ).toBe("")
+    }
+  })
+
+  test("AC-277: алиас не объявлен на :root — иначе он молча изменил бы вид всего приложения", () => {
+    // Ни в корп-CSS, ни в темах приложения объявления нет: пробел upstream замаскирован в корп-окнах,
+    // а не починен (D-47).
+    expect(corpCss).not.toMatch(/:root\s*\{[^}]*--surface-disabled/)
+    for (const file of THEME_FILES) expect(read(file), file).not.toContain(`${DISABLED}:`)
+  })
+
+  test("AC-277: область проверки AC-235 не сужена — переменная осталась в общем списке токенов", () => {
+    const names = themeTokens.map((token) => token.name)
+    expect(names).toContain(DISABLED)
+    // И проверяется тем же способом, что все прочие: она в наборе, по которому идёт AC-235.
+    expect(unresolved(false).map((token) => token.name)).not.toContain(DISABLED)
+    expect(unresolved(true).map((token) => token.name)).not.toContain(DISABLED)
+  })
+
+  test("AC-276: ни один файл packages/ui не изменён и новых строк в corp/patches.md нет", () => {
+    const base = fs.readFileSync(path.join(ROOT, "corp/upstream-base"), "utf8").trim()
+    const proc = Bun.spawnSync({
+      cmd: ["git", "diff", "--name-only", base, "--", "packages/ui"],
+      cwd: ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(proc.exitCode, proc.stderr.toString()).toBe(0)
+    const changed = proc.stdout
+      .toString()
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+    // Правка живёт снаружи: ни button.css, ни любой другой CSS packages/ui не тронут.
+    expect(changed.filter((file) => file.endsWith(".css"))).toEqual([])
+    expect(changed).not.toContain("packages/ui/src/components/button.css")
+
+    const patches = fs.readFileSync(path.join(ROOT, "corp/patches.md"), "utf8")
+    expect(patches).not.toContain("packages/ui/src/components/button.css")
+    expect(patches).not.toContain(SEGMENTED_CSS)
   })
 })

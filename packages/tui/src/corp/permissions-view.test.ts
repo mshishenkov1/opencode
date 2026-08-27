@@ -251,3 +251,50 @@ describe("tui/corp — отмена не пишет ничего (S-V9, S-V21; A
     expect(rest).toContain('t("connectors.permissionsUnavailable")')
   })
 })
+
+/**
+ * Причина «экран прав заблокирован» в двух сборках TUI (S-V9, S-I1, S-C10 п.7, D-43; AC-274).
+ *
+ * Паритет с Desktop держится тем же признаком: сервер убирает `open_hub` из набора действий ровно
+ * при незаданном адресе Hub, и оболочка выбирает текст по нему, а не по второму чтению
+ * build-константы.
+ */
+describe("tui/corp — причина блокировки экрана прав в обеих сборках (AC-274)", () => {
+  const open = dialogSource.slice(dialogSource.indexOf("async function openPermissions("))
+  const guard = open.slice(open.indexOf("const options = presetOptions("), open.indexOf("const preset = await"))
+
+  test("AC-274: в обеих сборках экран не открывается и причина названа", () => {
+    expect(guard).toContain("options.length === 0")
+    expect(guard).toContain("toast.show({ variant: \"warning\", message: reason })")
+    expect(guard).toContain("return")
+    // Текст показывается всегда — ветви «молча ничего» нет.
+    expect(guard).toContain('t("connectors.permissionsUnavailable")')
+    expect(guard).toContain('t("connectors.permissionsUnavailableNoHub")')
+  })
+
+  test("AC-274: признак — тот же, которым определяется наличие действия «Открыть в Hub»", () => {
+    expect(guard).toContain('allows(card, "open_hub")')
+    // Второго чтения build-константы в корп-компоненте TUI нет.
+    expect(dialogSource).not.toContain("OPENCODE_CORP_HUB_URL")
+    expect(dialogSource).not.toContain("process.env")
+  })
+
+  test("AC-274: сообщение о деградации разбора видимо в обеих сборках", () => {
+    // Предупреждение о числе отброшенных карточек и групп (S-V14 п.5) признаком «есть ли Hub» не
+    // охраняется: оно про дефект данных, а не про Hub.
+    const partial = dialogSource.slice(dialogSource.indexOf("const partial = createMemo("))
+    const memo = partial.slice(0, partial.indexOf("\n  })"))
+    expect(memo).toContain('format("connectors.partial"')
+    expect(memo).not.toContain("hubConfigured")
+  })
+
+  test("AC-274: у Hub-зависимых видов модели прав отдельная причина «в сборке нет Hub»", () => {
+    // «Эта сборка без Hub» и «эта версия приложения не умеет» — разные беды и разные советы.
+    expect(dialogSource).toContain("export function permissionsNeedHub(card: CorpCatalogCard)")
+    expect(dialogSource).toContain("card.permissions_need_hub === true")
+    expect(dialogSource).toContain('t("connectors.permissionsNeedHub")')
+    // Вид `permission_groups` целиком локален, и признак у него не выставляется — экран открывается.
+    const groups = open.slice(0, open.indexOf("const options = presetOptions("))
+    expect(groups).toContain("if (groups && groups.groups.length > 0)")
+  })
+})

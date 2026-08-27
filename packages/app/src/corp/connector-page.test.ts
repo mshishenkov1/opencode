@@ -337,3 +337,65 @@ describe("экран разрешений — отмена не пишет ни�
     expect(screen).toContain('kind: "permissionModes"')
   })
 })
+
+/**
+ * Причина «экран прав заблокирован» в двух сборках (S-V9, S-I1, S-C10 п.7, D-43; AC-274).
+ *
+ * Микроревизия 1.11.1 разводит текст последней строки таблицы S-V9 на два: причина одна («модель
+ * прав не поддерживается этой версией приложения»), а совет «правами можно управлять в Hub» верен
+ * только там, где Hub есть. Заменяется **только** совет — сообщение о деградации разбора (S-V14)
+ * остаётся видимым в обеих сборках: оно про дефект данных, а не про Hub.
+ */
+describe("страница коннектора — причина блокировки в обеих сборках (AC-274)", () => {
+  const key = source.slice(source.indexOf("export function permissionsUnavailableKey("))
+  const body = key.slice(0, key.indexOf("\n}"))
+
+  test("AC-274: в обеих сборках экран заблокирован и причина названа", () => {
+    const presets = source.slice(
+      source.indexOf("const ConnectorPresets"),
+      source.indexOf("export const DialogConnectorPermissions"),
+    )
+    // Блокировка одна на обе сборки: выбора нет, когда нет пресетов.
+    expect(presets).toContain("const unavailable = createMemo(() => options().length === 0)")
+    expect(presets).toContain("<Show when={unavailable()}>")
+    // Текст берётся всегда — ветви «молча ничего» нет.
+    expect(presets).toContain("language.t(permissionsUnavailableKey(props.hubConfigured))")
+    expect(body).toContain('"corp.connectors.permissionsUnavailable"')
+    expect(body).toContain('"corp.connectors.permissionsUnavailableNoHub"')
+  })
+
+  test("AC-274: со сборкой С Hub показывается прежний текст ревизии 1.7 дословно", () => {
+    // Ключ прежний и выбирается именно при заданном адресе Hub — проверки AC-166 остаются в силе.
+    expect(body).toMatch(/hubConfigured\s*\?\s*"corp\.connectors\.permissionsUnavailable"/)
+  })
+
+  test("AC-274: признак — тот же, что у действия open_hub; build-константу оболочка не читает", () => {
+    // Значение приходит из данных вьюшки (`hub_configured`), которую сервер заполняет тем же
+    // признаком, каким убирает `open_hub` из наборов действий.
+    expect(source).toContain("hubConfigured={catalog.data?.hub_configured !== false}")
+    expect(source).toContain("const hubConfigured = createMemo(() => catalog.data?.hub_configured !== false)")
+    // Второго чтения build-константы в корп-компонентах нет.
+    expect(source).not.toContain("OPENCODE_CORP_HUB_URL")
+    expect(source).not.toContain("import.meta.env")
+  })
+
+  test("AC-274: сообщение о деградации разбора видимо в обеих сборках", () => {
+    // Предупреждение о числе отброшенных карточек и групп (S-V14 п.5) живёт на витрине и признаком
+    // «есть ли Hub» не охраняется — иначе в сборке без Hub дефект данных стал бы невидимым.
+    const view = fs.readFileSync(path.join(APP, "components/corp/dialog-connectors.tsx"), "utf8")
+    const partial = view.slice(view.indexOf("const partial = createMemo("))
+    const memo = partial.slice(0, partial.indexOf("\n  })"))
+    expect(memo).toContain('language.t("corp.connectors.partial"')
+    expect(memo).not.toContain("hubConfigured")
+    expect(memo).not.toContain("hub_configured")
+  })
+
+  test("AC-274: блок «Разрешения» есть в обеих сборках, а причина «нет Hub» — отдельный текст", () => {
+    const screen = source.slice(source.indexOf("{/* 5. «Разрешения»"), source.indexOf("{/* 6."))
+    // «Эта сборка без Hub» и «эта версия не умеет» — разные беды и разные советы, и текстов два.
+    expect(screen).toContain('language.t("corp.connectors.permissionsNeedHub")')
+    expect(screen).toContain('language.t("corp.permissions.title")')
+    // Признак карточный (`permissions_need_hub`), а не второе чтение адреса.
+    expect(screen).toContain("when={!entry().permissions_need_hub}")
+  })
+})

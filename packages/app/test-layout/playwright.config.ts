@@ -44,7 +44,10 @@ const channel = process.env.PLAYWRIGHT_CHANNEL ?? (hasBundledChromium() ? undefi
 export default defineConfig({
   testDir: ".",
   testMatch: "**/*.layout.test.ts",
-  outputDir: "./test-results",
+  // Результаты кладём внутрь каталога сборки фикстуры: `dist` игнорируется корневым `.gitignore`,
+  // поэтому артефакты прогона не требуют правки `.gitignore` — а значит, и строки в реестре правок
+  // upstream (S-B6, S-C8). Нулевой след в `corp/patches.md` — часть цены этого теста.
+  outputDir: "./fixture/dist/test-results",
   timeout: 120_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,

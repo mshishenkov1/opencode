@@ -19,14 +19,19 @@ CSS-переменных в happy-dom, который раскладку не с
 ## Как гонять локально
 
 ```
-bun --cwd packages/app run test:layout
+bun --cwd packages/app x playwright test --config test-layout/playwright.config.ts
 ```
 
 Фикстура собирается автоматически в `test.beforeAll`; отдельного шага сборки нет.
 
+Скрипта в `packages/app/package.json` намеренно нет: `package.json` — upstream-файл, и строка в нём
+потребовала бы записи в реестре правок `corp/patches.md` (S-B6, S-C8). Ради удобства запуска платить
+следом в upstream не стоит — команда выше одна и та же локально и в CI. По той же причине результаты
+Playwright кладутся в `fixture/dist/test-results`: `dist` уже игнорируется корневым `.gitignore`.
+
 **Браузер.** По умолчанию берётся chromium, установленный `playwright install chromium`. Если его
 нет, а в системе есть Google Chrome, конфигурация переключается на него каналом `chrome` — скачивать
-ничего не нужно. Канал можно задать явно: `PLAYWRIGHT_CHANNEL=chrome bun --cwd packages/app run test:layout`.
+ничего не нужно. Канал можно задать явно: `PLAYWRIGHT_CHANNEL=chrome bun --cwd packages/app x playwright test --config test-layout/playwright.config.ts`.
 
 ## Как гонять в CI
 
@@ -39,7 +44,7 @@ bun --cwd packages/app run test:layout
         run: bun x playwright install --with-deps chromium
 
       - name: Тесты раскладки корп-окон (packages/app)
-        run: bun run --cwd packages/app test:layout
+        run: bun --cwd packages/app x playwright test --config test-layout/playwright.config.ts
 ```
 
 `--with-deps` ставит системные библиотеки, без которых headless chromium на ubuntu-раннере не

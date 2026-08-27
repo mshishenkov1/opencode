@@ -90,6 +90,28 @@ function sha256(file: string) {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex")
 }
 
+/**
+ * Отладочный дамп конфигурации electron-builder. В раздачу не попадает (S-B16 п. 2, F56): `*.yml`
+ * в раздаче означает «фид», и второй yml рядом с фидом читается как второй фид.
+ */
+export const BUILDER_DEBUG_FILE = "builder-debug.yml"
+
+/**
+ * Входит ли файл каталога сборки Desktop в раздачу (S-B16 п. 2).
+ *
+ * `yml` — фид апдейтера (`magnit-mac.yml`), который electron-builder кладёт рядом с архивами
+ * (S-B11): без него апдейтеру не с чем сравнивать версии — бандл собирался с адресом фида, а сам
+ * фид оставался на раннере, и обновление не докатывалось ни разу.
+ *
+ * Отбор ОДИН на оба пути сбора — локальную сборку (`--desktop`) и готовые артефакты
+ * (`--from-dist`). Пока правило было записано дважды, проверялась только одна копия, и удаление
+ * второй не роняло ни одного теста.
+ */
+export function isDesktopReleaseFile(name: string) {
+  if (name === BUILDER_DEBUG_FILE) return false
+  return /\.(dmg|zip|exe|msi|blockmap|yml)$/.test(name)
+}
+
 /** Имя каталога сборки, как его формирует `packages/opencode/script/build.ts`. */
 export function distName(target: CliTarget) {
   const [os, arch] = target.split("-")
@@ -278,9 +300,7 @@ if (fromDist) {
         artifacts.push({ name, file, kind: "cli", target })
         continue
       }
-      if (!/\.(dmg|zip|exe|msi|blockmap|yml)$/.test(name)) continue
-      // `builder-debug.yml` — отладочный дамп конфигурации electron-builder, а не фид раздачи.
-      if (name === "builder-debug.yml") continue
+      if (!isDesktopReleaseFile(name)) continue
       seen.add(name)
       artifacts.push({ name, file, kind: "desktop" })
     }
@@ -334,15 +354,7 @@ function collectDesktopArtifacts() {
   for (const dir of [path.join(desktopDir, "dist"), path.join(desktopDir, "release")]) {
     if (!fs.existsSync(dir)) continue
     for (const entry of fs.readdirSync(dir)) {
-      // `yml` — фид апдейтера (`magnit-mac.yml`), который electron-builder кладёт рядом с
-      // архивами (S-B11, S-B16). Без него в списке артефактов апдейтеру не по чему сравнивать
-      // версии: бандл собирался с адресом фида, а сам фид оставался на раннере и пропадал вместе
-      // с ним — обновление не докатывалось ни разу.
-      if (!/\.(dmg|zip|exe|msi|blockmap|yml)$/.test(entry)) continue
-      // `builder-debug.yml` — отладочный дамп конфигурации electron-builder, а не фид раздачи.
-      // На сервере обновлений ему делать нечего, а в архиве артефактов он путает: `*.yml` в
-      // раздаче означает «фид», и второй yml рядом читается как второй фид.
-      if (entry === "builder-debug.yml") continue
+      if (!isDesktopReleaseFile(entry)) continue
       artifacts.push({ name: entry, file: path.join(dir, entry), kind: "desktop" })
     }
   }

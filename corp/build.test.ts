@@ -90,25 +90,28 @@ describe("corp/build.ts — --print-version и автотег (S-B16)", () => {
     )
   }, 60_000)
 
-  test("S-B16: corp-release.yml берёт версию тега из --print-version, а не набирает её сам", () => {
-    const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/corp-release.yml"), "utf8")
-    expect(workflow).toContain("corp/build.ts --print-version")
-    // Номер сборки пишется в corp/version — единственный источник N для corpVersion().
-    expect(workflow).toContain("corp/version")
-    // Идемпотентность: уже помеченный коммит завершает задание успехом.
-    expect(workflow).toContain("--points-at HEAD")
-  })
-
-  test("S-B16: условие автотега совпадает с сообщением мержа, которым коммитит upstream-sync.yml", () => {
-    const release = fs.readFileSync(path.join(ROOT, ".github/workflows/corp-release.yml"), "utf8")
+  test("S-B16: сообщение мержа upstream-sync.yml — то самое, на которое настроен автотег", () => {
+    // Стык двух workflow: `upstream-sync.yml` коммитит мерж, `corp-release.yml` на него реагирует.
+    // Разбор случаев и остальной контракт автотега — в corp/next-tag.test.ts, где он проверяется
+    // прогоном, а не совпадением подстрок.
     const sync = fs.readFileSync(path.join(ROOT, ".github/workflows/upstream-sync.yml"), "utf8")
-    // Сообщение мержа задаётся в upstream-sync.yml: git merge --no-ff "$TAG" -m "corp: слить upstream $TAG"
+    const release = fs.readFileSync(path.join(ROOT, ".github/workflows/corp-release.yml"), "utf8")
     const message = /-m "([^"$]+)\$TAG"/.exec(sync)?.[1]
     expect(message).toBe("corp: слить upstream ")
     expect(release).toContain(`startsWith(github.event.head_commit.message, '${message}')`)
-    // Коммит самого автотега под это условие не подходит — цикла запусков нет.
-    expect(release).toContain('git commit -m "corp: версия сборки')
-    expect("corp: версия сборки 2".startsWith(message!)).toBe(false)
+  })
+
+  test("S-B16: имя тега считает corp/next-tag.sh — тем же --print-version, без второго вычисления", () => {
+    const script = fs.readFileSync(path.join(ROOT, "corp/next-tag.sh"), "utf8")
+    expect(script).toContain("corp/build.ts")
+    expect(script).toContain("--print-version")
+    // Версия upstream выделяется из напечатанной версии, а не читается вторым читателем
+    // packages/opencode/package.json: второй читатель — второй источник версии (S-B1).
+    const code = script
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("#"))
+      .join("\n")
+    expect(code).not.toContain("package.json")
   })
 })
 
@@ -417,10 +420,33 @@ describe("corp/build.ts — публикация internal (S-B16)", () => {
     expect(result.out).not.toContain("сборка CLI")
     expect(result.out).toContain("magnit-mac.yml")
   }, 60_000)
+
+  test("AC-258: builder-debug.yml не попадает в набор раздачи — фид в списке ровно один", async () => {
+    // Отладочный дамп конфигурации electron-builder лежит рядом с фидом и имеет то же расширение.
+    // Попав в раздачу, он читается как второй фид.
+    const root = fixtures()
+    const result = await build(["--from-dist", root], { CORP_BUILD: PUBLISH_BUILD })
+    expect(result.code).toBe(0)
+    expect(result.out).not.toContain("builder-debug.yml")
+    const feeds = result.out.split("\n").filter((line) => /\.yml$/.test(line.trim()))
+    expect(feeds.length).toBe(1)
+    expect(feeds[0]).toContain("magnit-mac.yml")
+  }, 60_000)
+
+  test("AC-258: отбор файлов раздачи задан в ОДНОМ месте — обе ветки сбора зовут его", () => {
+    // Пока правило было записано дважды (локальная сборка и --from-dist), проверялась только одна
+    // копия: удаление второй не роняло ни одного теста.
+    const source = fs.readFileSync(SCRIPT, "utf8")
+    const literals = source.match(/"builder-debug\.yml"/g) ?? []
+    expect(literals.length, "литерал builder-debug.yml должен быть только в константе").toBe(1)
+    const masks = source.match(/dmg\|zip\|exe\|msi\|blockmap\|yml/g) ?? []
+    expect(masks.length, "маска файлов раздачи должна быть одна").toBe(1)
+    expect((source.match(/isDesktopReleaseFile\(/g) ?? []).length).toBeGreaterThanOrEqual(3)
+  })
 })
 
 /**
- * Матрица сборки и публикация в корп-CI (S-B16, решения ревизии 1.10).
+ * Матрица сборки и публикация в корп-CI (S-B16, решения ревизии 1.11).
  *
  * Проверяется не YAML ради YAML, а решения, которые в нём закодированы и которые легко потерять
  * при следующей правке: Windows убран из матрицы тегов (но конфигурация NSIS не тронута), macOS
@@ -446,18 +472,44 @@ describe("corp-ci.yml — матрица Desktop и публикация (S-B16)
     expect((tagMatrix.match(/"runner":"macos-latest"/g) ?? []).length).toBe(1)
   })
 
-  test("S-B16: фид апдейтера попадает в артефакты задания сборки", () => {
+  test("AC-258: фид апдейтера попадает в артефакты задания, отладочный дамп — нет", () => {
     expect(ci).toContain("packages/desktop/dist/*.yml")
+    // builder-debug.yml появляется только при debug-логировании, но тогда уезжает и в артефакты,
+    // и через задание release — в черновик, где оказывается вторым yml рядом с фидом.
+    expect(ci).toContain("!packages/desktop/dist/builder-debug.yml")
   })
 
-  test("S-B16: задание publish зависит от обеих сборок, гейтится секретом и публикует internal", () => {
+  test("AC-261: задание publish зависит от обеих сборок, гейтится секретом и публикует internal", () => {
     const publish = ci.slice(ci.indexOf("\n  publish:"), ci.indexOf("\n  release:"))
     expect(publish).toContain("needs: [build-cli, build-desktop]")
     expect(publish).toContain("secrets.CORP_ARTIFACTS_ENDPOINT")
     expect(publish).toContain("--publish --publish-to internal")
-    // Скип обязан называть причину: «нечего публиковать» ≠ «внутренний хост не заведён».
     expect(publish).toContain("ready=false")
-    expect(publish).toContain("публикация на внутренний сервер пропущена")
+    // Формулировка скипа — дословно из AC-261: «публиковать некуда» обязано быть отличимо в логе
+    // от «публиковать нечего», а не пересказано своими словами.
+    expect(publish).toContain(
+      "внутренний сервер не настроен — публикация пропущена, артефакты остаются в прогоне и в черновике релиза",
+    )
+  })
+
+  test("AC-263, S-B16 п. 7: CLI собирается для всех четырёх целей, включая darwin-x64 и win32-x64", () => {
+    // Цепочка «тег → артефакты → пакет установщика» для Intel-парка рвётся на звене CLI, если
+    // darwin-x64 нет в матрице: installers/release.sh не найдёт opencode-darwin-x64 и соберёт
+    // пакет без CLI — при том что Desktop для x64 уже собирается.
+    const cli = ci.slice(ci.indexOf("\n  build-cli:"), ci.indexOf("\n  build-desktop:"))
+    for (const target of ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]) {
+      expect(cli, target).toContain(`- target: ${target}`)
+    }
+    // Кросс-компиляция: отдельного Intel-раннера не нужно, но smoke на неисполнимой цели — нельзя.
+    expect(cli).toContain("if: matrix.target == 'darwin-arm64' || matrix.target == 'linux-x64'")
+  })
+
+  test("S-Q11: наборы corp/ гоняются корп-CI, а не только руками", () => {
+    // Скрипт `test` пакета opencode работает с cwd packages/opencode и каталог corp/ не обходит,
+    // корневой `bun test` отключён намеренно (F32): без отдельного шага весь доказательный
+    // аппарат S-B16 исполнялся бы только вручную.
+    const checks = ci.slice(ci.indexOf("\n  checks:"), ci.indexOf("\n  build-cli:"))
+    expect(checks).toContain("test ../../corp/")
   })
 
   test("S-B16: на теге номер сборки берётся из corp/version, а не из переменной репозитория", () => {

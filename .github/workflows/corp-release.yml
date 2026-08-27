@@ -46,55 +46,16 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
 
+      # Вся арифметика номера — в corp/next-tag.sh: шаг `run:` внутри YAML тестами не достаётся, а
+      # неверный N означает либо тег на уже выпущенном составе, либо перезапись раздачи (S-Q11).
+      # Скрипт только считает: тег ставит следующий шаг.
       - name: Вычислить номер корп-сборки
         id: version
         run: |
+          # pipefail обязателен: по умолчанию GitHub запускает шаг как `bash -e`, и код возврата
+          # next-tag.sh скрылся бы за успешным tee — отказ вычисления выглядел бы как «тег не нужен».
           set -euo pipefail
-
-          # Уже помеченный коммит — выходим успешно (идемпотентность).
-          existing=$(git tag --points-at HEAD --list 'v*-magnit.*' | head -1)
-          if [ -n "$existing" ]; then
-            echo "Коммит уже помечен тегом $existing — делать нечего."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          upstream=$(bun -e 'console.log(JSON.parse(require("fs").readFileSync("packages/opencode/package.json","utf8")).version)')
-          echo "версия upstream: $upstream"
-
-          # Максимальный N среди тегов ТОЙ ЖЕ версии upstream. Пусто — версия upstream сменилась
-          # (или тегов ещё нет), и счёт начинается заново с 1 (S-B1).
-          last=$(git tag --list "v$upstream-magnit.*" \
-            | sed -n "s|^v$upstream-magnit\.\([0-9][0-9]*\)$|\1|p" \
-            | sort -n | tail -1)
-          if [ -z "$last" ]; then
-            build=1
-            echo "тегов версии upstream $upstream нет — номер сборки сбрасывается в 1"
-          else
-            build=$((last + 1))
-            echo "последний тег версии upstream $upstream — v$upstream-magnit.$last"
-          fi
-
-          # corp/version — единственный источник N для сборки (corpVersion(), corp/build.ts).
-          # Версия тега печатается тем же кодом, что соберёт артефакты: расхождение имени тега и
-          # версии артефактов невозможно по построению.
-          printf '%s\n' "$build" > corp/version
-          version=$(bun run corp/build.ts --print-version)
-          tag="v$version"
-          echo "версия сборки: $version"
-
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "Тег $tag уже существует — делать нечего."
-            git checkout -- corp/version
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          {
-            echo "skip=false"
-            echo "build=$build"
-            echo "tag=$tag"
-          } >> "$GITHUB_OUTPUT"
+          bash corp/next-tag.sh | tee -a "$GITHUB_OUTPUT"
 
       - name: Коммит, тег и push
         if: steps.version.outputs.skip == 'false'
@@ -102,6 +63,9 @@ jobs:
           set -euo pipefail
           git config user.name "corp-release[bot]"
           git config user.email "corp-release@users.noreply.github.com"
+          # corp/version — единственный источник N для сборки по тегу (corpVersion(), corp/build.ts):
+          # на теге corp-ci.yml не подставляет CORP_BUILD, и версия артефактов берётся отсюда.
+          printf '%s\n' "${{ steps.version.outputs.build }}" > corp/version
           git add corp/version
           # Каждый корп-коммит обязан начинаться с "corp: " (S-C8, AC-13).
           git commit -m "corp: версия сборки ${{ steps.version.outputs.build }}"

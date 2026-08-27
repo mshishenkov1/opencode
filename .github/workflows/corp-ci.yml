@@ -2,13 +2,14 @@ name: corp-ci
 
 # Корпоративный CI (S-B7, S-B8).
 #
-# На PR в main: установка, typecheck, тесты пакетов opencode/tui/app, дымовая проверка корп-слоя
-# и сборка CLI для darwin-arm64, linux-x64, win32-x64 со smoke `opencode --version`.
+# На PR в main: установка, typecheck, тесты пакетов opencode/tui/app и наборов corp/, дымовая
+# проверка корп-слоя и сборка CLI для darwin-arm64, darwin-x64, linux-x64, win32-x64 со smoke
+# `opencode --version` на целях, исполнимых раннером.
 # На PR дополнительно собирается Desktop mac-arm64 с проверкой бандла.
 # По тегу v*-magnit.*: Desktop macOS обеих архитектур (arm64 и x64) с проверкой обоих бандлов и
 # фида раздачи, черновик GitHub Release и публикация на внутренний сервер (S-B16).
 #
-# Windows-сборки Desktop в матрице тегов нет (решение заказчика, ревизия 1.10): парк — macOS.
+# Windows-сборки Desktop в матрице тегов нет (решение заказчика, ревизия 1.11): парк — macOS.
 # Конфигурация NSIS в electron-builder.config.ts не тронута — Windows вернётся флагом, а не
 # восстановлением удалённого кода.
 
@@ -64,6 +65,14 @@ jobs:
       - name: Тесты packages/app
         run: bun run --cwd packages/app test
 
+      # Наборы corp/*.test.ts не запускались корп-CI ни одним заданием: скрипт `test` пакета
+      # opencode работает с cwd packages/opencode и каталог corp/ не обходит, а корневой `bun test`
+      # отключён намеренно (F32). Весь доказательный аппарат S-B6, S-B16 и S-Q11 — реестр правок
+      # upstream, порядок публикации, гейт по секрету, вычисление номера тега — исполнялся только
+      # руками. Прогон отсюда: скрипт пакета берётся ради общего --timeout, пути — до corp/.
+      - name: Тесты corp/
+        run: bun run --cwd packages/opencode test ../../corp/
+
       - name: Дымовая проверка корп-слоя (мок Hub)
         run: bun run corp/smoke.ts
 
@@ -76,6 +85,13 @@ jobs:
       matrix:
         include:
           - target: darwin-arm64
+            runner: macos-latest
+          # Intel-парк: без этой цели пакет установщика darwin-x64 не собрать из артефактов
+          # прогона — find_cli_binary в installers/release.sh не найдёт opencode-darwin-x64, и
+          # цепочка «тег → артефакты → пакет» для Intel остаётся разорванной на звене CLI, даже
+          # когда Desktop для x64 уже собирается. bun кросс-компилирует цель, отдельный
+          # Intel-раннер не нужен; smoke на ней не выполняется — раннер arm64 (S-B7).
+          - target: darwin-x64
             runner: macos-latest
           - target: linux-x64
             runner: ubuntu-latest
@@ -203,6 +219,10 @@ jobs:
         env:
           CORP_DESKTOP_UPDATE_URL: ${{ vars.CORP_DESKTOP_UPDATE_URL }}
 
+      # Последняя строка path — исключение: builder-debug.yml это отладочный дамп конфигурации
+      # electron-builder, а не фид (AC-258). Он появляется только при debug-логировании, но тогда
+      # уезжает и в артефакты, и через задание release — в черновик, где оказывается вторым yml
+      # рядом с фидом раздачи.
       - name: Загрузка артефактов
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -213,6 +233,7 @@ jobs:
             packages/desktop/dist/*.exe
             packages/desktop/dist/*.blockmap
             packages/desktop/dist/*.yml
+            !packages/desktop/dist/builder-debug.yml
           if-no-files-found: error
 
   # Публикация на внутренний сервер раздачи (S-B16). Именно с него читают апдейтер Desktop и
@@ -234,7 +255,9 @@ jobs:
         run: |
           if [ -z "${ENDPOINT:-}" ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Секрет CORP_ARTIFACTS_ENDPOINT не задан — публикация на внутренний сервер пропущена. Артефакты остаются в прогоне и в черновике релиза."
+            # Формулировка — дословно из S-B16 п. 5 и AC-261: «публиковать некуда» обязано быть
+            # отличимо в логе от «публиковать нечего».
+            echo "::notice::внутренний сервер не настроен — публикация пропущена, артефакты остаются в прогоне и в черновике релиза (секрет CORP_ARTIFACTS_ENDPOINT не задан)"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi

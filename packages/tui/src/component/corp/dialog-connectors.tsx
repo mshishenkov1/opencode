@@ -342,7 +342,15 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
     if (options.length === 0) {
       // S-V9, строка 4: вид модели прав неизвестен или не разобран — экран прав не открывается,
       // пользователю называется причина. Остальные действия карточки работают как обычно.
-      toast.show({ variant: "warning", message: t("connectors.permissionsUnavailable") })
+      //
+      // Микроревизия 1.11.1: причина одна, а совет «правами можно управлять в Hub» верен только
+      // там, где Hub есть. Признак берётся тот же, которым определяется наличие действия
+      // «Открыть в Hub» (S-V16, S-C10 п.7): сервер убирает `open_hub` из набора ровно тогда,
+      // когда адрес Hub не задан. Второй проверки и второго чтения build-константы здесь нет.
+      const reason = allows(card, "open_hub")
+        ? t("connectors.permissionsUnavailable")
+        : t("connectors.permissionsUnavailableNoHub")
+      toast.show({ variant: "warning", message: reason })
       return
     }
     const preset = await new Promise<string | null>((resolve) => {

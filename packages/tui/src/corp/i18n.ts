@@ -44,6 +44,10 @@ const ru = {
   "connectors.presetTitle": "Права коннектора",
   "connectors.permissionsUnavailable":
     "Модель прав не поддерживается этой версией приложения — правами можно управлять в Hub",
+  // Та же причина без совета идти в Hub — текст последней строки таблицы S-V9 в сборке без Hub
+  // (микроревизия 1.11.1). Ключ выше не переименовывается и не переписывается: он остаётся
+  // текстом сборки С Hub, где совет верен.
+  "connectors.permissionsUnavailableNoHub": "Выбор прав для этого коннектора не поддерживается этой версией приложения",
   "connectors.reauth": "Требуется повторная авторизация",
   "connectors.connected": "Подключено",
   "connectors.retry": "повторить",
@@ -162,6 +166,8 @@ const en: Record<Key, string> = {
   "connectors.presetTitle": "Connector permissions",
   "connectors.permissionsUnavailable":
     "This app version does not support the connector permission model — manage permissions in the Hub",
+  "connectors.permissionsUnavailableNoHub":
+    "Choosing permissions for this connector is not supported by this version of the app",
   "connectors.reauth": "Re-authorization required",
   "connectors.connected": "Connected",
   "connectors.retry": "retry",

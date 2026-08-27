@@ -713,7 +713,7 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
           onTrigger: (option) => void openHub(option.value),
         },
         {
-          // S-V11: одна клавиша на все три вкладки; подпись называет ту, куда переключит нажатие.
+          // S-V11: одна клавиша на обе вкладки; подпись называет ту, куда переключит нажатие.
           command: "dialog.corp.filter",
           title: t(TAB_KEY[nextTab(tab())]),
           side: "right",

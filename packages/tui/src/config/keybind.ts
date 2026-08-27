@@ -217,7 +217,8 @@ export const Definitions = {
   "dialog.corp.forget": keybind("x", "Remove connector from list"),
   "dialog.corp.permissions": keybind("p", "Edit connector permissions"),
   "dialog.corp.open_hub": keybind("o", "Open connector in Hub"),
-  // corp: вкладки фильтра витрины (S-V11, S-T10) — циклом «Все → Подключённые → Неподключённые».
+  // corp: вкладки фильтра витрины (S-V11, S-T10) — циклом «Все → Подключённые → Все».
+  // Вкладок две: «Неподключённые» снята ревизией 1.12 (S-V11, D-53), и цикл её не проходит.
   "dialog.corp.filter": keybind("f", "Cycle connector filter tab"),
   "dialog.corp.refresh": keybind("r", "Refresh connector catalog"),
   // corp: возврат выключенного провайдера (S-C11) — действие рядом с предупреждением.

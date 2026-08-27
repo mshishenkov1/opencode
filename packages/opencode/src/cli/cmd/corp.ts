@@ -3,6 +3,7 @@ import * as CorpCatalogCache from "@/corp/catalog-cache"
 import * as CorpDiagnostics from "@/corp/diagnostics"
 import * as CorpHub from "@/corp/hub"
 import * as CorpLogin from "@/corp/login"
+import * as CorpLogout from "@/corp/logout"
 import type * as CorpSchema from "@/corp/schema"
 import {
   CORP_PROVIDER_ID,
@@ -37,7 +38,12 @@ const SSO_DISABLED = "Вход по корпоративному SSO в этой
 
 const println = (message: string) => Effect.sync(() => UI.println(message))
 const dim = (value: string) => UI.Style.TEXT_DIM + value + UI.Style.TEXT_NORMAL
-const openBrowser = (url: string) => Effect.promise(() => open(url).then(() => true).catch(() => false))
+const openBrowser = (url: string) =>
+  Effect.promise(() =>
+    open(url)
+      .then(() => true)
+      .catch(() => false),
+  )
 
 interface HubArgs {
   hub?: string
@@ -153,10 +159,66 @@ export const CorpStatusCommand = effectCmd({
 
     // S-C9: конфликты личного конфига называются, но не чинятся; любой из них даёт код выхода 1.
     for (const line of CorpDiagnostics.conflictLines(report)) yield* println(line)
+    // S-C11 п.2: у выключенного провайдера прежняя строка сохранена дословно и дополнена подсказкой
+    // о действии — чинить конфиг сама команда по-прежнему не вправе (S-C7).
+    if (report.providerDisabled) yield* println(CorpDiagnostics.LINES.providerDisabledHint)
 
     // Ключ нужен Hub, а не каталогу: в сборке без Hub его отсутствие не ошибка (S-C10 п.6).
     if (url && !key) return yield* fail("Ключ не найден: выполните opencode corp login")
     if (CorpDiagnostics.hasConflicts(report)) return yield* fail("")
+  }),
+})
+
+/**
+ * Построчный контракт вывода `opencode corp logout` (S-A15), по образцу S-A11a.
+ *
+ * Две строки — по одной на часть выхода, чтобы исход каждой был виден отдельно. В сборке без Hub
+ * (S-C10) строки о сервере нет вовсе: сервера в этой сборке нет, и говорить о нём нечего (D-43).
+ * Формулировки — часть контракта: правятся одновременно со спекой и `cli.test.ts`.
+ */
+export const LOGOUT_LINES = {
+  revoked: "Ключ отозван на сервере.",
+  revokeFailed: (reason: string) => `Отозвать ключ на сервере не удалось: ${reason}.`,
+  removed: "Локальный ключ удалён.",
+  notSignedIn: "Ключ не найден: выход не требуется.",
+  removeFailed: (reason: string) => `Локальный ключ удалить не удалось: ${reason}.`,
+} as const
+
+export const CorpLogoutCommand = effectCmd({
+  command: "logout",
+  describe: "выход из корпоративного SSO: отзыв ключа на сервере и удаление его локально",
+  instance: false,
+  builder: withHub,
+  handler: Effect.fn("Cli.corp.logout")(function* (args: HubArgs) {
+    const url = corpHubUrl(args.hub)
+    // S-C10 п.2: режим выключен только при отсутствии обоих адресов; со статическим каталогом
+    // выход осмыслен — ключ мог остаться от сборки с Hub.
+    if (!url && !corpCatalogUrl()) {
+      yield* println(DISABLED)
+      return yield* fail(DISABLED)
+    }
+
+    const authSvc = yield* Auth.Service
+    const outcome = yield* CorpLogout.perform({ auth: authSvc, ...(url === undefined ? {} : { hubUrl: url }) })
+
+    if (!outcome.keyRemoved && outcome.removeError === undefined) {
+      // Идемпотентный случай: ключа не было. Про сервер не говорится — запроса к нему и не было.
+      yield* println(LOGOUT_LINES.notSignedIn)
+      return
+    }
+
+    // Строка серверной части печатается по своему фактическому исходу и код выхода не определяет.
+    if (outcome.hub === "revoked") yield* println(LOGOUT_LINES.revoked)
+    else if (outcome.hub === "unavailable")
+      yield* println(LOGOUT_LINES.revokeFailed(errorText(outcome.hubError ?? "hub_unavailable")))
+
+    if (outcome.removeError !== undefined) {
+      // D-49: код выхода определяется локальной частью — и только ею.
+      const line = LOGOUT_LINES.removeFailed(outcome.removeError)
+      yield* println(line)
+      return yield* fail(line)
+    }
+    yield* println(LOGOUT_LINES.removed)
   }),
 })
 
@@ -294,7 +356,8 @@ const selectTeam = Effect.fnUntraced(function* (teams: CorpSchema.Team[], presel
 
 export const CorpCommand = cmd({
   command: "corp",
-  describe: "корпоративный режим: вход по SSO и статус",
-  builder: (yargs) => yargs.command(CorpLoginCommand).command(CorpStatusCommand).demandCommand(),
+  describe: "корпоративный режим: вход по SSO, выход и статус",
+  builder: (yargs) =>
+    yargs.command(CorpLoginCommand).command(CorpLogoutCommand).command(CorpStatusCommand).demandCommand(),
   async handler() {},
 })

@@ -247,10 +247,15 @@ describe("страница коннектора — деградация экр�
   test("AC-206: без permission_groups показывается прежний экран пресетов, блок остаётся", () => {
     const screen = source.slice(source.indexOf("{/* 5. «Разрешения»"), source.indexOf("{/* 6."))
     expect(screen).toContain("when={entry().permission_groups}")
-    expect(screen).toContain("<ConnectorPresets card={entry()} />")
+    expect(screen).toContain("<ConnectorPresets card={entry()}")
     expect(screen).toContain("<ConnectorPermissionGroups card={entry()} />")
     // Блок есть всегда, когда действие «Права» доступно.
     expect(screen).toContain('<Show when={entry().actions.includes("permissions")}>')
+    // Ревизия 1.11 добавила снаружи ветку «Hub в сборке нет» (S-C10 п.7) — прежняя развилка
+    // «словарь групп либо пресеты» осталась внутри неё и не изменилась.
+    expect(screen.indexOf("when={!entry().permissions_need_hub}")).toBeLessThan(
+      screen.indexOf("when={entry().permission_groups}"),
+    )
   })
 
   test("AC-206: подтверждение прежних видов по-прежнему уходит пресетом, а не режимами", () => {
@@ -262,7 +267,13 @@ describe("страница коннектора — деградация экр�
   test("AC-207: неизвестный вид модели прав — выбор заблокирован, причина названа", () => {
     const presets = source.slice(source.indexOf("const ConnectorPresets"), source.indexOf("export const DialogConnectorPermissions"))
     expect(presets).toContain("const unavailable = createMemo(() => options().length === 0)")
-    expect(presets).toContain('language.t("corp.connectors.permissionsUnavailable")')
+    // Причина названа всегда; ревизия 1.11 развела её на два текста по признаку «адрес Hub задан»
+    // (S-C10 п.7): с Hub — прежний текст дословно, без Hub — та же причина без совета идти в Hub.
+    expect(presets).toContain("language.t(permissionsUnavailableKey(props.hubConfigured))")
+    const key = source.slice(source.indexOf("export function permissionsUnavailableKey("))
+    const body = key.slice(0, key.indexOf("\n}"))
+    expect(body).toContain('"corp.connectors.permissionsUnavailable"')
+    expect(body).toContain('"corp.connectors.permissionsUnavailableNoHub"')
     // Прочие действия карточки экран прав не трогает: их набор считает общий модуль.
     expect(presets).not.toContain('kind: "connect"')
     expect(presets).not.toContain('kind: "disconnect"')

@@ -52,7 +52,10 @@ const ru = {
   "connectors.connected": "Подключено",
   "connectors.retry": "повторить",
   "connectors.forget": "убрать из списка",
-  "connectors.forgetConfirm": "Убрать коннектор из списка? Запись будет удалена из конфига, подключение — снято в Hub",
+  // Действие доступно и в сборке без Hub, поэтому подтверждение обещает снятие подключения
+  // на сервере, а не «в Hub», и оговаривает условие: шага может не быть вовсе (S-V17, 1.11.1).
+  "connectors.forgetConfirm":
+    "Убрать «{{title}}» из списка? Запись коннектора будет удалена из вашего конфига, а подключение на сервере будет снято, если сервер настроен и доступен",
   "connectors.forgetHubFailed": "Запись удалена локально, но Hub не ответил",
   "connectors.neverConnected": "Подключение не удалось",
   "connectors.lost": "Соединение потеряно",
@@ -119,10 +122,10 @@ const ru = {
   "error.invalid_request": "Некорректный запрос",
   "error.unknown": "Неизвестная ошибка",
 
-  "error.connect.token_rejected": "Доступ не подтверждён: Hub или целевая система не приняли вашу авторизацию",
+  "error.connect.token_rejected": "Доступ не подтверждён: сервер не принял вашу авторизацию",
   "error.connect.method_unavailable":
-    "Этим способом коннектор сейчас подключить нельзя — вопрос решается на стороне Hub",
-  "error.connect.hub_unreachable": "Связаться с Hub не удалось, ваши настройки ни при чём",
+    "Этим способом коннектор сейчас подключить нельзя — вопрос решается на стороне сервера",
+  "error.connect.hub_unreachable": "Связаться с сервисом не удалось, ваши настройки ни при чём",
   "error.connect.unknown": "Подключение не удалось",
 
   "upgrade.disabled":
@@ -173,7 +176,7 @@ const en: Record<Key, string> = {
   "connectors.retry": "retry",
   "connectors.forget": "remove from list",
   "connectors.forgetConfirm":
-    "Remove the connector from the list? The entry will be deleted from the config and the connection revoked in the Hub",
+    "Remove \u201c{{title}}\u201d from the list? The connector entry will be deleted from your config, and the connection on the server will be revoked if the server is configured and reachable",
   "connectors.forgetHubFailed": "Removed locally, but the Hub did not respond",
   "connectors.neverConnected": "Connection failed",
   "connectors.lost": "Connection lost",
@@ -235,10 +238,10 @@ const en: Record<Key, string> = {
   "error.invalid_request": "Invalid request",
   "error.unknown": "Unknown error",
 
-  "error.connect.token_rejected": "Access was not confirmed: the Hub or the target system rejected your authorization",
+  "error.connect.token_rejected": "Access was not confirmed: the server rejected your authorization",
   "error.connect.method_unavailable":
-    "This connector cannot be connected this way right now — it is resolved on the Hub side",
-  "error.connect.hub_unreachable": "The Hub could not be reached; your settings are not at fault",
+    "This connector cannot be connected this way right now — it is resolved on the server side",
+  "error.connect.hub_unreachable": "The service could not be reached; your settings are not at fault",
   "error.connect.unknown": "Connection failed",
 
   "upgrade.disabled": "Corporate builds are updated centrally: get the new version from whoever distributes the build",

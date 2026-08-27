@@ -390,7 +390,9 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
       dialog.replace(
         () => (
           <DialogSelect
-            title={t("connectors.forgetConfirm")}
+            // S-V17, 1.11.1: подтверждение называет коннектор и не обещает шага, которого в этой
+            // сборке может не быть. Название — данные каталога (S-I6), подставляется в текст.
+            title={format("connectors.forgetConfirm", { title: card.title })}
             options={[
               { title: t("connectors.forget"), value: true },
               { title: t("login.cancelled"), value: false },

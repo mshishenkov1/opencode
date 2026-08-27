@@ -28,7 +28,8 @@ import { expect, test, type Page } from "@playwright/test"
  * пустое состояние, D-53) — это заодно закрывает AC-184 и AC-230 наблюдаемо, по измеренной высоте
  * панели, а не по объявленной высоте контейнера.
  *
- * Запуск: `bun --cwd packages/app run test:layout`.
+ * Запуск: `bun --cwd packages/app x playwright test --config test-layout/playwright.config.ts`
+ * (скрипта `test:layout` в `packages/app/package.json` нет и не заводится — см. `README.md` рядом).
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url))

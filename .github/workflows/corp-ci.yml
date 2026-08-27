@@ -65,6 +65,12 @@ jobs:
       - name: Тесты packages/app
         run: bun run --cwd packages/app test
 
+      - name: Браузер для тестов раскладки
+        run: bun x playwright install --with-deps chromium
+
+      - name: Тесты раскладки корп-окон (packages/app)
+        run: bun --cwd packages/app x playwright test --config test-layout/playwright.config.ts
+
       # Наборы corp/*.test.ts не запускались корп-CI ни одним заданием: скрипт `test` пакета
       # opencode работает с cwd packages/opencode и каталог corp/ не обходит, а корневой `bun test`
       # отключён намеренно (F32). Весь доказательный аппарат S-B6, S-B16 и S-Q11 — реестр правок

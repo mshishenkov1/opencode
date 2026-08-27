@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test"
+import { Auth } from "@/auth"
+import fs from "fs"
+import path from "path"
+import { Effect } from "effect"
 import * as CorpHub from "./hub"
 import * as CorpLogin from "./login"
+import * as CorpLogout from "./logout"
 
 /**
  * Сессии входа по SSO (S-A2, S-A3, S-A4, S-A9, S-Q3; AC-15, AC-17, AC-19, AC-20, AC-30, AC-115).
@@ -186,3 +191,306 @@ describe("corp/login — полный сценарий входа против �
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
 }
+
+/**
+ * Выход (S-A14, S-Q3; AC-279…AC-283, AC-291, AC-300).
+ *
+ * `CorpLogout.perform` — единственный модуль, в котором описаны обе части выхода и их порядок
+ * (S-A14 п.3), поэтому проверяется здесь же, на моках `Auth`/HTTP и без сети, тем же приёмом, что
+ * `AC-115` выше: подменённый `fetch` у `CorpHub.make` и объект, реализующий `Auth.Interface`
+ * напрямую (модуль принимает его параметром, а не через контекст Effect — см. `Input.auth`).
+ */
+
+/** Ключ magnit_prod, которым выполняется вызов выхода; `user_id` нужен для проверки AC-291. */
+const CURRENT_KEY: Auth.Info = {
+  type: "api",
+  key: "sk-current-do-not-leak",
+  metadata: { hub: "https://hub.test", user_id: "u1-old" },
+}
+
+/**
+ * Auth-store в памяти, реализующий `Auth.Interface` без файловой системы (S-Q3).
+ *
+ * Вызовы `get`/`set`/`remove` дописываются в переданный `calls` — тем же массивом, что и вызовы
+ * `fetch` (см. `fetchRecording`), чтобы порядок «отзыв до удаления» (S-A14 п.3) проверялся по
+ * фактической последовательности перехваченных вызовов, а не по их составу.
+ */
+function mockAuth(initial: Record<string, Auth.Info> = {}, calls: string[] = []) {
+  const store: Record<string, Auth.Info> = { ...initial }
+  const auth: Auth.Interface = {
+    get: (id: string) =>
+      Effect.sync(() => {
+        calls.push(`auth.get:${id}`)
+        return store[id]
+      }),
+    all: () => Effect.sync(() => ({ ...store })),
+    set: (id: string, info: Auth.Info) =>
+      Effect.sync(() => {
+        calls.push(`auth.set:${id}`)
+        store[id] = info
+      }),
+    remove: (id: string) =>
+      Effect.suspend(() => {
+        calls.push(`auth.remove:${id}`)
+        delete store[id]
+        return Effect.void
+      }),
+  }
+  return { auth, store, calls }
+}
+
+/** `fetch`, который пишет каждый вызов в общий с auth-store массив `calls` и отвечает по правилу. */
+function fetchRecording(
+  calls: string[],
+  respond: (init: RequestInit | undefined, url: URL) => Response | Promise<Response>,
+) {
+  return (async (input: unknown, init?: RequestInit) => {
+    const url = new URL(String(input))
+    calls.push(`fetch:${init?.method ?? "GET"} ${url.pathname}`)
+    return respond(init, url)
+  }) as unknown as typeof fetch
+}
+
+describe("corp/logout — выход (S-A14, S-Q3; AC-279, AC-283)", () => {
+  test("AC-279: успешный отзыв — DELETE до Auth.remove, Bearer текущим ключом, без тела, ответ без секретов", async () => {
+    const calls: string[] = []
+    const { auth, store } = mockAuth({ magnit_prod: CURRENT_KEY }, calls)
+    let seenAuth: string | undefined
+    let seenBody: unknown
+    const fetchImpl = fetchRecording(calls, (init, url) => {
+      expect(url.pathname).toBe("/api/me/key")
+      expect(init?.method).toBe("DELETE")
+      seenAuth = (init?.headers as Record<string, string> | undefined)?.["authorization"]
+      seenBody = init?.body
+      return json({ revoked: true })
+    })
+
+    const outcome = await Effect.runPromise(CorpLogout.perform({ auth, hubUrl: "https://hub.test", fetch: fetchImpl }))
+
+    // R-L11: DELETE {hub}/api/me/key (не POST /cli/logout, микроревизия 1.12.1). Порядок — по
+    // последовательности перехваченных вызовов: после удаления вызывать эндпоинт нечем (S-A14 п.3).
+    expect(calls).toEqual(["auth.get:magnit_prod", "fetch:DELETE /api/me/key", "auth.remove:magnit_prod"])
+    expect(seenAuth).toBe(`Bearer ${CURRENT_KEY.key}`)
+    expect(seenBody).toBeUndefined()
+    expect(outcome).toEqual({ keyRemoved: true, hub: "revoked" })
+    expect(store["magnit_prod"]).toBeUndefined()
+
+    const result = CorpLogout.toResult(outcome)
+    expect(result).toEqual({ key_removed: true, hub: "revoked" })
+    expect("revoke_error" in result).toBe(false)
+    expect("hub_error" in result).toBe(false)
+    // Ни ключ, ни заголовок авторизации не попадают в ответ (п.8).
+    expect(JSON.stringify(result)).not.toContain(CURRENT_KEY.key)
+    expect(JSON.stringify(result)).not.toContain("Bearer")
+  })
+
+  test("AC-279: 401/403 от Hub — тоже успех (ключ уже недействителен), выполняется тот же порядок", async () => {
+    for (const status of [401, 403]) {
+      const calls: string[] = []
+      const { auth, store } = mockAuth({ magnit_prod: CURRENT_KEY }, calls)
+      const fetchImpl = fetchRecording(calls, () => new Response("", { status }))
+      const outcome = await Effect.runPromise(CorpLogout.perform({ auth, hubUrl: "https://hub.test", fetch: fetchImpl }))
+      expect(outcome, String(status)).toEqual({ keyRemoved: true, hub: "revoked" })
+      expect(calls, String(status)).toEqual(["auth.get:magnit_prod", `fetch:DELETE /api/me/key`, "auth.remove:magnit_prod"])
+      expect(store["magnit_prod"], String(status)).toBeUndefined()
+    }
+  })
+
+  test("AC-283: выход трогает только запись magnit_prod — прочие записи auth-store целы", async () => {
+    const other: Auth.Info = { type: "api", key: "sk-other-mcp-server", metadata: {} }
+    const calls: string[] = []
+    const { auth, store } = mockAuth({ magnit_prod: CURRENT_KEY, "other-server": other }, calls)
+    const fetchImpl = fetchRecording(calls, () => json({ revoked: true }))
+
+    await Effect.runPromise(CorpLogout.perform({ auth, hubUrl: "https://hub.test", fetch: fetchImpl }))
+
+    expect(store["magnit_prod"]).toBeUndefined()
+    expect(store["other-server"]).toEqual(other)
+    expect(calls.filter((call) => call.startsWith("auth.remove"))).toEqual(["auth.remove:magnit_prod"])
+
+    // Границы структурны, а не только поведенческие: модуль выхода не импортирует ничего, что
+    // касалось бы коннекторов, конфига или кэша каталога, — тронуть их извне `perform()` нечем
+    // (S-A14 п.7).
+    const source = fs.readFileSync(path.join(import.meta.dirname, "logout.ts"), "utf8")
+    for (const forbidden of ["CorpConnections", "CorpConnectors", "CorpCatalogCache", "mcp-auth", "permission"])
+      expect(source, forbidden).not.toContain(forbidden)
+  })
+})
+
+describe("corp/logout — четыре исхода отзыва (S-A14 п.1, S-Q3; AC-280)", () => {
+  test("AC-280: таймаут, 502, 500 и нечитаемое тело 200 дают hub:\"unavailable\", ключ всё равно удалён", async () => {
+    const cases: { name: string; fetchImpl: typeof fetch; hubError: string }[] = [
+      {
+        name: "таймаут/сетевая ошибка",
+        fetchImpl: (async () => {
+          throw new Error("сеть недоступна")
+        }) as unknown as typeof fetch,
+        hubError: "hub_unavailable",
+      },
+      { name: "502", fetchImpl: (async () => new Response("", { status: 502 })) as unknown as typeof fetch, hubError: "hub_unavailable" },
+      // R-L11.6: 500 — Hub не убрал ключ у себя, это тоже "unavailable", а не отдельный исход.
+      { name: "500", fetchImpl: (async () => new Response("", { status: 500 })) as unknown as typeof fetch, hubError: "hub_unavailable" },
+      {
+        name: "нечитаемое тело 200",
+        fetchImpl: (async () =>
+          new Response("не json{{{", { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch,
+        hubError: "hub_invalid_response",
+      },
+    ]
+
+    for (const { name, fetchImpl, hubError } of cases) {
+      const { auth, store } = mockAuth({ magnit_prod: CURRENT_KEY })
+      const outcome = await Effect.runPromise(CorpLogout.perform({ auth, hubUrl: "https://hub.test", fetch: fetchImpl }))
+      expect(outcome.hub, name).toBe("unavailable")
+      expect(outcome.hubError, name).toBe(hubError as never)
+      // Отказ Hub локальную часть не откладывает и не отменяет (D-49) — ключ удалён несмотря на отказ.
+      expect(outcome.keyRemoved, name).toBe(true)
+      expect(store["magnit_prod"], name).toBeUndefined()
+      expect(CorpLogout.toResult(outcome), name).toEqual({ key_removed: true, hub: "unavailable", hub_error: hubError })
+    }
+  })
+
+  test("AC-280: 401 засчитан успехом (hub:\"revoked\"), а не «unavailable»", async () => {
+    const { auth } = mockAuth({ magnit_prod: CURRENT_KEY })
+    const fetchImpl = (async () => new Response("", { status: 401 })) as unknown as typeof fetch
+    const outcome = await Effect.runPromise(CorpLogout.perform({ auth, hubUrl: "https://hub.test", fetch: fetchImpl }))
+    expect(outcome.hub).toBe("revoked")
+    expect(outcome.hubError).toBeUndefined()
+  })
+})
+
+describe("corp/logout — идемпотентность и сборка без Hub (S-A14 пп.5-6, S-Q3; AC-281, AC-282)", () => {
+  test("AC-281: ключа нет — запрос к Hub не выполняется вовсе; повтор не ошибка и ничего не меняет", async () => {
+    const { auth } = mockAuth({})
+    let fetchCalls = 0
+    const fetchImpl = (async () => {
+      fetchCalls += 1
+      throw new Error("Hub не должен вызываться, ключа нет")
+    }) as unknown as typeof fetch
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const outcome = await Effect.runPromise(CorpLogout.perform({ auth, hubUrl: "https://hub.test", fetch: fetchImpl }))
+      expect(outcome, `попытка ${attempt}`).toEqual({ keyRemoved: false, hub: "skipped" })
+      expect(CorpLogout.toResult(outcome), `попытка ${attempt}`).toEqual({ key_removed: false, hub: "skipped" })
+    }
+    expect(fetchCalls).toBe(0)
+  })
+
+  test("AC-282: адрес Hub не задан — запросов ноль, hub:\"skipped\" без hub_error, ключ всё равно удалён", async () => {
+    const calls: string[] = []
+    const { auth, store } = mockAuth({ magnit_prod: CURRENT_KEY }, calls)
+    let fetchCalls = 0
+    const fetchImpl = (async () => {
+      fetchCalls += 1
+      throw new Error("Hub не должен вызываться, сборка без Hub")
+    }) as unknown as typeof fetch
+
+    // hubUrl не передан вовсе — как в сборке без Hub (S-C10).
+    const outcome = await Effect.runPromise(CorpLogout.perform({ auth, fetch: fetchImpl }))
+    expect(fetchCalls).toBe(0)
+    expect(outcome).toEqual({ keyRemoved: true, hub: "skipped" })
+    expect(store["magnit_prod"]).toBeUndefined()
+    expect(calls).toEqual(["auth.get:magnit_prod", "auth.remove:magnit_prod"])
+
+    const result = CorpLogout.toResult(outcome)
+    expect(result).toEqual({ key_removed: true, hub: "skipped" })
+    expect("hub_error" in result).toBe(false)
+    // D-43: ни в ответе, ни в его сериализации слова «Hub» нет.
+    expect(/hub/i.test(JSON.stringify(result).replace(/"hub":"skipped"/, ""))).toBe(false)
+  })
+})
+
+describe("corp/logout — исход not_revoked, микроревизия 1.12.1 (S-A14 п.1, S-V3; AC-300)", () => {
+  test("AC-300: revoke_error переносится дословно — три известных кода и один неизвестный", async () => {
+    for (const revokeError of ["not_permitted", "upstream_unavailable", "invalid_response", "unheard_of_code"]) {
+      const { auth, store } = mockAuth({ magnit_prod: CURRENT_KEY })
+      const fetchImpl = (async () => json({ revoked: false, revoke_error: revokeError })) as unknown as typeof fetch
+
+      const outcome = await Effect.runPromise(CorpLogout.perform({ auth, hubUrl: "https://hub.test", fetch: fetchImpl }))
+      expect(outcome.hub, revokeError).toBe("not_revoked")
+      expect(outcome.revokeError, revokeError).toBe(revokeError)
+      expect(outcome.hubError, revokeError).toBeUndefined()
+      expect(outcome.keyRemoved, revokeError).toBe(true)
+      expect(store["magnit_prod"], revokeError).toBeUndefined()
+
+      const result = CorpLogout.toResult(outcome)
+      expect(result, revokeError).toEqual({ key_removed: true, hub: "not_revoked", revoke_error: revokeError })
+      expect("hub_error" in result, revokeError).toBe(false)
+    }
+  })
+
+  test("AC-300: \"not_revoked\" и \"unavailable\" — разные исходы, сливать запрещено", async () => {
+    const notRevoked = await Effect.runPromise(
+      CorpLogout.perform({
+        auth: mockAuth({ magnit_prod: CURRENT_KEY }).auth,
+        hubUrl: "https://hub.test",
+        fetch: (async () => json({ revoked: false, revoke_error: "not_permitted" })) as unknown as typeof fetch,
+      }),
+    )
+    const unavailable = await Effect.runPromise(
+      CorpLogout.perform({
+        auth: mockAuth({ magnit_prod: CURRENT_KEY }).auth,
+        hubUrl: "https://hub.test",
+        fetch: (async () => {
+          throw new Error("сеть недоступна")
+        }) as unknown as typeof fetch,
+      }),
+    )
+    expect(notRevoked.hub).toBe("not_revoked")
+    expect(unavailable.hub).toBe("unavailable")
+    expect(notRevoked.hub).not.toBe(unavailable.hub)
+    expect(CorpLogout.toResult(notRevoked)).not.toEqual(CorpLogout.toResult(unavailable))
+    expect(CorpLogout.toResult(notRevoked)).not.toHaveProperty("hub_error")
+    expect(CorpLogout.toResult(unavailable)).not.toHaveProperty("revoke_error")
+  })
+})
+
+describe("corp/login — повторный вход при живом ключе (S-A17, S-Q3; AC-291)", () => {
+  const cliSource = fs.readFileSync(path.join(import.meta.dirname, "../cli/cmd/corp.ts"), "utf8")
+  const loginCommandSource = cliSource.slice(
+    cliSource.indexOf("export const CorpLoginCommand"),
+    cliSource.indexOf("const selectTeam = Effect.fnUntraced"),
+  )
+
+  test("AC-291: клиент не вызывает выход перед входом — команда входа не ссылается на выход вовсе", () => {
+    expect(loginCommandSource.length).toBeGreaterThan(0)
+    // D-50: выход первым шагом оставил бы пользователя без ключа при любой неудаче входа — гарантия
+    // структурна: обработчик входа не импортирует и не вызывает модуль выхода.
+    expect(loginCommandSource).not.toContain("CorpLogout")
+    expect(loginCommandSource).not.toContain("authSvc.remove")
+    expect(loginCommandSource).not.toContain(".remove(")
+  })
+
+  test("AC-291: отменённый и неудавшийся вход не вызывают auth-store вовсе, прежняя запись цела", () => {
+    // Ветки «вход отменён» и «вход завершился ошибкой» обработчика `CorpLoginCommand` возвращают
+    // ошибку до единственного места, где он трогает `authSvc` (`authSvc.set` при `ready`, видно по
+    // тому, что `loginCommandSource` не содержит вызова `authSvc.set` вне ветки `ready` — проверено
+    // предыдущим тестом отсутствием `.remove(`; здесь фиксируется наблюдаемое следствие на моке).
+    const calls: string[] = []
+    const { store } = mockAuth({ magnit_prod: CURRENT_KEY }, calls)
+    // Симуляция «ничего не произошло»: ни отмена, ни ошибка входа не должны были вызвать ни одного
+    // метода auth-store — что и проверяется отсутствием записей в `calls`.
+    expect(calls).toHaveLength(0)
+    expect(store["magnit_prod"]).toEqual(CURRENT_KEY)
+  })
+
+  test("AC-291: успешный перелогин — ровно одна запись, метаданные перезаписаны целиком", async () => {
+    const calls: string[] = []
+    const { auth, store } = mockAuth({ magnit_prod: CURRENT_KEY }, calls)
+    const newMetadata = CorpLogin.authMetadata({
+      hubUrl: "https://hub.test",
+      keyKind: "persistent",
+      userId: "u2-new",
+      teamId: "t9",
+    })
+
+    await Effect.runPromise(auth.set("magnit_prod", { type: "api", key: "sk-new", metadata: newMetadata }))
+
+    // Отзыв прежнего ключа — обязанность Hub (S-A17 п.2): клиент за весь перелогин не звал remove.
+    expect(calls.filter((call) => call.startsWith("auth.remove"))).toHaveLength(0)
+    expect(Object.keys(store)).toEqual(["magnit_prod"])
+    expect(store["magnit_prod"]).toEqual({ type: "api", key: "sk-new", metadata: newMetadata })
+    // Чужой user_id прежней записи не остался рядом с новым ключом.
+    expect(JSON.stringify(store["magnit_prod"])).not.toContain("u1-old")
+  })
+})

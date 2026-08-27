@@ -604,3 +604,157 @@ describe("opencode corp status — адрес модели и конфликты
     60_000,
   )
 })
+
+/**
+ * `opencode corp logout` (S-A15, S-Q11; AC-284, AC-285, AC-286).
+ *
+ * Построчный контракт вывода — часть спецификации (S-A15), формулировки берутся из неё дословно.
+ * Код выхода определяется ЛОКАЛЬНОЙ частью (D-49): 0, если после команды ключа в auth-store нет
+ * (в том числе когда сервер не ответил), 1 — только если ключ удалить не удалось.
+ */
+const LOGOUT_LINES = {
+  revoked: "Ключ отозван на сервере.",
+  notRevoked: (reason: string) => `Ключ на сервере не отозван: ${reason}. Он может продолжать работать до истечения срока.`,
+  revokeFailed: (reason: string) => `Отозвать ключ на сервере не удалось: ${reason}.`,
+  removed: "Локальный ключ удалён.",
+  notSignedIn: "Ключ не найден: выход не требуется.",
+} as const
+
+/** Мини-Hub только с `DELETE /api/me/key` — остального контракта Hub эти тесты не касаются. */
+function keyHub(respond: (auth: string | null) => Response) {
+  const requests: string[] = []
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      const url = new URL(request.url)
+      requests.push(`${request.method} ${url.pathname}`)
+      if (url.pathname === "/api/me/key" && request.method === "DELETE") return respond(request.headers.get("authorization"))
+      return json({ error: "not_found" }, 404)
+    },
+  })
+  hubs.push({ stop: () => server.stop(true) })
+  return { url: `http://127.0.0.1:${server.port}`, requests }
+}
+
+describe("opencode corp logout (S-A15; AC-284)", () => {
+  test("AC-284: ключ есть, отзыв удался — две строки контракта, код выхода 0, ключ удалён из auth-store", async () => {
+    const server = keyHub((auth) => {
+      expect(auth).toBe(`Bearer ${KEY}`)
+      return json({ revoked: true })
+    })
+    const home = await makeHome()
+    await writeKey(home)
+
+    const result = await run(home, ["corp", "logout", "--hub", server.url])
+
+    expect(result.out).toContain(LOGOUT_LINES.revoked)
+    expect(result.out).toContain(LOGOUT_LINES.removed)
+    expect(result.out).not.toContain(KEY)
+    expect(result.code).toBe(0)
+    expect(await readAuth(home)).toEqual({})
+    expect(server.requests).toEqual(["DELETE /api/me/key"])
+  })
+
+  test("AC-284: сервер ответил 200 revoked:false — строка называет причину и отличается от «не ответил», ключ всё равно удалён", async () => {
+    const server = keyHub(() => json({ revoked: false, revoke_error: "not_permitted" }))
+    const home = await makeHome()
+    await writeKey(home)
+
+    const result = await run(home, ["corp", "logout", "--hub", server.url])
+
+    expect(result.out).toContain(LOGOUT_LINES.notRevoked("отзыв ключа не разрешён"))
+    expect(result.out).toContain(LOGOUT_LINES.removed)
+    // Разные факты — разные строки: «не отозван» не подменяет «не удалось связаться» и наоборот.
+    expect(result.out).not.toContain("Отозвать ключ на сервере не удалось")
+    expect(result.code).toBe(0)
+    expect(await readAuth(home)).toEqual({})
+  })
+
+  test("AC-284: сервер не ответил — строка называет недоступность, отличается от not_revoked, ключ удалён", async () => {
+    const server = keyHub(() => json({}))
+    const url = server.url
+    // Сервер поднят и тут же остановлен — соединение будет отвергнуто, как «Hub не ответил».
+    hubs.pop()!.stop()
+    const home = await makeHome()
+    await writeKey(home)
+
+    const result = await run(home, ["corp", "logout", "--hub", url])
+
+    expect(result.out).toContain(LOGOUT_LINES.revokeFailed("Hub недоступен"))
+    expect(result.out).toContain(LOGOUT_LINES.removed)
+    expect(result.out).not.toContain("на сервере не отозван")
+    expect(result.code).toBe(0)
+    expect(await readAuth(home)).toEqual({})
+  }, 15_000)
+
+  test("AC-284: сборка без Hub — только строка про локальный ключ, про сервер не сказано ничего", async () => {
+    const home = await makeHome()
+    await writeKey(home)
+
+    const result = await run(home, ["corp", "logout"], {
+      env: { OPENCODE_CORP_HUB_URL: "", OPENCODE_CORP_CATALOG_URL: "https://static.test/catalog.json" },
+    })
+
+    expect(result.out).toContain(LOGOUT_LINES.removed)
+    expect(result.out).not.toContain(LOGOUT_LINES.revoked)
+    expect(/hub/i.test(result.out)).toBe(false)
+    expect(result.code).toBe(0)
+    expect(await readAuth(home)).toEqual({})
+  })
+
+  test("AC-284: ключа не было — «выход не требуется», код выхода 0, запросов к Hub нет", async () => {
+    const server = keyHub(() => {
+      throw new Error("Hub не должен был получить запрос — ключа не было")
+    })
+    const home = await makeHome()
+
+    const result = await run(home, ["corp", "logout", "--hub", server.url])
+
+    expect(result.out).toContain(LOGOUT_LINES.notSignedIn)
+    expect(result.out).not.toContain(LOGOUT_LINES.removed)
+    expect(result.code).toBe(0)
+    expect(server.requests).toHaveLength(0)
+  })
+})
+
+describe("opencode corp logout — неудача локального удаления и выключенный режим (S-A15; AC-285, AC-286)", () => {
+  test("AC-285: auth-store не пишется — код выхода 1, причина названа, выход не объявлен успешным", async () => {
+    const server = keyHub(() => json({ revoked: true }))
+    const home = await makeHome()
+    await writeKey(home)
+    // `auth.json` становится доступным только на чтение: запись в него (прямой `writeFileString`,
+    // не rename-подмена) падает с ошибкой ОС (EACCES), при этом чтение при старте команды проходит
+    // штатно — ключ виден, отказывает именно попытка удаления, а не чтение записи (иначе сработала
+    // бы идемпотентная ветка «ключа не было», а не эта).
+    const authFile = path.join(home, "data", "opencode", "auth.json")
+    await fs.chmod(authFile, 0o400)
+    try {
+      const result = await run(home, ["corp", "logout", "--hub", server.url])
+      expect(result.code).toBe(1)
+      // Серверная часть печатается по своему фактическому исходу — успех отзыва не подменяет провал
+      // локальной части.
+      expect(result.out).toContain(LOGOUT_LINES.revoked)
+      expect(result.out).not.toContain(LOGOUT_LINES.removed)
+      expect(result.out.toLowerCase()).not.toContain("выход выполнен")
+    } finally {
+      await fs.chmod(authFile, 0o600)
+    }
+  })
+
+  test("AC-286: корп-функции выключены — «Корпоративный режим не настроен», код 1, ни одного сетевого запроса", async () => {
+    const home = await makeHome()
+    await writeKey(home)
+
+    const result = await run(home, ["corp", "logout"], {
+      env: { OPENCODE_CORP_HUB_URL: "", OPENCODE_CORP_CATALOG_URL: "" },
+    })
+
+    expect(result.out).toContain("Корпоративный режим не настроен")
+    expect(result.code).toBe(1)
+    // Ключ остаётся на месте: команда отказала раньше, чем стала бы его трогать.
+    expect(await readAuth(home)).toEqual({
+      magnit_prod: { type: "api", key: KEY, metadata: { hub: "https://hub.test", key_kind: "persistent" } },
+    })
+  })
+})

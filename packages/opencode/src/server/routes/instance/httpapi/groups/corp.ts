@@ -83,7 +83,13 @@ export const CorpPaths = {
   loginPoll: "/corp/login/poll/:loginID",
   loginTeam: "/corp/login/poll/:loginID/team",
   loginCancel: "/corp/login/poll/:loginID",
+  // corp: выход (S-A14). Ресурс — сессия пользователя целиком, а не сессия входа: `POST`, потому
+  // что действие состоит из двух шагов на двух сторонах и описывает исход каждого.
+  logout: "/corp/logout",
   status: "/corp/status",
+  // corp: действие «Включить» (S-C11 п.4) — снятие `magnit_prod` с `disabled_providers` личного
+  // конфига. Пути для него спека не называет; имя выбрано по образцу соседей группы.
+  providerEnable: "/corp/provider/enable",
   catalog: "/corp/catalog",
   connect: "/corp/connectors/:alias/connect",
   disconnect: "/corp/connectors/:alias/disconnect",
@@ -145,6 +151,18 @@ export const CorpApi = HttpApi.make("corp")
             description: "Освобождает сессию входа в памяти сервера при закрытии экрана (S-A9).",
           }),
         ),
+        HttpApiEndpoint.post("logout", CorpPaths.logout, {
+          query: WorkspaceRoutingQuery,
+          success: described(CorpSchema.LogoutResult, "Выход выполнен"),
+          error: CorpDisabledError,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "corp.logout",
+            summary: "Sign out of corporate SSO",
+            description:
+              "Отзывает ключ на стороне Hub (best effort) и безусловно удаляет его из auth-store. Ответ описывает обе части по отдельности. Коннекторы, разрешения и кэш каталога не трогает.",
+          }),
+        ),
         HttpApiEndpoint.get("status", CorpPaths.status, {
           query: WorkspaceRoutingQuery,
           success: described(CorpSchema.CorpStatus, "Состояние корпоративного режима"),
@@ -152,7 +170,22 @@ export const CorpApi = HttpApi.make("corp")
           OpenApi.annotations({
             identifier: "corp.status",
             summary: "Corporate mode status",
-            description: "Адрес Hub, наличие ключа, версия и свежесть кэша каталога.",
+            description:
+              "Адрес Hub, наличие ключа, версия и свежесть кэша каталога, а также файл, в котором корп-провайдер выключен личным конфигом (provider_disabled).",
+          }),
+        ),
+        HttpApiEndpoint.post("providerEnable", CorpPaths.providerEnable, {
+          query: WorkspaceRoutingQuery,
+          success: described(CorpSchema.ProviderEnableResult, "Провайдер включён обратно"),
+          error: CorpDisabledError,
+        }).annotateMerge(
+          OpenApi.annotations({
+            // Двухсегментный идентификатор оставляет метод SDK плоским (`corp.providerEnable()`),
+            // как у соседей группы; точка внутри имени завела бы отдельный вложенный класс.
+            identifier: "corp.providerEnable",
+            summary: "Re-enable the corporate provider",
+            description:
+              "Удаляет ровно один элемент magnit_prod из disabled_providers глобального конфига через Config.updateGlobal. Запись в слое, который приложение не правит, не трогается: ответ называет файл и причину.",
           }),
         ),
         HttpApiEndpoint.get("catalog", CorpPaths.catalog, {

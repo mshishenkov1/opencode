@@ -6,17 +6,21 @@ import * as CorpCatalogCache from "@/corp/catalog-cache"
 import * as CorpConfig from "@/corp/config"
 import * as CorpConnections from "@/corp/connections"
 import * as CorpConnectors from "@/corp/connectors"
+import * as CorpDiagnostics from "@/corp/diagnostics"
 import * as CorpErrors from "@/corp/errors"
 import * as CorpHub from "@/corp/hub"
 import * as CorpLogin from "@/corp/login"
+import * as CorpLogout from "@/corp/logout"
 import * as CorpSchema from "@/corp/schema"
 import * as CorpStatus from "@/corp/status"
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { CORP_PROVIDER_ID, corpUserEmail } from "@opencode-ai/core/corp/constants"
+import { Global } from "@opencode-ai/core/global"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import open from "open"
+import path from "path"
 import { InstanceHttpApi } from "../api"
 import { CorpBadRequestError, CorpDisabledError, CorpHubError } from "../groups/corp"
 
@@ -36,6 +40,24 @@ import { CorpBadRequestError, CorpDisabledError, CorpHubError } from "../groups/
 function publicUser(user: CorpSchema.HubUser): CorpSchema.HubUser {
   const email = corpUserEmail(user)
   return { user_id: user.user_id, ...(email === undefined ? {} : { email }) }
+}
+
+/**
+ * Файлы глобального конфига пользователя — единственные, которые правит `Config.updateGlobal` (F21).
+ * Порядок повторяет порядок слоёв загрузки; список закрыт и совпадает с тем, что читает диагностика.
+ */
+const GLOBAL_CONFIG_FILES = ["config.json", "opencode.json", "opencode.jsonc"] as const
+
+/**
+ * Лежит ли файл в глобальном конфиге пользователя (S-C11 п.4).
+ *
+ * Всё остальное — конфиг проекта и `OPENCODE_CONFIG` — слои, которые приложение не редактирует.
+ * Проверяется и каталог, и имя: файл рядом с глобальным конфигом, но с другим именем, приложение
+ * тоже не правит.
+ */
+function isGlobalConfigFile(file: string) {
+  const resolved = path.resolve(file)
+  return GLOBAL_CONFIG_FILES.some((name) => resolved === path.resolve(Global.Path.config, name))
 }
 
 /** Свежесть внутрипроцессного memo каталога (S-V3). */
@@ -273,7 +295,81 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return { cancelled: known }
     })
 
-    // --- Статус (S-A11) ---
+    // --- Выход (S-A14) ---
+
+    /**
+     * S-A14 «Выйти»: отзыв ключа на стороне Hub (best effort) и безусловное удаление у себя.
+     *
+     * Гейт — `requireCatalog`, а не `requireHub`: в сборке без Hub (S-C10) выход доступен, просто
+     * шага отзыва в нём нет (S-A14 п.6). Обе части выполняет общий с CLI модуль — порядок «отзыв до
+     * удаления» описан ровно в одном месте.
+     */
+    const logout = Effect.fn("CorpHttpApi.logout")(function* () {
+      yield* requireCatalog()
+      const url = hubUrl()
+      const outcome = yield* CorpLogout.perform({ auth: authSvc, ...(url === undefined ? {} : { hubUrl: url }) })
+      // S-A14 п.8: в лог уходит факт и исход, но ни ключ, ни его часть, ни заголовок авторизации.
+      yield* Effect.logInfo("corp logout", {
+        key_removed: outcome.keyRemoved,
+        hub: outcome.hub,
+        ...(outcome.hubError === undefined ? {} : { hub_error: outcome.hubError }),
+      })
+      if (outcome.removeError !== undefined)
+        yield* Effect.logError("corp logout: запись auth-store не удалена", { error: outcome.removeError })
+      // S-A14 п.4: конфиг и провайдеры инвалидируются тем же способом, что при входе (S-A3), —
+      // перезапуск не нужен, обращение к модели сразу даёт состояние «ключа нет» (S-C4b).
+      if (outcome.keyRemoved) yield* configSvc.invalidate()
+      return CorpLogout.toResult(outcome)
+    })
+
+    // --- Статус (S-A11) и возврат провайдера (S-C11) ---
+
+    /** Рабочий каталог инстанса — точка отсчёта слоёв конфига (S-C3). */
+    const instanceDirectory = Effect.fnUntraced(function* () {
+      const instance = yield* InstanceRef
+      return instance?.directory ?? process.cwd()
+    })
+
+    /**
+     * Признак «корп-провайдер выключен личным конфигом» и файл, где это записано (S-C9, S-C11 п.1).
+     *
+     * Считает тот же `CorpDiagnostics.inspect`, что и `opencode corp status`: второй копии разбора
+     * слоёв конфига не заводится. Отсутствие поля — обычное состояние, а не «неизвестно».
+     */
+    const providerDisabled = Effect.fnUntraced(function* () {
+      const directory = yield* instanceDirectory()
+      const report = yield* Effect.promise(() =>
+        CorpDiagnostics.inspect({ directory }).catch(() => CorpDiagnostics.EMPTY),
+      )
+      return report.providerDisabled
+    })
+
+    /**
+     * S-C11 п.4 «Включить»: снимает `magnit_prod` с `disabled_providers` глобального конфига.
+     *
+     * Правится только тот слой, который приложение и так правит (S-C7): решение принимается по
+     * **глобальному** слою — если действующая запись пришла не из него, действие не выполняется
+     * вовсе, а ответ называет файл и причину. Молча править не свой слой — та же ошибка, что молча
+     * править чужой конфиг.
+     */
+    const providerEnable = Effect.fn("CorpHttpApi.providerEnable")(function* () {
+      yield* requireCatalog()
+      const disabled = yield* providerDisabled()
+      // Провайдер не выключен — править нечего, и это не ошибка.
+      if (disabled === undefined) return { changed: false, reason: "not_disabled" as const }
+
+      const globalConfig = yield* configSvc.getGlobal()
+      const patch = CorpConfig.enableProviderPatch(globalConfig.disabled_providers)
+      if (patch === undefined || !isGlobalConfigFile(disabled.file))
+        return { changed: false, provider_disabled: disabled, reason: "foreign_layer" as const }
+
+      yield* configSvc.updateGlobal(patch)
+      // S-C11 п.4: провайдер доступен без перезапуска — та же инвалидация, что при входе (S-A3).
+      yield* configSvc.invalidate()
+      // Состояние пересчитывается заново: предупреждение исчезает потому, что исчезло состояние.
+      const after = yield* providerDisabled()
+      return { changed: true, ...(after === undefined ? {} : { provider_disabled: after }) }
+    })
 
     const status = Effect.fn("CorpHttpApi.status")(function* () {
       const url = hubUrl()
@@ -287,10 +383,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         ...(catalog === undefined ? {} : { catalog }),
         identity: url ?? catalog!,
       })
+      // S-C11 п.1: признак и файл считает сервер и отдаёт одним полем — витрина, экран входа и TUI
+      // берут его отсюда и сами слои конфига не разбирают.
+      const disabled = yield* providerDisabled()
       const base: CorpSchema.CorpStatus = {
         ...(url === undefined ? {} : { hub_url: url }),
         enabled: true,
         authenticated: key !== undefined,
+        ...(disabled === undefined ? {} : { provider_disabled: disabled }),
         ...(cached === undefined
           ? {}
           : {
@@ -931,7 +1031,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       .handle("loginPoll", loginPoll)
       .handle("loginTeam", loginTeam)
       .handle("loginCancel", loginCancel)
+      .handle("logout", logout)
       .handle("status", status)
+      .handle("providerEnable", providerEnable)
       .handle("catalog", catalog)
       .handle("connect", connect)
       .handle("disconnect", disconnect)

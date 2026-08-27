@@ -30,6 +30,12 @@ export const LINES = {
   model: (model: string, baseURL: string) => `Модель: ${model} на ${baseURL}`,
   providerDisabled: (file: string) =>
     `Провайдер ${CORP_PROVIDER_ID}: выключен в конфиге пользователя (disabled_providers): ${file}`,
+  /**
+   * Подсказка о действии «Включить» (S-C11 п.2). Печатается только `corp status` и **после** строки
+   * `providerDisabled`, которая сохранена дословно: названная причина без способа её устранить —
+   * тупик, просто освещённый.
+   */
+  providerDisabledHint: "Включить обратно: действие «Включить» в витрине коннекторов",
   connectorsOverridden: (aliases: string[], file: string) =>
     `Коннекторы, переопределённые локально: ${aliases.join(", ")}: ${file}`,
 } as const
@@ -57,7 +63,11 @@ async function fileLayer(file: string): Promise<Layer | undefined> {
   return data === undefined ? undefined : { file, data }
 }
 
-const exists = (file: string) => fs.stat(file).then(() => true, () => false)
+const exists = (file: string) =>
+  fs.stat(file).then(
+    () => true,
+    () => false,
+  )
 
 /**
  * Файлы конфига проекта от дальнего предка к ближнему: ближний сильнее (порядок `ConfigPaths.files`).

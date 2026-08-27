@@ -72,6 +72,23 @@ export function applyModelBaseUrl<T extends WithCorpProvider>(config: T, baseURL
   return config
 }
 
+/**
+ * Патч действия «Включить» (S-C11 п.4, S-C7): массив `disabled_providers` без корп-провайдера.
+ *
+ * `undefined` — провайдера в массиве нет, править нечего. Прочие элементы сохраняются в прежнем
+ * порядке; массив, оставшийся пустым, остаётся **пустым массивом** — не удаляется и не заменяется
+ * на `null`: пользователь выключал провайдеров списком, и список остаётся списком.
+ *
+ * Это второе и последнее исключение из S-C7 после блока `permission` (S-V21): корп-код правит
+ * конфиг пользователя только по его явному действию и только в том элементе, о котором он попросил.
+ */
+export function enableProviderPatch(
+  disabled: readonly string[] | undefined,
+): { disabled_providers: string[] } | undefined {
+  if (!disabled || !disabled.includes(CORP_PROVIDER_ID)) return undefined
+  return { disabled_providers: disabled.filter((id) => id !== CORP_PROVIDER_ID) }
+}
+
 /** Действующий адрес модели корп-слоя: переменная окружения выше значения из корп-конфига (S-C4a). */
 export function modelBaseUrlOf(config: WithCorpProvider | undefined): string | undefined {
   const value = config?.provider?.[CORP_PROVIDER_ID]?.options?.["baseURL"]

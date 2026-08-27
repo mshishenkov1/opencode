@@ -54,6 +54,88 @@ export function useCorpStatus() {
   }))
 }
 
+/**
+ * Выход из корпоративного SSO (S-A14, S-A16).
+ *
+ * Ответ описывает **обе** части по отдельности, потому что они по-разному надёжны, и исход каждой
+ * показывается, а не подразумевается. Отказ отзыва — **предупреждение, а не ошибка**: локальная
+ * часть выполнена, пользователь вышел у себя, и отказать ему в этом нельзя (D-49).
+ */
+export function useCorpLogout() {
+  const sdk = useServerSDK()
+  const language = useLanguage()
+  const invalidate = useCorpInvalidate()
+
+  return useMutation(() => ({
+    mutationFn: () =>
+      sdk()
+        .client.corp.logout()
+        .then((response) => response.data),
+    onSuccess: async (result) => {
+      if (result) {
+        // Идемпотентный случай (S-A14 п.5): ключа не было — «уже вышел» не ошибка.
+        if (!result.key_removed && result.hub === "skipped") {
+          showToast({ variant: "default", title: language.t("corp.logout.notSignedIn") })
+        } else if (result.hub === "unavailable") {
+          showToast({
+            variant: "default",
+            title: language.t("corp.logout.revokeFailed", {
+              reason: language.t(corpErrorKey(result.hub_error)),
+            }),
+          })
+        } else {
+          // `skipped` при удалённом ключе — сборка без Hub (п.6): о сервере говорить нечего (D-43).
+          showToast({
+            variant: "success",
+            title: language.t(result.hub === "skipped" ? "corp.logout.doneLocal" : "corp.logout.done"),
+          })
+        }
+      }
+      await invalidate()
+    },
+    onError: (error) =>
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: error instanceof Error ? error.message : String(error),
+      }),
+  }))
+}
+
+/**
+ * Возврат выключенного провайдера (S-C11).
+ *
+ * Правка касается **ровно одного** элемента `magnit_prod` в `disabled_providers` глобального
+ * конфига. Запись в слое, который приложение не правит, не трогается вовсе: ответ называет файл и
+ * причину, а молча править не свой слой — та же ошибка, что молча править чужой конфиг (S-C7).
+ */
+export function useProviderEnable() {
+  const sdk = useServerSDK()
+  const language = useLanguage()
+  const invalidate = useCorpInvalidate()
+
+  return useMutation(() => ({
+    mutationFn: () =>
+      sdk()
+        .client.corp.providerEnable()
+        .then((response) => response.data),
+    onSuccess: async (result) => {
+      if (result && !result.changed && result.reason === "foreign_layer")
+        showToast({
+          variant: "default",
+          title: language.t("corp.provider.enableForeignLayer", { file: result.provider_disabled?.file ?? "" }),
+        })
+      await invalidate()
+    },
+    onError: (error) =>
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: error instanceof Error ? error.message : String(error),
+      }),
+  }))
+}
+
 export function useCorpCatalog(enabled: () => boolean) {
   const sdk = useServerSDK()
   return useQuery(() => ({

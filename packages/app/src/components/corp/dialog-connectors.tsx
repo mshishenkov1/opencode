@@ -3,11 +3,12 @@ import type { CorpCatalogCard } from "@opencode-ai/sdk/v2"
 import { connectorType, corpUserLabel } from "@opencode-ai/core/corp/constants"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { Dialog } from "@opencode-ai/ui/dialog"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { List } from "@opencode-ai/ui/list"
 import { Tag } from "@opencode-ai/ui/tag"
 import { TabsV2 } from "@opencode-ai/ui/v2/tabs-v2"
-import { corpErrorKey, useCorpCatalog, useCorpInvalidate, useCorpStatus } from "@/context/corp"
+import { corpErrorKey, useCorpCatalog, useCorpInvalidate, useCorpLogout, useCorpStatus, useProviderEnable } from "@/context/corp"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
@@ -111,6 +112,82 @@ export function matchesQuery(card: CorpCatalogCard, query: string): boolean {
   if (!needle) return true
   return [card.title, card.alias, card.description, card.owner, card.type].some((value) =>
     value ? value.toLowerCase().includes(needle) : false,
+  )
+}
+
+/**
+ * Подтверждение выхода (S-A16).
+ *
+ * Выход отменяется только повторным входом, а вход требует браузера и SSO, поэтому действие
+ * спрашивает один раз явно; отмена не меняет ни ключа, ни экрана. Текст называет **обе** части —
+ * ключ будет отозван на сервере и удалён у вас, — а в сборке без Hub говорит только о локальном
+ * ключе и слова «Hub» не содержит (D-43).
+ */
+const DialogCorpLogout: Component<{ hubConfigured: boolean }> = (props) => {
+  const language = useLanguage()
+  const dialog = useDialog()
+  const logout = useCorpLogout()
+
+  return (
+    <Dialog title={language.t("corp.logout.action")} fit>
+      <div class="flex flex-col gap-4 pl-6 pr-2.5 pb-3">
+        <span class="text-14-regular text-text-strong">
+          {language.t(props.hubConfigured ? "corp.logout.confirm" : "corp.logout.confirmLocal")}
+        </span>
+        <div class="flex justify-end gap-2">
+          <Button variant="ghost" size="large" onClick={() => dialog.close()}>
+            {language.t("common.cancel")}
+          </Button>
+          <Button
+            variant="primary"
+            size="large"
+            disabled={logout.isPending}
+            onClick={() => {
+              logout.mutate()
+              dialog.close()
+            }}
+          >
+            {language.t("corp.logout.action")}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+/**
+ * Подтверждение действия «Включить» (S-C11 п.5): действие правит конфиг пользователя, поэтому
+ * спрашивает подтверждение и называет файл, который будет изменён. Отмена не меняет ничего.
+ */
+const DialogProviderEnable: Component<{ file: string }> = (props) => {
+  const language = useLanguage()
+  const dialog = useDialog()
+  const enable = useProviderEnable()
+
+  return (
+    <Dialog title={language.t("corp.provider.enable")} fit>
+      <div class="flex flex-col gap-4 pl-6 pr-2.5 pb-3">
+        <span class="text-14-regular text-text-strong">
+          {language.t("corp.provider.enableConfirm", { file: props.file })}
+        </span>
+        <div class="flex justify-end gap-2">
+          <Button variant="ghost" size="large" onClick={() => dialog.close()}>
+            {language.t("common.cancel")}
+          </Button>
+          <Button
+            variant="primary"
+            size="large"
+            disabled={enable.isPending}
+            onClick={() => {
+              enable.mutate()
+              dialog.close()
+            }}
+          >
+            {language.t("corp.provider.enable")}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
   )
 }
 
@@ -242,6 +319,25 @@ export const DialogConnectors: Component = () => {
   const needsLogin = createMemo(() => catalog.data?.hub_error === "unauthorized")
 
   /**
+   * Вход выполнен — ключ `magnit_prod` есть в auth-store (S-A16).
+   *
+   * Этим одним признаком определяется вся пара «Войти»/«Выйти»: это одна позиция в ряду с двумя
+   * взаимоисключающими состояниями, и одновременно они не показываются никогда.
+   */
+  const signedIn = createMemo(() => status.data?.enabled === true && status.data.authenticated === true)
+
+  /** Провайдер выключен личным конфигом пользователя, и сервер знает файл (S-C11 п.1). */
+  const providerDisabled = createMemo(() => status.data?.provider_disabled)
+
+  function confirmLogout() {
+    dialog.push(() => <DialogCorpLogout hubConfigured={hubConfigured()} />)
+  }
+
+  function confirmProviderEnable(file: string) {
+    dialog.push(() => <DialogProviderEnable file={file} />)
+  }
+
+  /**
    * S-D11: строка ведёт на страницу коннектора через `push`, а не `show`. `show` уничтожил бы
    * витрину со всем её состоянием, и возврат приводил бы пользователя не туда, откуда он ушёл.
    *
@@ -261,9 +357,34 @@ export const DialogConnectors: Component = () => {
         <div class="flex items-center gap-2">
           {/* AC-131: пользователь в заголовке — email, а при неизвестном email — `user_id`. */}
           <Show when={user()}>{(value) => <span class="text-12-regular text-text-weak">{value()}</span>}</Show>
-          <Show when={needsLogin()}>
-            <Button size="small" onClick={() => void openLogin()}>
-              {language.t("corp.connectors.login")}
+          {/* S-C11 п.2: предупреждение живёт там, где видно следствие, и только пока держится
+              состояние. Модальным окном оно не является и работу не прерывает: состояние создано
+              пользователем сознательно, и приложение не вправе решать за него, что это ошибка. */}
+          <Show when={providerDisabled()}>
+            {(value) => (
+              <div data-slot="corp-provider-warning" class="flex items-center gap-2">
+                <span class="text-12-regular text-text-weak">
+                  {language.t("corp.provider.disabledTitle", { file: value().file })}
+                </span>
+                <Button size="small" onClick={() => confirmProviderEnable(value().file)}>
+                  {language.t("corp.provider.enable")}
+                </Button>
+              </div>
+            )}
+          </Show>
+          {/* S-A16: «Войти» — когда ключа нет, «Выйти» — когда есть; одновременно никогда. */}
+          <Show
+            when={signedIn()}
+            fallback={
+              <Show when={needsLogin()}>
+                <Button size="small" onClick={() => void openLogin()}>
+                  {language.t("corp.connectors.login")}
+                </Button>
+              </Show>
+            }
+          >
+            <Button size="small" variant="ghost" onClick={confirmLogout}>
+              {language.t("corp.logout.action")}
             </Button>
           </Show>
           {/* D-53: иконкой показывается действие, которое ничего не меняет, доступно всегда и

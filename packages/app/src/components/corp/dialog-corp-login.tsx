@@ -71,6 +71,18 @@ export const DialogCorpLogin: Component = () => {
     // Сессия уже освобождена сервером при `ready` (S-A3) — отменять нечего.
     pending = undefined
     showToast({ variant: "success", title: language.t("corp.login.success", { email: corpUserLabel(user) }) })
+    // S-C11 п.2: пользователь только что сделал то, после чего модель обязана заработать. Если она
+    // не заработает, сказать об этом нужно здесь, а не ждать, пока он напишет первое сообщение и
+    // получит отказ. Действие «Включить» ждёт его в заголовке витрины — там состояние и держится.
+    const status = await sdk()
+      .client.corp.status()
+      .catch(() => undefined)
+    const disabled = status?.data?.provider_disabled
+    if (disabled)
+      showToast({
+        variant: "default",
+        title: language.t("corp.provider.disabledTitle", { file: disabled.file }),
+      })
     await invalidate()
     dialog.close()
   }

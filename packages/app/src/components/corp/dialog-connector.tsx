@@ -443,6 +443,9 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
       title={
         <span class="flex items-center gap-2">
           <span>{card()?.title ?? props.alias}</span>
+          {/* `alias` ушёл со строки витрины (S-D6, ревизия 1.12) и показывается здесь: он не
+              лишние данные, а данные не для сканирования таблицы (D-53). */}
+          <span class="text-12-regular text-text-weak">{props.alias}</span>
           <Show when={card()?.deprecated}>
             <Tag>{language.t("corp.connectors.deprecated")}</Tag>
           </Show>

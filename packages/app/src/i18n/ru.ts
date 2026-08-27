@@ -963,6 +963,24 @@ export const dict = {
   "corp.login.otherProvider": "Другой провайдер",
   // corp: вход по SSO остаётся Hub-зависимым (S-C5, S-C10 п.2)
   "corp.login.needsHub": "Вход по корпоративному SSO в этой сборке не настроен",
+
+  // corp: выход из корпоративного аккаунта (S-A14, S-A16, S-I1). «Войти» и «Выйти» — разные ключи,
+  // а не один с подстановкой: это разные действия с разными последствиями. Пара `*Local` — для
+  // сборки без Hub, где о сервере говорить нечего (D-43).
+  "corp.logout.action": "Выйти",
+  "corp.logout.confirm": "Выйти из корпоративного аккаунта? Ключ будет отозван на сервере и удалён на этом компьютере.",
+  "corp.logout.confirmLocal": "Выйти из корпоративного аккаунта? Ключ будет удалён на этом компьютере.",
+  "corp.logout.done": "Выход выполнен: ключ отозван на сервере и удалён на этом компьютере",
+  "corp.logout.doneLocal": "Выход выполнен: ключ удалён на этом компьютере",
+  "corp.logout.revokeFailed": "Ключ удалён на этом компьютере, отозвать его на сервере не удалось: {{reason}}",
+  "corp.logout.notSignedIn": "Вы не выполняли вход",
+
+  // corp: возврат выключенного провайдера (S-C11, S-I1)
+  "corp.provider.disabledTitle": "Провайдер Magnit Copilot выключен в вашем конфиге, файл {{file}}",
+  "corp.provider.enable": "Включить",
+  "corp.provider.enableConfirm": "Включить провайдера Magnit Copilot? Будет изменён файл {{file}}.",
+  "corp.provider.enableForeignLayer":
+    "Запись лежит в файле {{file}} — приложение его не редактирует, измените вручную",
   "corp.login.teamTitle": "Выберите команду",
   "corp.login.success": "Вход выполнен: {{email}}",
 
@@ -1011,7 +1029,6 @@ export const dict = {
   // corp: оболочка витрины-таблицы — вкладки-фильтры и заголовки колонок (S-V11, S-D6, S-I1)
   "corp.connectors.tabAll": "Все",
   "corp.connectors.tabConnected": "Подключённые",
-  "corp.connectors.tabNotConnected": "Неподключённые",
   "corp.connectors.columnName": "Имя",
   "corp.connectors.columnType": "Тип",
   "corp.connectors.columnStatus": "Статус",
@@ -1044,7 +1061,6 @@ export const dict = {
 
   "corp.empty.unparsed": "Каталог не разобран: отброшены все карточки ({{dropped}})",
   "corp.empty.tabConnected": "Пока ничего не подключено",
-  "corp.empty.tabNotConnected": "Подключено всё",
 
   "corp.status.connected": "подключён",
   "corp.status.needs_auth": "требуется авторизация",

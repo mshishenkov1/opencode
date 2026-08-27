@@ -3,6 +3,7 @@ import type { CorpCatalogCard } from "@opencode-ai/sdk/v2"
 import { connectorType, corpUserLabel } from "@opencode-ai/core/corp/constants"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { IconButton } from "@opencode-ai/ui/icon-button"
 import { List } from "@opencode-ai/ui/list"
 import { Tag } from "@opencode-ai/ui/tag"
 import { TabsV2 } from "@opencode-ai/ui/v2/tabs-v2"
@@ -15,11 +16,14 @@ import { CorpDialog } from "./dialog-shell"
 /**
  * Витрина коннекторов Desktop/web — плоская таблица (S-D2, S-D6, S-V11, S-V12, S-V18, S-V22).
  *
- * Композиция ревизии 1.10 сверху вниз, и каждая часть — существующий компонент (S-D6):
- * `CorpDialog` (окно и его габариты, S-D10) → `TabsV2 variant="pill"` (три вкладки-фильтра
+ * Композиция сверху вниз, и каждая часть — существующий компонент (S-D6):
+ * `CorpDialog` (окно и его габариты, S-D10) → `TabsV2 variant="pill"` (две вкладки-фильтра
  * S-V11) → неподвижная шапка «Имя | Тип | Статус» → существующий `List` (поиск, клавиатурная
  * навигация, пустые состояния). Группировка по владельцу отменена: витрина — таблица состояний,
  * а не лента, и заголовки групп ломали выравнивание колонок.
+ *
+ * Ревизия 1.12 по правкам живой витрины: обновление — иконкой, а не словом (D-53); имя коннектора
+ * показывается один раз, без подписи `alias` второй строкой; вкладок две.
  *
  * Строка не носит кнопок действий: и они, и описание уехали на страницу коннектора (S-D11),
  * которая открывается основным действием строки через `useDialog().push` — витрина при этом
@@ -50,13 +54,19 @@ const STATE_KEY = {
   connected: "corp.connectors.connected",
 } as const
 
-/** Вкладки-фильтры витрины (S-V11). Умолчание — «Все»; выбор между запусками не персистится. */
-export type ConnectorsTab = "all" | "connected" | "not_connected"
+/**
+ * Вкладки-фильтры витрины (S-V11, переформулирован ревизией 1.12: было три, стало две).
+ * Умолчание — «Все»; выбор между запусками не персистится.
+ *
+ * «Неподключённые» убрана заказчиком: на реальном каталоге она почти совпадала со «Всеми»
+ * (подключено два-три из полутора десятков), а орган фильтрации, дающий тот же список, — не
+ * фильтр, а лишний выбор (D-53).
+ */
+export type ConnectorsTab = "all" | "connected"
 
 const TAB_KEY = {
   all: "corp.connectors.tabAll",
   connected: "corp.connectors.tabConnected",
-  not_connected: "corp.connectors.tabNotConnected",
 } as const
 
 /**
@@ -83,14 +93,12 @@ export function statusTone(card: Pick<CorpCatalogCard, "state" | "status">): "su
 }
 
 /**
- * Вкладка карточки (S-V11): «Подключённые» — состояние 4 таблицы S-V16, «Неподключённые» — все
- * прочие, включая `needs_auth` и `unavailable`. Вкладка отвечает на вопрос «чем я уже могу
- * пользоваться», а не пересказывает таблицу статусов.
+ * Вкладка карточки (S-V11): «Подключённые» — карточки в состоянии 4 таблицы S-V16. Определение
+ * сохранено дословно с ревизии 1.10; изменилось лишь то, что противоположной вкладки больше нет.
  */
 export function matchesTab(card: CorpCatalogCard, tab: ConnectorsTab): boolean {
   if (tab === "all") return true
-  const connected = card.state === "connected"
-  return tab === "connected" ? connected : !connected
+  return card.state === "connected"
 }
 
 /**
@@ -136,7 +144,7 @@ export const DialogConnectors: Component = () => {
 
   const [tab, setTab] = createSignal<ConnectorsTab>("all")
   // Строка поиска живёт здесь, а не только внутри `List`: по ней считается, пусто ли пересечение
-  // вкладки и запроса (S-V12, состояния 5 и 6), и она же возвращается в поле после сброса фильтра.
+  // вкладки и запроса (S-V12, состояние 5), и она же возвращается в поле после сброса фильтра.
   const [query, setQuery] = createSignal("")
 
   const cards = createMemo<CorpCatalogCard[]>(() => catalog.data?.servers ?? [])
@@ -192,8 +200,9 @@ export const DialogConnectors: Component = () => {
   const showTable = createMemo(() => !hubEmpty())
 
   /**
-   * Шесть пустых состояний (S-V12). Первые четыре — про каталог целиком и предлагают запросить его
-   * заново («Обновить») либо войти («Войти»); два новых — про вкладку, и предлагают сброс фильтра
+   * Пять пустых состояний (S-V12, ревизия 1.12: было шесть — вместе со вкладкой «Неподключённые»
+   * исчезло её пустое состояние). Первые четыре — про каталог целиком и предлагают запросить его
+   * заново («Обновить») либо войти («Войти»); пятое — про вкладку, и предлагает сброс фильтра
    * («Показать все»), потому что каталог-то на месте.
    *
    * Пустой результат на вкладке «Все» сюда не попадает: там причина — поиск, и `List` сам говорит
@@ -222,8 +231,6 @@ export const DialogConnectors: Component = () => {
     }
     if (visible().length > 0) return undefined
     if (tab() === "connected") return { text: language.t("corp.empty.tabConnected"), action: "resetFilter" as const }
-    if (tab() === "not_connected")
-      return { text: language.t("corp.empty.tabNotConnected"), action: "resetFilter" as const }
     return undefined
   })
 
@@ -259,9 +266,18 @@ export const DialogConnectors: Component = () => {
               {language.t("corp.connectors.login")}
             </Button>
           </Show>
-          <Button size="small" variant="ghost" onClick={() => void invalidate()}>
-            {language.t("corp.connectors.refresh")}
-          </Button>
+          {/* D-53: иконкой показывается действие, которое ничего не меняет, доступно всегда и
+              повторяется часто. Доступность краткости в жертву не приносится — `aria-label` и
+              подсказка обязательны и локализованы, иначе кнопка исчезает не только с экрана, но и
+              из скринридера. Иконка берётся из набора приложения, своего SVG корп-код не заводит. */}
+          <IconButton
+            icon="reset"
+            size="small"
+            variant="ghost"
+            aria-label={language.t("corp.connectors.refresh")}
+            title={language.t("corp.connectors.refresh")}
+            onClick={() => void invalidate()}
+          />
         </div>
       }
     >
@@ -295,7 +311,6 @@ export const DialogConnectors: Component = () => {
             <TabsV2.List>
               <TabsV2.Trigger value="all">{language.t(TAB_KEY.all)}</TabsV2.Trigger>
               <TabsV2.Trigger value="connected">{language.t(TAB_KEY.connected)}</TabsV2.Trigger>
-              <TabsV2.Trigger value="not_connected">{language.t(TAB_KEY.not_connected)}</TabsV2.Trigger>
             </TabsV2.List>
           </TabsV2>
         </Show>
@@ -328,16 +343,17 @@ export const DialogConnectors: Component = () => {
         >
           {(card) => (
             <div data-slot="corp-connectors-row" class="w-full">
-              <div class="flex flex-col gap-0.5 min-w-0">
-                <div class="flex items-center gap-2 min-w-0">
-                  <span class="text-14-regular text-text-strong truncate">{card.title}</span>
-                  {/* Бейдж «устаревший» живёт в колонке «Имя»: он про карточку, а не про
-                      подключение (S-V18). */}
-                  <Show when={card.deprecated}>
-                    <Tag>{language.t("corp.connectors.deprecated")}</Tag>
-                  </Show>
-                </div>
-                <span class="text-12-regular text-text-weak truncate">{card.alias}</span>
+              {/* Имя показывается **один раз** (S-D6, ревизия 1.12): подпись `alias` второй строкой
+                  убрана — она повторяла то же самое техническим именем и удваивала высоту строки,
+                  мешая ровно тому сканированию, ради которого список делали плоским. `alias`
+                  остаётся полем поиска (`matchesQuery`) и виден на странице коннектора (D-53). */}
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="text-14-regular text-text-strong truncate">{card.title}</span>
+                {/* Бейдж «устаревший» живёт в колонке «Имя»: он про карточку, а не про
+                    подключение (S-V18). */}
+                <Show when={card.deprecated}>
+                  <Tag>{language.t("corp.connectors.deprecated")}</Tag>
+                </Show>
               </div>
               {/* S-V22: `type` → `owner` → пустая ячейка; пустая ячейка ширину колонки сохраняет. */}
               <span class="text-12-regular text-text-weak truncate">{connectorType(card) ?? ""}</span>

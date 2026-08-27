@@ -1065,6 +1065,26 @@ export const dict = {
   "corp.login.otherProvider": "Other provider",
   // corp: вход по SSO остаётся Hub-зависимым (S-C5, S-C10 п.2)
   "corp.login.needsHub": "Corporate SSO sign-in is not configured in this build",
+
+  // corp: выход из корпоративного аккаунта (S-A14, S-A16, S-I1). «Войти» и «Выйти» — разные ключи,
+  // а не один с подстановкой: это разные действия с разными последствиями. Пара `*Local` — для
+  // сборки без Hub, где о сервере говорить нечего (D-43).
+  "corp.logout.action": "Sign out",
+  "corp.logout.confirm":
+    "Sign out of the corporate account? The key will be revoked on the server and deleted on this computer.",
+  "corp.logout.confirmLocal": "Sign out of the corporate account? The key will be deleted on this computer.",
+  "corp.logout.done": "Signed out: the key was revoked on the server and deleted on this computer",
+  "corp.logout.doneLocal": "Signed out: the key was deleted on this computer",
+  "corp.logout.revokeFailed":
+    "The key was deleted on this computer, but revoking it on the server failed: {{reason}}",
+  "corp.logout.notSignedIn": "You are not signed in",
+
+  // corp: возврат выключенного провайдера (S-C11, S-I1)
+  "corp.provider.disabledTitle": "The Magnit Copilot provider is disabled in your config, file {{file}}",
+  "corp.provider.enable": "Enable",
+  "corp.provider.enableConfirm": "Enable the Magnit Copilot provider? The file {{file}} will be changed.",
+  "corp.provider.enableForeignLayer":
+    "The entry is in {{file}} — the app does not edit that file, so change it yourself",
   "corp.login.teamTitle": "Select a team",
   "corp.login.success": "Signed in as {{email}}",
 
@@ -1113,7 +1133,6 @@ export const dict = {
   // corp: оболочка витрины-таблицы — вкладки-фильтры и заголовки колонок (S-V11, S-D6, S-I1)
   "corp.connectors.tabAll": "All",
   "corp.connectors.tabConnected": "Connected",
-  "corp.connectors.tabNotConnected": "Not connected",
   "corp.connectors.columnName": "Name",
   "corp.connectors.columnType": "Type",
   "corp.connectors.columnStatus": "Status",
@@ -1145,7 +1164,6 @@ export const dict = {
 
   "corp.empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
   "corp.empty.tabConnected": "Nothing connected yet",
-  "corp.empty.tabNotConnected": "Everything is connected",
 
   "corp.status.connected": "connected",
   "corp.status.needs_auth": "needs auth",

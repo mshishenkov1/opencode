@@ -238,3 +238,96 @@ describe("TUI — предупреждение о выключенном про�
     expect(body).toContain('format("provider.enableForeignLayer"')
   })
 })
+
+/**
+ * Отмена и отказ роута возвращают на витрину, а не роняют оболочку в чат (S-A16; попутный фикс
+ * dev, найденный и закрытый мимо ревью и мимо изначального F-8/F-9 — коммит с правкой поведения
+ * `run()`/`onLeave` в `dialog-corp-logout.tsx` и вызова `leaving()` в `dialog-connectors.tsx`).
+ * «Отмена не меняет ни ключа, ни экрана» в терминале, где диалогового стека нет, означает
+ * буквально это: экран выхода закрывается через `dialog.clear()`, тот зовёт зарегистрированный
+ * `onClose` (`exit.done`), и только он решает, возвращаться ли на витрину. `leaving()` не
+ * переисполняется тестом заново — берётся и запускается настоящая функция из исходника.
+ */
+describe("TUI — отмена/отказ выхода возвращают на витрину, успех с Hub — нет (S-A16; AC-296)", () => {
+  function leavingFn() {
+    const start = connectorsSource.indexOf("function leaving(next: () => void) {")
+    expect(start, "функция leaving() не найдена").toBeGreaterThan(-1)
+    const open = connectorsSource.indexOf("{", start)
+    let depth = 0
+    let end = open
+    for (let index = open; index < connectorsSource.length; index++) {
+      if (connectorsSource[index] === "{") depth += 1
+      else if (connectorsSource[index] === "}") {
+        depth -= 1
+        if (depth === 0) {
+          end = index
+          break
+        }
+      }
+    }
+    return new Function(`return (function leaving(next) { ${connectorsSource.slice(open + 1, end)} })`)() as (
+      next: () => void,
+    ) => { done: () => void; suppress: () => void }
+  }
+
+  test("leaving(): done() зовёт next(), пока suppress() не вызван раньше — настоящая функция, не переисполнение", async () => {
+    const leaving = leavingFn()
+
+    let calls = 0
+    const exit = leaving(() => {
+      calls += 1
+    })
+    exit.done()
+    // `next` откладывается на микрозадачу (см. комментарий в исходнике) — ждём её.
+    await Promise.resolve()
+    expect(calls).toBe(1)
+    // Повторный done() — идемпотентен, второго вызова next() нет.
+    exit.done()
+    await Promise.resolve()
+    expect(calls).toBe(1)
+  })
+
+  test("leaving(): suppress() до done() гасит возврат — next() не вызывается вовсе", async () => {
+    const leaving = leavingFn()
+    let calls = 0
+    const exit = leaving(() => {
+      calls += 1
+    })
+    exit.suppress()
+    exit.done()
+    await Promise.resolve()
+    expect(calls).toBe(0)
+  })
+
+  test("AC-296: пункт «Выйти» в действиях витрины регистрирует возврат через leaving(backToList) и onLeave={exit.suppress}", () => {
+    const trigger = connectorsSource.slice(
+      connectorsSource.indexOf('command: "dialog.corp.logout"'),
+      connectorsSource.indexOf('command: "dialog.corp.logout"') + 800,
+    )
+    expect(trigger).toContain("const exit = leaving(() => backToList())")
+    expect(trigger).toContain("dialog.replace(() => <DialogCorpLogout onLeave={exit.suppress} />, exit.done)")
+  })
+
+  test("AC-296: отмена и отказ роута выхода закрываются через dialog.clear() — тот же путь, что зовёт onClose/exit.done", () => {
+    // Отмена (второй пункт DialogSelect, value:false) — уже проверено выше отдельным тестом, что
+    // это `dialog.clear()`; здесь же — отказ роута (`!data`, сеть/сервер недоступны).
+    const runBody = dialogSource.slice(dialogSource.indexOf("async function run() {"), dialogSource.indexOf("return (\n    <DialogSelect"))
+    const errorBranch = runBody.slice(runBody.indexOf("if (!data) {"), runBody.indexOf("if (!data) {") + 200)
+    expect(errorBranch).toContain("dialog.clear()")
+    expect(errorBranch).not.toContain("onLeave")
+  })
+
+  test("AC-296: успех с ключом при заданном Hub гасит возврат (onLeave) до перехода на экран входа, а не после dialog.clear()", () => {
+    const runBody = dialogSource.slice(dialogSource.indexOf("async function run() {"), dialogSource.indexOf("return (\n    <DialogSelect"))
+    const loginBranch = runBody.slice(
+      runBody.indexOf("if (data.key_removed && hub() === true) {"),
+      runBody.indexOf("} else dialog.clear()") + "} else dialog.clear()".length,
+    )
+    // Гашение возврата (`onLeave`) стоит РАНЬШЕ перехода на экран входа — иначе dialog.replace
+    // успел бы позвать зарегистрированный onClose (exit.done) и увести на витрину вместо входа.
+    expect(loginBranch.indexOf("props.onLeave?.()")).toBeGreaterThan(-1)
+    expect(loginBranch.indexOf("props.onLeave?.()")).toBeLessThan(loginBranch.indexOf("dialog.replace(() => <DialogCorpLogin"))
+    // Иначе (без ключа, без Hub) — тот же dialog.clear(), что у отмены и отказа: витрина, а не вход.
+    expect(loginBranch).toContain("else dialog.clear()")
+  })
+})

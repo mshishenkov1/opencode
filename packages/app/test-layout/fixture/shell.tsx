@@ -52,18 +52,21 @@ const catalog = (count: number): Card[] =>
     connected: at % 2 === 0,
   }))
 
-/** Строка витрины (S-D6, S-V18, S-V22) — та же разметка, что в `dialog-connectors.tsx`. */
+/**
+ * Строка витрины (S-D6, S-V18, S-V22) — та же разметка, что в `dialog-connectors.tsx`.
+ *
+ * Ревизия 1.12: имя показывается **один раз** (см. guard-тест «фикстура повторяет разметку витрины»
+ * ниже) — подпись `alias` второй строкой убрана в настоящем компоненте, и повторение её здесь молча
+ * измеряло бы высоту строки, которой у приложения больше нет (см. отчёт по разбору фикстуры).
+ */
 function Row(props: { card: Card }) {
   return (
     <div data-slot="corp-connectors-row" class="w-full">
-      <div class="flex flex-col gap-0.5 min-w-0">
-        <div class="flex items-center gap-2 min-w-0">
-          <span class="text-14-regular text-text-strong truncate">{props.card.title}</span>
-          <Show when={props.card.alias.endsWith("0")}>
-            <Tag>устаревший</Tag>
-          </Show>
-        </div>
-        <span class="text-12-regular text-text-weak truncate">{props.card.alias}</span>
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="text-14-regular text-text-strong truncate">{props.card.title}</span>
+        <Show when={props.card.alias.endsWith("0")}>
+          <Tag>устаревший</Tag>
+        </Show>
       </div>
       <span class="text-12-regular text-text-weak truncate">{props.card.type ?? ""}</span>
       <span data-slot="corp-status-cell">
@@ -107,12 +110,19 @@ function Connectors(props: { options: ShellOptions }) {
         )}
       </Show>
 
+      {/*
+        Ревизия 1.12 (D-53) убрала вкладку «Неподключённые» — реальная витрина держит только «Все» и
+        «Подключённые» (dialog-connectors.tsx, TAB_KEY). Набор и порядок value-атрибутов триггеров
+        вкладок ниже обязаны совпадать с исходником буквально: guard-тест «фикстура повторяет
+        разметку витрины» вычисляет ожидаемый список из исходника через регэксп и сверяет его с этим
+        местом — лишняя вкладка здесь не осталась бы незамеченной, как раньше, когда тест проверял
+        только наличие прежних строк, а не их полный, ровно такой же набор.
+      */}
       <Show when={table()}>
         <TabsV2 variant="pill" data-slot="corp-connectors-tabs" value="all" onChange={() => {}}>
           <TabsV2.List>
             <TabsV2.Trigger value="all">Все</TabsV2.Trigger>
             <TabsV2.Trigger value="connected">Подключённые</TabsV2.Trigger>
-            <TabsV2.Trigger value="not_connected">Неподключённые</TabsV2.Trigger>
           </TabsV2.List>
         </TabsV2>
       </Show>

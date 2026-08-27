@@ -473,7 +473,13 @@ describe("i18n corp.* — выход и возврат провайдера (S-I
   })
 
   test("AC-297: те же ключи есть в словаре TUI (нормализация — без префикса corp.)", async () => {
-    const tui = (await import("../../../tui/src/corp/i18n")) as {
+    // Путь собран из переменной, а не строкового литерала: composite-проект `packages/app`
+    // (`tsconfig.json`, `include: ["src"]`) не включает файлы `packages/tui`, и статический
+    // импорт по литералу роняет `tsc -b` (TS6307 — «файл не входит в file list проекта»),
+    // хотя во время выполнения (bun test) граница пакетов не мешает вовсе. Специфика через
+    // переменную не даёт TypeScript резолвить модуль для тайпчека, оставляя импорт нетронутым.
+    const tuiI18nPath = "../../../tui/src/corp/i18n"
+    const tui = (await import(tuiI18nPath)) as {
       dictionaries: { ru: Record<string, string>; en: Record<string, string> }
     }
     const tuiKey = (key: string) => key.replace(/^corp\./, "")

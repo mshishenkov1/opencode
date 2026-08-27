@@ -12,6 +12,7 @@ import { useDialog } from "../../ui/dialog"
 import { DialogSelect, type DialogSelectOption, type DialogSelectRef } from "../../ui/dialog-select"
 import { useToast } from "../../ui/toast"
 import { DialogCorpLogin } from "./dialog-corp-login"
+import { DialogCorpLogout } from "./dialog-corp-logout"
 import { DialogPermissions } from "./dialog-permissions"
 
 /**
@@ -246,6 +247,17 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
   /** Подпись пользователя в заголовке витрины: email, а при неизвестном email — `user_id` (S-A13). */
   const [user, setUser] = createSignal<string>()
   /**
+   * Есть ли ключ `magnit_prod` (S-A16). «Войти» показывается, когда ключа нет; «Выйти» — когда он
+   * есть; одновременно — никогда: это одна позиция в ряду с двумя взаимоисключающими состояниями.
+   */
+  const [authenticated, setAuthenticated] = createSignal<boolean>()
+  /**
+   * Провайдер `magnit_prod` выключен личным конфигом пользователя (S-C11): предупреждение видно
+   * там, где видно следствие, и **только** пока состояние держится. Файл считает сервер — второй
+   * копии разбора слоёв конфига клиент не заводит.
+   */
+  const [providerDisabled, setProviderDisabled] = createSignal<string>()
+  /**
    * Карточка под курсором: от её состояния зависит подпись `c` — «Повторить» в состоянии
    * «Соединение потеряно» и «Подключить» в состояниях «Не подключён» и «Подключение не удалось»
    * (S-T10, S-V16). Оболочка подпись выбирает, набор действий — нет.
@@ -259,6 +271,8 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
     const status = await sdk.client.corp.status().catch(() => undefined)
     const value = status?.data?.user
     setUser(value ? corpUserLabel(value) : undefined)
+    setAuthenticated(status?.data?.authenticated)
+    setProviderDisabled(status?.data?.provider_disabled?.file)
   }
 
   async function load(refresh = false) {
@@ -431,6 +445,43 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
       return
     }
     dialog.replace(() => <DialogCorpLogin />)
+  }
+
+  /**
+   * Возврат выключенного провайдера (S-C11, S-T11). Правит личный конфиг пользователя, поэтому
+   * спрашивает подтверждение и называет файл, который будет изменён; отмена не меняет ничего.
+   * Запись в слое, который приложение не правит, не трогается — ответ называет причину.
+   */
+  async function enableProvider(file: string) {
+    const confirmed = await new Promise<boolean>((resolve) => {
+      dialog.replace(
+        () => (
+          <DialogSelect
+            title={format("provider.enableConfirm", { file })}
+            options={[
+              { title: t("provider.enable"), value: true },
+              { title: t("login.cancelled"), value: false },
+            ]}
+            onSelect={(option) => resolve(option.value)}
+          />
+        ),
+        () => resolve(false),
+      )
+    })
+    if (!confirmed) {
+      backToList()
+      return
+    }
+    const result = await sdk.client.corp.providerEnable().catch(() => undefined)
+    const data = result?.data
+    if (data?.reason === "foreign_layer")
+      toast.show({
+        variant: "warning",
+        message: format("provider.enableForeignLayer", { file: data.provider_disabled?.file ?? file }),
+      })
+    // Предупреждение исчезает потому, что исчезло состояние, а не потому что его закрыли (S-C11).
+    await loadUser()
+    backToList()
   }
 
   async function openHub(card: CorpCatalogCard) {
@@ -610,6 +661,11 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
           <box flexDirection="row" gap={2}>
             <Show when={partial()}>{(value) => <text fg={theme.warning}>{value()}</text>}</Show>
             <Show when={banner()}>{(value) => <text fg={theme.warning}>{value()}</text>}</Show>
+            {/* S-C11: предупреждение стоит рядом с подписью пользователя и живёт, пока держится
+                состояние; работу оно не прерывает — состояние создано пользователем сознательно. */}
+            <Show when={providerDisabled()}>
+              {(file) => <text fg={theme.warning}>{format("provider.disabledTitle", { file: file() })}</text>}
+            </Show>
             {/* AC-131: пользователь в заголовке — email, а при неизвестном email — `user_id`. */}
             <Show when={user()}>{(value) => <text fg={theme.textMuted}>{value()}</text>}</Show>
           </box>
@@ -671,11 +727,29 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
           onTrigger: () => void load(true),
         },
         {
+          // S-C11: действие живёт рядом с предупреждением и исчезает вместе с ним.
+          command: "dialog.corp.provider_enable",
+          title: t("provider.enable"),
+          side: "right",
+          hidden: providerDisabled() === undefined,
+          onTrigger: () => void enableProvider(providerDisabled()!),
+        },
+        {
           command: "dialog.corp.login",
           title: t("connectors.login"),
           side: "right",
-          hidden: view()?.hub_error !== "unauthorized",
+          // S-A16: видимость — по состоянию, а не по экрану. Нет ключа — «Войти».
+          hidden: authenticated() !== false,
           onTrigger: () => openLogin(),
+        },
+        {
+          // S-A16, S-T11: та же позиция и та же клавиша, что у «Войти», — второго ускорителя
+          // выход не получает. Есть ключ — «Выйти»; вместе они не показываются никогда.
+          command: "dialog.corp.logout",
+          title: t("logout.action"),
+          side: "right",
+          hidden: authenticated() !== true,
+          onTrigger: () => dialog.replace(() => <DialogCorpLogout />),
         },
       ]}
     />

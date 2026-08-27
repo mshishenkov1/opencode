@@ -220,7 +220,12 @@ export const Definitions = {
   // corp: вкладки фильтра витрины (S-V11, S-T10) — циклом «Все → Подключённые → Неподключённые».
   "dialog.corp.filter": keybind("f", "Cycle connector filter tab"),
   "dialog.corp.refresh": keybind("r", "Refresh connector catalog"),
+  // corp: возврат выключенного провайдера (S-C11) — действие рядом с предупреждением.
+  "dialog.corp.provider_enable": keybind("e", "Re-enable corporate provider"),
   "dialog.corp.login": keybind("l", "Corporate SSO sign-in"),
+  // corp: «Выйти» занимает ту же позицию и ту же клавишу, что «Войти» (S-A16): это одна
+  // позиция с двумя взаимоисключающими состояниями, а не второй ускоритель (S-T11).
+  "dialog.corp.logout": keybind("l", "Corporate SSO sign-out"),
   "dialog.move_session.new": keybind("ctrl+m", "New project copy"),
   "dialog.move_session.delete": keybind("ctrl+d", "Delete project copy"),
   "dialog.move_session.refresh": keybind("ctrl+r", "Refresh project copies"),

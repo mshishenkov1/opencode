@@ -41,6 +41,7 @@ import { useConnected } from "./component/use-connected"
 import { DialogMcp } from "./component/dialog-mcp"
 // corp: корпоративные экраны — вход по SSO и витрина коннекторов (S-T1…S-T3)
 import { DialogCorpLogin } from "./component/corp/dialog-corp-login"
+import { DialogCorpLogout } from "./component/corp/dialog-corp-logout"
 import { DialogConnectors } from "./component/corp/dialog-connectors"
 import { corpEnabled, hasCorpKey, setCorpKey } from "./corp/state"
 import { t as corpText } from "./corp/i18n"
@@ -731,6 +732,17 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
               suggested: !hasCorpKey(),
               run: () => {
                 dialog.replace(() => <DialogCorpLogin />)
+              },
+            },
+            {
+              // S-T11: выход — команда, а не клавиша: действие необратимо в один шаг, и
+              // ускоритель был бы способом выполнить его случайно.
+              name: "corp.logout",
+              title: corpText("logout.action"),
+              category: "Provider",
+              slashName: "logout",
+              run: () => {
+                dialog.replace(() => <DialogCorpLogout />)
               },
             },
           ]

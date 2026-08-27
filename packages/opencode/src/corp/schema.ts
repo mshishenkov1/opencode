@@ -621,6 +621,17 @@ export const LoginPoll = Schema.Union([LoginPending, LoginTeamSelection, LoginRe
 })
 export type LoginPoll = Schema.Schema.Type<typeof LoginPoll>
 
+/**
+ * Корп-провайдер выключен личным конфигом пользователя (S-C9, S-C11) — и файл, где это записано.
+ *
+ * Поле присутствует **только** пока состояние держится; его отсутствие — обычное состояние, а не
+ * «неизвестно» (S-A1, ревизия 1.12).
+ */
+export const ProviderDisabled = Schema.Struct({
+  file: Schema.String,
+}).annotate({ identifier: "CorpProviderDisabled" })
+export type ProviderDisabled = Schema.Schema.Type<typeof ProviderDisabled>
+
 export const CorpStatus = Schema.Struct({
   hub_url: Schema.optional(Schema.String),
   enabled: Schema.Boolean,
@@ -631,9 +642,62 @@ export const CorpStatus = Schema.Struct({
   catalog_version: Schema.optional(Schema.String),
   catalog_cached_at: Schema.optional(Schema.Number),
   catalog_stale: Schema.optional(Schema.Boolean),
+  provider_disabled: Schema.optional(ProviderDisabled),
   hub_error: Schema.optional(Code),
 }).annotate({ identifier: "CorpStatus" })
 export type CorpStatus = Schema.Schema.Type<typeof CorpStatus>
+
+// --- S-A14, S-C11: выход и возврат провайдера (ревизия 1.12) ---
+
+/**
+ * Исход серверной части выхода (S-A14 п.1).
+ *
+ * `revoked` — Hub подтвердил отзыв (или ответил `401`/`403`: ключ уже недействителен, цель
+ * достигнута); `unavailable` — Hub не ответил, и ключ остался живым на сервере; `skipped` — шага
+ * не было вовсе: либо ключа не было (п.5), либо адрес Hub не задан (п.6, сборка без Hub).
+ */
+export const LogoutHubOutcome = Schema.Literals(["revoked", "unavailable", "skipped"]).annotate({
+  identifier: "CorpLogoutHubOutcome",
+})
+export type LogoutHubOutcome = Schema.Schema.Type<typeof LogoutHubOutcome>
+
+/**
+ * Ответ `POST /corp/logout` (S-A1, S-A14): две части выхода описаны по отдельности, потому что они
+ * по-разному надёжны. `key_removed:false` при `hub:"skipped"` — идемпотентный случай «ключа не было»
+ * и не ошибка (п.5). Ключ, его часть и заголовок авторизации сюда не попадают (п.8).
+ */
+export const LogoutResult = Schema.Struct({
+  key_removed: Schema.Boolean,
+  hub: LogoutHubOutcome,
+  hub_error: Schema.optional(Code),
+}).annotate({ identifier: "CorpLogoutResult" })
+export type LogoutResult = Schema.Schema.Type<typeof LogoutResult>
+
+/**
+ * Почему действие «Включить» ничего не изменило (S-C11 п.4).
+ *
+ * `foreign_layer` — запись лежит в слое, который приложение не правит (конфиг проекта,
+ * `OPENCODE_CONFIG`): молча править не свой слой — та же ошибка, что молча править чужой конфиг
+ * (S-C7). `not_disabled` — провайдер уже не выключен: править нечего, и это не ошибка.
+ */
+export const ProviderEnableReason = Schema.Literals(["foreign_layer", "not_disabled"]).annotate({
+  identifier: "CorpProviderEnableReason",
+})
+export type ProviderEnableReason = Schema.Schema.Type<typeof ProviderEnableReason>
+
+/**
+ * Ответ действия «Включить» (S-C11 п.4).
+ *
+ * `provider_disabled` — состояние **после** действия, тем же полем, что в `GET /corp/status`:
+ * его отсутствие и означает, что предупреждение должно исчезнуть, — не потому что его закрыли, а
+ * потому что исчезло состояние.
+ */
+export const ProviderEnableResult = Schema.Struct({
+  changed: Schema.Boolean,
+  provider_disabled: Schema.optional(ProviderDisabled),
+  reason: Schema.optional(ProviderEnableReason),
+}).annotate({ identifier: "CorpProviderEnableResult" })
+export type ProviderEnableResult = Schema.Schema.Type<typeof ProviderEnableResult>
 
 /** Карточка витрины: данные каталога Hub + вычисленное состояние (S-V5, S-V6). */
 export const CatalogCard = Schema.Struct({

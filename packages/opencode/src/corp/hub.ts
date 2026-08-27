@@ -46,6 +46,14 @@ interface Call {
   auth?: boolean
   /** Уточнение кодов ошибок для конкретного маршрута (S-A5). */
   statusOverrides?: Partial<Record<number, CorpErrors.Code>>
+  /**
+   * Статусы, которые для этого маршрута означают успех, хотя и не `2xx`.
+   *
+   * Нужны выходу (S-A14): `401`/`403` там значат «ключ уже недействителен», то есть цель достигнута.
+   * Различать это по коду ошибки нельзя — `fromResponse` отдаёт приоритет полю `error` тела, и Hub
+   * вправе прислать в нём что угодно; вопрос же задан о статусе.
+   */
+  successStatuses?: readonly number[]
 }
 
 function fail<T>(code: CorpErrors.Code, retryAfter?: number): Result<T> {
@@ -91,6 +99,8 @@ export function make(options: Options) {
         parsed = undefined
       }
     }
+
+    if (!response.ok && input.successStatuses?.includes(response.status)) return { ok: true, data: parsed }
 
     if (!response.ok) {
       return fail(
@@ -153,6 +163,17 @@ export function make(options: Options) {
         auth: false,
         statusOverrides: { 400: "invalid_team", 404: "login_expired", 409: "team_selection_not_required" },
       })
+    },
+
+    /**
+     * §3.1 `POST {hub}/cli/logout` — отзыв **того самого** ключа, которым выполняется вызов (S-A14).
+     *
+     * Тело ответа не разбирается: нужен только факт. `401`/`403` — успех: ключ уже недействителен,
+     * повторять нечего. Сетевая ошибка, таймаут и `5xx` дают `hub_unavailable` общим правилом `raw`.
+     */
+    async logout(): Promise<Result<void>> {
+      const result = await raw({ method: "POST", path: "/cli/logout", successStatuses: [401, 403] })
+      return result.ok ? { ok: true, data: undefined } : result
     },
 
     /** §3.2 `GET {hub}/api/me` */

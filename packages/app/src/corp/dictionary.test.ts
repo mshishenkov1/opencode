@@ -405,3 +405,83 @@ describe("i18n corp.* — тексты витрины-таблицы и экра
     expect(dictRu["corp.permissions.restDescription"]).toBeString()
   })
 })
+
+/**
+ * Тексты выхода и возврата провайдера (ревизия 1.12, микроревизия 1.12.1; S-I1; AC-297).
+ *
+ * Закрытый набор ключей S-I1: `corp.logout.*` (включая `corp.logout.reason.*` из 1.12.1) и
+ * `corp.provider.*`. Присутствие в трёх словарях, непустота, различие ru/en и раздельность
+ * «Войти»/«Выйти» проверяются как для любого другого ключа `corp.*` (S-I3).
+ */
+describe("i18n corp.* — выход и возврат провайдера (S-I1; AC-297)", () => {
+  const dictEn = en as Record<string, string>
+  const dictRu = ru as Record<string, string>
+
+  const LOGOUT_KEYS = [
+    "corp.logout.action",
+    "corp.logout.confirm",
+    "corp.logout.confirmLocal",
+    "corp.logout.done",
+    "corp.logout.doneLocal",
+    "corp.logout.revokeFailed",
+    "corp.logout.notSignedIn",
+    "corp.logout.notRevoked",
+    "corp.logout.reason.notPermitted",
+    "corp.logout.reason.upstreamUnavailable",
+    "corp.logout.reason.invalidResponse",
+    "corp.logout.reason.unreachable",
+  ] as const
+
+  const PROVIDER_KEYS = [
+    "corp.provider.disabledTitle",
+    "corp.provider.enable",
+    "corp.provider.enableConfirm",
+    "corp.provider.enableForeignLayer",
+  ] as const
+
+  test("AC-297: все ключи присутствуют в en и ru, непусты и различаются между языками", () => {
+    for (const key of [...LOGOUT_KEYS, ...PROVIDER_KEYS]) {
+      expect(dictEn[key], `${key} отсутствует в en.ts`).toBeString()
+      expect(dictRu[key], `${key} отсутствует в ru.ts`).toBeString()
+      expect(String(dictEn[key]).trim().length, key).toBeGreaterThan(0)
+      expect(String(dictRu[key]).trim().length, key).toBeGreaterThan(0)
+      expect(dictRu[key], key).not.toBe(dictEn[key])
+    }
+  })
+
+  test("AC-297: «Войти» и «Выйти» — разные ключи с разными значениями, а не один с подстановкой", () => {
+    expect(dictRu["corp.connectors.login"]).toBeString()
+    expect(dictRu["corp.logout.action"]).toBeString()
+    expect(dictRu["corp.connectors.login"]).not.toBe(dictRu["corp.logout.action"])
+    expect(dictEn["corp.connectors.login"]).not.toBe(dictEn["corp.logout.action"])
+    // Единственная условная пара словарей — corp.logout.*/corp.logout.*Local (S-I1, микроревизия
+    // 1.11.1): «Войти»/«Выйти» в эту пару не входят и своей Local-версии не имеют.
+    expect(dictRu["corp.connectors.loginLocal" as keyof typeof dictRu]).toBeUndefined()
+    expect(dictRu["corp.logout.actionLocal" as keyof typeof dictRu]).toBeUndefined()
+  })
+
+  test("AC-297: причины revoke_error — закрытый набор из четырёх, попарно различимы", () => {
+    for (const dict of [dictEn, dictRu]) {
+      const reasons = [
+        dict["corp.logout.reason.notPermitted"],
+        dict["corp.logout.reason.upstreamUnavailable"],
+        dict["corp.logout.reason.invalidResponse"],
+        dict["corp.logout.reason.unreachable"],
+      ]
+      expect(new Set(reasons).size).toBe(4)
+    }
+  })
+
+  test("AC-297: те же ключи есть в словаре TUI (нормализация — без префикса corp.)", async () => {
+    const tui = (await import("../../../tui/src/corp/i18n")) as {
+      dictionaries: { ru: Record<string, string>; en: Record<string, string> }
+    }
+    const tuiKey = (key: string) => key.replace(/^corp\./, "")
+    for (const key of [...LOGOUT_KEYS, ...PROVIDER_KEYS]) {
+      const short = tuiKey(key)
+      expect(tui.dictionaries.ru[short], `${short} отсутствует в словаре TUI (ru)`).toBeString()
+      expect(tui.dictionaries.en[short], `${short} отсутствует в словаре TUI (en)`).toBeString()
+      expect(tui.dictionaries.ru[short], short).not.toBe(tui.dictionaries.en[short])
+    }
+  })
+})

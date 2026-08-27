@@ -1114,6 +1114,70 @@
         ]
       }
     },
+    "/corp/logout": {
+      "post": {
+        "tags": ["corp"],
+        "operationId": "corp.logout",
+        "parameters": [
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Выход выполнен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpLogoutResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Отзывает ключ на стороне Hub (best effort) и безусловно удаляет его из auth-store. Ответ описывает обе части по отдельности. Коннекторы, разрешения и кэш каталога не трогает.",
+        "summary": "Sign out of corporate SSO",
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.logout({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/corp/status": {
       "get": {
         "tags": ["corp"],
@@ -1158,12 +1222,76 @@
             }
           }
         },
-        "description": "Адрес Hub, наличие ключа, версия и свежесть кэша каталога.",
+        "description": "Адрес Hub, наличие ключа, версия и свежесть кэша каталога, а также файл, в котором корп-провайдер выключен личным конфигом (provider_disabled).",
         "summary": "Corporate mode status",
         "x-codeSamples": [
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.status({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/corp/provider/enable": {
+      "post": {
+        "tags": ["corp"],
+        "operationId": "corp.providerEnable",
+        "parameters": [
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Провайдер включён обратно",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpProviderEnableResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Удаляет ровно один элемент magnit_prod из disabled_providers глобального конфига через Config.updateGlobal. Запись в слое, который приложение не правит, не трогается: ответ называет файл и причину.",
+        "summary": "Re-enable the corporate provider",
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.providerEnable({\n  ...\n})"
           }
         ]
       }
@@ -22088,6 +22216,51 @@
         "required": ["cancelled"],
         "additionalProperties": false
       },
+      "CorpLogoutHubOutcome": {
+        "type": "string",
+        "enum": ["revoked", "unavailable", "skipped"]
+      },
+      "CorpLogoutResult": {
+        "type": "object",
+        "properties": {
+          "key_removed": {
+            "type": "boolean"
+          },
+          "hub": {
+            "$ref": "#/components/schemas/CorpLogoutHubOutcome"
+          },
+          "hub_error": {
+            "type": "string",
+            "enum": [
+              "corp_disabled",
+              "hub_unavailable",
+              "hub_invalid_response",
+              "login_expired",
+              "forbidden",
+              "invalid_team",
+              "team_selection_not_required",
+              "rate_limited",
+              "litellm_unavailable",
+              "litellm_invalid_response",
+              "unauthorized",
+              "not_found",
+              "invalid_request"
+            ]
+          }
+        },
+        "required": ["key_removed", "hub"],
+        "additionalProperties": false
+      },
+      "CorpProviderDisabled": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          }
+        },
+        "required": ["file"],
+        "additionalProperties": false
+      },
       "CorpStatus": {
         "type": "object",
         "properties": {
@@ -22139,6 +22312,9 @@
           "catalog_stale": {
             "type": "boolean"
           },
+          "provider_disabled": {
+            "$ref": "#/components/schemas/CorpProviderDisabled"
+          },
           "hub_error": {
             "type": "string",
             "enum": [
@@ -22159,6 +22335,26 @@
           }
         },
         "required": ["enabled", "authenticated"],
+        "additionalProperties": false
+      },
+      "CorpProviderEnableReason": {
+        "type": "string",
+        "enum": ["foreign_layer", "not_disabled"]
+      },
+      "CorpProviderEnableResult": {
+        "type": "object",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "provider_disabled": {
+            "$ref": "#/components/schemas/CorpProviderDisabled"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/CorpProviderEnableReason"
+          }
+        },
+        "required": ["changed"],
         "additionalProperties": false
       },
       "CorpPermissionGroup": {

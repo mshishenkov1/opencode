@@ -2211,16 +2211,11 @@ export type CorpLoginCancel = {
   cancelled: boolean
 }
 
-export type CorpStatus = {
-  hub_url?: string
-  enabled: boolean
-  authenticated: boolean
-  user?: CorpHubUser
-  key_kind?: "persistent" | "jwt"
-  hub_reachable?: boolean
-  catalog_version?: string
-  catalog_cached_at?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-  catalog_stale?: boolean
+export type CorpLogoutHubOutcome = "revoked" | "unavailable" | "skipped"
+
+export type CorpLogoutResult = {
+  key_removed: boolean
+  hub: CorpLogoutHubOutcome
   hub_error?:
     | "corp_disabled"
     | "hub_unavailable"
@@ -2235,6 +2230,45 @@ export type CorpStatus = {
     | "unauthorized"
     | "not_found"
     | "invalid_request"
+}
+
+export type CorpProviderDisabled = {
+  file: string
+}
+
+export type CorpStatus = {
+  hub_url?: string
+  enabled: boolean
+  authenticated: boolean
+  user?: CorpHubUser
+  key_kind?: "persistent" | "jwt"
+  hub_reachable?: boolean
+  catalog_version?: string
+  catalog_cached_at?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  catalog_stale?: boolean
+  provider_disabled?: CorpProviderDisabled
+  hub_error?:
+    | "corp_disabled"
+    | "hub_unavailable"
+    | "hub_invalid_response"
+    | "login_expired"
+    | "forbidden"
+    | "invalid_team"
+    | "team_selection_not_required"
+    | "rate_limited"
+    | "litellm_unavailable"
+    | "litellm_invalid_response"
+    | "unauthorized"
+    | "not_found"
+    | "invalid_request"
+}
+
+export type CorpProviderEnableReason = "foreign_layer" | "not_disabled"
+
+export type CorpProviderEnableResult = {
+  changed: boolean
+  provider_disabled?: CorpProviderDisabled
+  reason?: CorpProviderEnableReason
 }
 
 export type CorpPermissionGroup = {
@@ -5977,6 +6011,38 @@ export type CorpLoginTeamResponses = {
 
 export type CorpLoginTeamResponse = CorpLoginTeamResponses[keyof CorpLoginTeamResponses]
 
+export type CorpLogoutData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/logout"
+}
+
+export type CorpLogoutErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpLogoutError = CorpLogoutErrors[keyof CorpLogoutErrors]
+
+export type CorpLogoutResponses = {
+  /**
+   * Выход выполнен
+   */
+  200: CorpLogoutResult
+}
+
+export type CorpLogoutResponse = CorpLogoutResponses[keyof CorpLogoutResponses]
+
 export type CorpStatusData = {
   body?: never
   path?: never
@@ -6004,6 +6070,38 @@ export type CorpStatusResponses = {
 }
 
 export type CorpStatusResponse = CorpStatusResponses[keyof CorpStatusResponses]
+
+export type CorpProviderEnableData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/provider/enable"
+}
+
+export type CorpProviderEnableErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpProviderEnableError = CorpProviderEnableErrors[keyof CorpProviderEnableErrors]
+
+export type CorpProviderEnableResponses = {
+  /**
+   * Провайдер включён обратно
+   */
+  200: CorpProviderEnableResult
+}
+
+export type CorpProviderEnableResponse = CorpProviderEnableResponses[keyof CorpProviderEnableResponses]
 
 export type CorpCatalogData = {
   body?: never

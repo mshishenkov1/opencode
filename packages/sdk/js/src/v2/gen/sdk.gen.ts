@@ -40,9 +40,13 @@ import type {
   CorpLoginStartResponses,
   CorpLoginTeamErrors,
   CorpLoginTeamResponses,
+  CorpLogoutErrors,
+  CorpLogoutResponses,
   CorpPermissionMode,
   CorpPermissionsErrors,
   CorpPermissionsResponses,
+  CorpProviderEnableErrors,
+  CorpProviderEnableResponses,
   CorpStatusErrors,
   CorpStatusResponses,
   EventSubscribeResponses,
@@ -1643,9 +1647,39 @@ export class Login extends HeyApiClient {
 
 export class Corp extends HeyApiClient {
   /**
+   * Sign out of corporate SSO
+   *
+   * Отзывает ключ на стороне Hub (best effort) и безусловно удаляет его из auth-store. Ответ описывает обе части по отдельности. Коннекторы, разрешения и кэш каталога не трогает.
+   */
+  public logout<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<CorpLogoutResponses, CorpLogoutErrors, ThrowOnError>({
+      url: "/corp/logout",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * Corporate mode status
    *
-   * Адрес Hub, наличие ключа, версия и свежесть кэша каталога.
+   * Адрес Hub, наличие ключа, версия и свежесть кэша каталога, а также файл, в котором корп-провайдер выключен личным конфигом (provider_disabled).
    */
   public status<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -1667,6 +1701,36 @@ export class Corp extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<CorpStatusResponses, CorpStatusErrors, ThrowOnError>({
       url: "/corp/status",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Re-enable the corporate provider
+   *
+   * Удаляет ровно один элемент magnit_prod из disabled_providers глобального конфига через Config.updateGlobal. Запись в слое, который приложение не правит, не трогается: ответ называет файл и причину.
+   */
+  public providerEnable<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<CorpProviderEnableResponses, CorpProviderEnableErrors, ThrowOnError>({
+      url: "/corp/provider/enable",
       ...options,
       ...params,
     })

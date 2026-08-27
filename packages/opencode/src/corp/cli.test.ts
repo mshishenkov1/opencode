@@ -671,6 +671,35 @@ describe("opencode corp logout (S-A15; AC-284)", () => {
     expect(await readAuth(home)).toEqual({})
   })
 
+  test("AC-300, S-I1: неизвестный revoke_error — строка «неожиданного ответа», код машины пользователю не показан", async () => {
+    const UNKNOWN_CODE = "some_unheard_of_revoke_code"
+    const server = keyHub(() => json({ revoked: false, revoke_error: UNKNOWN_CODE }))
+    const home = await makeHome()
+    await writeKey(home)
+
+    const result = await run(home, ["corp", "logout", "--hub", server.url])
+
+    // Тот же текст, что и у явно закрытого набора причин по умолчанию (S-I1): «неожиданный ответ»,
+    // а не код Hub напрямую.
+    expect(result.out).toContain(LOGOUT_LINES.notRevoked("сервис ключей вернул неожиданный ответ"))
+    expect(result.out).toContain(LOGOUT_LINES.removed)
+    expect(result.out).not.toContain(UNKNOWN_CODE)
+    expect(result.code).toBe(0)
+  })
+
+  test("AC-300, S-A5: поле message от Hub не попадает в вывод", async () => {
+    const LEAK = "СЕКРЕТНАЯ ФРАЗА ОТ HUB"
+    const server = keyHub(() => json({ revoked: false, revoke_error: "not_permitted", message: LEAK }))
+    const home = await makeHome()
+    await writeKey(home)
+
+    const result = await run(home, ["corp", "logout", "--hub", server.url])
+
+    expect(result.out).toContain(LOGOUT_LINES.notRevoked("отзыв ключа не разрешён"))
+    expect(result.out).not.toContain(LEAK)
+    expect(result.code).toBe(0)
+  })
+
   test("AC-284: сервер не ответил — строка называет недоступность, отличается от not_revoked, ключ удалён", async () => {
     const server = keyHub(() => json({}))
     const url = server.url

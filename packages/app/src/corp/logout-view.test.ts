@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs"
 import path from "path"
+import { logoutReasonKey } from "../context/corp"
 import { dict as en } from "../i18n/en"
 import { dict as ru } from "../i18n/ru"
 
@@ -99,14 +100,21 @@ describe("витрина — подтверждение выхода (S-A16; AC-
 describe("useCorpLogout — три различимых исхода (S-A16, D-49; AC-289)", () => {
   const body = onSuccessBody("onSuccess: async (result) => {")
 
+  /**
+   * `language.t` — заглушка, но `logoutReasonKey` — НЕ заглушка (F-3, review-i4-rev112-1): это
+   * настоящая функция из `context/corp.ts`, импортированная выше. `t` без подстановок отдаёт сам
+   * ключ, с подстановками — ключ и JSON аргументов; итоговый `title` поэтому раскрывает, каким
+   * ИМЕННО ключом словаря (`corp.logout.notRevoked` vs `corp.logout.revokeFailed`) и какой ИМЕННО
+   * причиной (результат настоящей `logoutReasonKey`) собран текст — а не только его финальную
+   * строку. Слияние двух исходов в одну ветку словаря меняет префикс ключа и ловится независимо от
+   * того, совпадёт ли после этого подставленная причина (см. F-2).
+   */
   function run(result: Record<string, unknown> | undefined) {
     const calls: { variant: string; title: string }[] = []
     const showToast = (options: { variant: string; title: string }) => calls.push(options)
     const language = {
       t: (key: string, vars?: Record<string, unknown>) => (vars ? `${key} ${JSON.stringify(vars)}` : key),
     }
-    const logoutReasonKey = (code: string | undefined) =>
-      `corp.logout.reason.${code === "not_permitted" ? "notPermitted" : "invalidResponse"}`
     let invalidated = false
     const invalidate = async () => {
       invalidated = true
@@ -122,12 +130,18 @@ describe("useCorpLogout — три различимых исхода (S-A16, D-4
     return { run: () => fn(showToast, language, logoutReasonKey, invalidate, result), calls, invalidated: () => invalidated }
   }
 
-  test("AC-289: успех целиком — success, оба текста разные для not_revoked и unavailable", async () => {
+  test("AC-289: успех целиком — variant success, доменный ключ corp.logout.done", async () => {
     const { run: runSuccess, calls: successCalls } = run({ key_removed: true, hub: "revoked" })
     await runSuccess()
     expect(successCalls).toHaveLength(1)
     expect(successCalls[0]!.variant).toBe("success")
+    expect(successCalls[0]!.title).toBe("corp.logout.done")
+  })
 
+  test("AC-289, F-2: not_revoked и unavailable — РАЗНЫЕ ключи словаря, не только разный финальный текст", async () => {
+    // Ключевая проверка F-2: сравнивается не итоговая строка (она разная и после ошибочного
+    // слияния веток, потому что различается подставленная причина — см. заголовок файла), а
+    // конкретный ключ шаблона тоста, реально использованный кодом.
     const { run: runNotRevoked, calls: notRevokedCalls } = run({
       key_removed: true,
       hub: "not_revoked",
@@ -136,14 +150,33 @@ describe("useCorpLogout — три различимых исхода (S-A16, D-4
     await runNotRevoked()
     expect(notRevokedCalls[0]!.variant).not.toBe("error")
     expect(notRevokedCalls[0]!.variant).not.toBe("success")
+    // notRevoked обязан идти через ключ corp.logout.notRevoked с причиной из logoutReasonKey.
+    expect(notRevokedCalls[0]!.title).toBe(`corp.logout.notRevoked {"reason":"corp.logout.reason.notPermitted"}`)
 
     const { run: runUnavailable, calls: unavailableCalls } = run({ key_removed: true, hub: "unavailable" })
     await runUnavailable()
     expect(unavailableCalls[0]!.variant).not.toBe("error")
     expect(unavailableCalls[0]!.variant).not.toBe("success")
+    // unavailable обязан идти через ДРУГОЙ ключ — corp.logout.revokeFailed, с фиксированной
+    // причиной «unreachable», а не с причиной, выведенной из revoke_error (её у unavailable нет).
+    expect(unavailableCalls[0]!.title).toBe(`corp.logout.revokeFailed {"reason":"corp.logout.reason.unreachable"}`)
 
-    // Разные факты — разные тексты: «не отозван» не совпадает с «связаться не удалось».
-    expect(notRevokedCalls[0]!.title).not.toBe(unavailableCalls[0]!.title)
+    // Дополнительно: ключи-шаблоны (префикс до пробела) различны — это и есть «не слито».
+    const templateKeyOf = (title: string) => title.split(" ")[0]
+    expect(templateKeyOf(notRevokedCalls[0]!.title)).not.toBe(templateKeyOf(unavailableCalls[0]!.title))
+  })
+
+  test("AC-289, S-A5: message от Hub не попадает в текст тоста ни у одного исхода", async () => {
+    const LEAK = "СЕКРЕТНАЯ ФРАЗА ОТ HUB"
+    for (const result of [
+      { key_removed: true, hub: "revoked", message: LEAK },
+      { key_removed: true, hub: "not_revoked", revoke_error: "not_permitted", message: LEAK },
+      { key_removed: true, hub: "unavailable", message: LEAK },
+    ]) {
+      const { run: runCase, calls } = run(result)
+      await runCase()
+      expect(calls[0]!.title, JSON.stringify(result)).not.toContain(LEAK)
+    }
   })
 
   test("AC-289: инвалидация выполняется во всех трёх случаях — экран обновляется после действия", async () => {
@@ -155,6 +188,29 @@ describe("useCorpLogout — три различимых исхода (S-A16, D-4
       const { run: runCase, invalidated } = run(result)
       await runCase()
       expect(invalidated(), JSON.stringify(result)).toBe(true)
+    }
+  })
+})
+
+describe("logoutReasonKey — закрытый набор причин отказа отзыва (S-A14 п.1, S-I1; AC-300)", () => {
+  test("AC-300: три известных кода дают три различимых ключа словаря", () => {
+    expect(logoutReasonKey("not_permitted")).toBe("corp.logout.reason.notPermitted")
+    expect(logoutReasonKey("upstream_unavailable")).toBe("corp.logout.reason.upstreamUnavailable")
+    expect(logoutReasonKey("invalid_response")).toBe("corp.logout.reason.invalidResponse")
+    const keys = new Set([
+      logoutReasonKey("not_permitted"),
+      logoutReasonKey("upstream_unavailable"),
+      logoutReasonKey("invalid_response"),
+    ])
+    expect(keys.size).toBe(3)
+  })
+
+  test("AC-300: неизвестный код и отсутствие кода — тот же ключ, что invalidResponse, а не код машины", () => {
+    for (const code of ["unheard_of_code", undefined, "", "not_permitted_typo"]) {
+      const key = logoutReasonKey(code)
+      expect(key, String(code)).toBe("corp.logout.reason.invalidResponse")
+      // Неизвестный код никогда не попадает в результат как есть (S-I1).
+      if (code) expect(key).not.toContain(code)
     }
   })
 })

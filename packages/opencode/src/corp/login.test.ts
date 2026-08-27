@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import { Auth } from "@/auth"
 import fs from "fs"
+import fsp from "fs/promises"
+import os from "os"
 import path from "path"
 import { Effect } from "effect"
 import * as CorpHub from "./hub"
@@ -443,7 +445,136 @@ describe("corp/logout — исход not_revoked, микроревизия 1.12.
     expect(CorpLogout.toResult(notRevoked)).not.toHaveProperty("hub_error")
     expect(CorpLogout.toResult(unavailable)).not.toHaveProperty("revoke_error")
   })
+
+  test("AC-300, S-A5: message от Hub не пересылается — разбор берёт только revoked/revoke_error", async () => {
+    const LEAK = "СЕКРЕТНАЯ ФРАЗА ОТ HUB — НЕ ПОКАЗЫВАТЬ ПОЛЬЗОВАТЕЛЮ"
+    const { auth } = mockAuth({ magnit_prod: CURRENT_KEY })
+    // Hub кладёт в ответ лишнее поле `message` — схема `KeyRevoke` объявляет только два поля
+    // (`revoked`, `revoke_error`); проверяется наблюдаемое следствие: результат его не содержит.
+    const fetchImpl = (async () => json({ revoked: false, revoke_error: "not_permitted", message: LEAK })) as unknown as typeof fetch
+
+    const outcome = await Effect.runPromise(CorpLogout.perform({ auth, hubUrl: "https://hub.test", fetch: fetchImpl }))
+    const result = CorpLogout.toResult(outcome)
+
+    expect("message" in result).toBe(false)
+    expect(JSON.stringify(result)).not.toContain(LEAK)
+  })
 })
+
+/**
+ * Инфраструктура для AC-291 ниже: обработчик `CorpLoginCommand` держит охрану («выход не звался,
+ * ключ не пишется до успеха») внутри своей Effect-функции в `cli/cmd/corp.ts` — не в модуле
+ * `CorpLogin`, чей контракт (сессии, метаданные) уже проигран напрямую в AC-115 выше. Проверить
+ * охрану, не переисполняя её логику в тесте, можно только настоящим запуском команды — тем же
+ * приёмом, что `cli.test.ts` (мини-Hub на `Bun.serve`, реальный процесс `bun run`, файловый
+ * auth-store). Сокращённая копия здесь: `cli.test.ts` проверяет вывод и коды ошибок, этот файл —
+ * саму охрану записи ключа (S-A17).
+ */
+const LOGIN_ROOT = path.resolve(import.meta.dirname, "../../../..")
+const LOGIN_ENTRY = path.join(LOGIN_ROOT, "packages/opencode/src/index.ts")
+const EXISTING_KEY = {
+  type: "api",
+  key: "sk-existing-do-not-touch",
+  metadata: { hub: "https://old-hub.test", key_kind: "persistent", user_id: "u-old" },
+}
+const loginTmpDirs: string[] = []
+const loginServers: { stop: () => void }[] = []
+
+afterAll(async () => {
+  while (loginServers.length) loginServers.pop()!.stop()
+  while (loginTmpDirs.length) await fsp.rm(loginTmpDirs.pop()!, { recursive: true, force: true }).catch(() => {})
+})
+
+async function loginMakeHome() {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "corp-login-ac291-"))
+  loginTmpDirs.push(dir)
+  for (const sub of ["data", "config", "cache", "state"]) await fsp.mkdir(path.join(dir, sub), { recursive: true })
+  return dir
+}
+
+/** Пустая заглушка браузера — та же, что в `cli.test.ts`: пакет `open` ищет команду в PATH. */
+async function loginBrowserStub() {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "corp-login-ac291-bin-"))
+  loginTmpDirs.push(dir)
+  for (const name of ["open", "xdg-open"]) {
+    const file = path.join(dir, name)
+    await fsp.writeFile(file, "#!/bin/sh\nexit 0\n")
+    await fsp.chmod(file, 0o755)
+  }
+  return dir
+}
+const loginStubPath = await loginBrowserStub()
+
+async function loginWriteKey(home: string) {
+  const file = path.join(home, "data", "opencode", "auth.json")
+  await fsp.mkdir(path.dirname(file), { recursive: true })
+  await fsp.writeFile(file, JSON.stringify({ magnit_prod: EXISTING_KEY }), { mode: 0o600 })
+}
+
+async function loginReadAuth(home: string) {
+  return JSON.parse(await fsp.readFile(path.join(home, "data", "opencode", "auth.json"), "utf8"))
+}
+
+function loginJson(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+}
+
+/** Мини-Hub только для сценариев ниже: `/cli/start`, `/cli/poll/:id`, `/cli/poll/:id/team`. */
+function loginHub(script: { polls: (() => Response)[]; teams?: { team_id: string; team_alias: string }[] }) {
+  let index = 0
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      const url = new URL(request.url)
+      if (url.pathname === "/cli/start")
+        return loginJson({
+          login_id: "login-1",
+          poll_secret: "poll-secret-ac291",
+          browser_url: `${url.origin}/ui/login/login-1`,
+          user_code: "MGNT-4271",
+          expires_in: 120,
+        })
+      if (/^\/cli\/poll\/[^/]+$/.test(url.pathname)) {
+        const next = script.polls[Math.min(index, script.polls.length - 1)]!
+        index += 1
+        return next()
+      }
+      if (/^\/cli\/poll\/[^/]+\/team$/.test(url.pathname) && request.method === "POST")
+        return request.json().then(() => loginJson({ status: "pending" })) as unknown as Response
+      return loginJson({ error: "not_found" }, 404)
+    },
+  })
+  const handle = { url: `http://127.0.0.1:${server.port}`, stop: () => server.stop(true) }
+  loginServers.push(handle)
+  return handle
+}
+
+async function loginRun(home: string, args: string[]) {
+  const proc = Bun.spawn({
+    cmd: ["bun", "run", "--conditions=browser", LOGIN_ENTRY, ...args],
+    cwd: LOGIN_ROOT,
+    env: {
+      ...process.env,
+      PATH: `${loginStubPath}:${process.env["PATH"] ?? ""}`,
+      XDG_DATA_HOME: path.join(home, "data"),
+      XDG_CONFIG_HOME: path.join(home, "config"),
+      XDG_CACHE_HOME: path.join(home, "cache"),
+      XDG_STATE_HOME: path.join(home, "state"),
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+      OPENCODE_DISABLE_MODELS_FETCH: "1",
+      OPENCODE_CORP_HUB_URL: "",
+      NO_COLOR: "1",
+      CI: "1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  })
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+  const code = await proc.exited
+  return { code, out: stdout + stderr }
+}
 
 describe("corp/login — повторный вход при живом ключе (S-A17, S-Q3; AC-291)", () => {
   const cliSource = fs.readFileSync(path.join(import.meta.dirname, "../cli/cmd/corp.ts"), "utf8")
@@ -461,36 +592,59 @@ describe("corp/login — повторный вход при живом ключ�
     expect(loginCommandSource).not.toContain(".remove(")
   })
 
-  test("AC-291: отменённый и неудавшийся вход не вызывают auth-store вовсе, прежняя запись цела", () => {
-    // Ветки «вход отменён» и «вход завершился ошибкой» обработчика `CorpLoginCommand` возвращают
-    // ошибку до единственного места, где он трогает `authSvc` (`authSvc.set` при `ready`, видно по
-    // тому, что `loginCommandSource` не содержит вызова `authSvc.set` вне ветки `ready` — проверено
-    // предыдущим тестом отсутствием `.remove(`; здесь фиксируется наблюдаемое следствие на моке).
-    const calls: string[] = []
-    const { store } = mockAuth({ magnit_prod: CURRENT_KEY }, calls)
-    // Симуляция «ничего не произошло»: ни отмена, ни ошибка входа не должны были вызвать ни одного
-    // метода auth-store — что и проверяется отсутствием записей в `calls`.
-    expect(calls).toHaveLength(0)
-    expect(store["magnit_prod"]).toEqual(CURRENT_KEY)
-  })
+  test("AC-291: вход отменён на выборе команды — auth-store не тронут, прежняя запись цела", async () => {
+    // Неинтерактивный процесс (`stdin: "ignore"`) без `--team`: `selectTeam` не может спросить
+    // выбор и возвращает `undefined` — `CorpLoginCommand` завершается `fail` ДО единственного места,
+    // где он вызывает `authSvc.set` (см. предыдущий тест). Играется настоящий процесс: если бы
+    // охрана исчезла и обработчик писал ключ раньше, эта запись бы изменилась.
+    const teams = [
+      { team_id: "t1", team_alias: "A" },
+      { team_id: "t2", team_alias: "B" },
+    ]
+    const server = loginHub({ polls: [() => loginJson({ status: "team_selection_required", teams })], teams })
+    const home = await loginMakeHome()
+    await loginWriteKey(home)
+    const before = await loginReadAuth(home)
 
-  test("AC-291: успешный перелогин — ровно одна запись, метаданные перезаписаны целиком", async () => {
-    const calls: string[] = []
-    const { auth, store } = mockAuth({ magnit_prod: CURRENT_KEY }, calls)
-    const newMetadata = CorpLogin.authMetadata({
-      hubUrl: "https://hub.test",
-      keyKind: "persistent",
-      userId: "u2-new",
-      teamId: "t9",
+    const result = await loginRun(home, ["corp", "login", "--hub", server.url])
+
+    expect(result.code).toBe(1)
+    expect(await loginReadAuth(home)).toEqual(before)
+  }, 60_000)
+
+  test("AC-291: вход завершился ошибкой Hub (сессия истекла) — auth-store не тронут, прежняя запись цела", async () => {
+    const server = loginHub({ polls: [() => loginJson({ error: "login_expired" }, 404)] })
+    const home = await loginMakeHome()
+    await loginWriteKey(home)
+    const before = await loginReadAuth(home)
+
+    const result = await loginRun(home, ["corp", "login", "--hub", server.url])
+
+    expect(result.code).toBe(1)
+    expect(await loginReadAuth(home)).toEqual(before)
+  }, 60_000)
+
+  test("AC-291: успешный перелогин продуктовым путём CorpLoginCommand — метаданные перезаписаны целиком", async () => {
+    // В отличие от прежней версии теста, ключ здесь не пишется вызовом из теста: он появляется
+    // только если настоящий обработчик дошёл до `ready` и сам вызвал `authSvc.set`.
+    const server = loginHub({
+      polls: [() => loginJson({ status: "ready", key: "sk-new-real", key_kind: "persistent", user: { user_id: "u2-new", email: "new@m.ru" } })],
     })
+    const home = await loginMakeHome()
+    await loginWriteKey(home)
 
-    await Effect.runPromise(auth.set("magnit_prod", { type: "api", key: "sk-new", metadata: newMetadata }))
+    const result = await loginRun(home, ["corp", "login", "--hub", server.url])
 
-    // Отзыв прежнего ключа — обязанность Hub (S-A17 п.2): клиент за весь перелогин не звал remove.
-    expect(calls.filter((call) => call.startsWith("auth.remove"))).toHaveLength(0)
-    expect(Object.keys(store)).toEqual(["magnit_prod"])
-    expect(store["magnit_prod"]).toEqual({ type: "api", key: "sk-new", metadata: newMetadata })
-    // Чужой user_id прежней записи не остался рядом с новым ключом.
-    expect(JSON.stringify(store["magnit_prod"])).not.toContain("u1-old")
-  })
+    expect(result.code).toBe(0)
+    const after = await loginReadAuth(home)
+    expect(Object.keys(after)).toEqual(["magnit_prod"])
+    expect(after["magnit_prod"].type).toBe("api")
+    expect(after["magnit_prod"].key).toBe("sk-new-real")
+    expect(after["magnit_prod"].metadata.user_id).toBe("u2-new")
+    expect(after["magnit_prod"].metadata.hub).toBe(server.url)
+    // Отзыв прежнего ключа — обязанность Hub (S-A17 п.2): клиент не звал remove сам, а новая
+    // запись не несёт следов прежней (чужой user_id рядом с новым ключом не остался).
+    expect(JSON.stringify(after["magnit_prod"])).not.toContain("u-old")
+    expect(JSON.stringify(after["magnit_prod"])).not.toContain(EXISTING_KEY.key)
+  }, 60_000)
 })

@@ -400,10 +400,14 @@ describe("corp/connectors — scope facade-карточки с моделью to
 })
 
 /**
- * Шесть пустых состояний витрины (S-V12, ревизия 1.10; AC-161, AC-158, AC-220, AC-221, AC-222).
+ * Пять пустых состояний витрины (S-V12; AC-161, AC-158, AC-220, AC-221, AC-222).
  *
- * Первые четыре — про каталог целиком и предлагают «Обновить»/«Войти»; пятое и шестое — про вкладку
- * и предлагают «Показать все». Все шесть обязаны быть попарно различимы текстом.
+ * Первые четыре — про каталог целиком и предлагают «Обновить»/«Войти»; пятое — про вкладку
+ * «Подключённые» и предлагает «Показать все». Все пять обязаны быть попарно различимы текстом.
+ *
+ * **Ревизия 1.12.** Было шесть: вместе со вкладкой «Неподключённые» (S-V11, D-53) исчезло её
+ * пустое состояние «Подключено всё» — «состояния без вкладки не существует» (S-V12). Номера
+ * остальных не сдвинуты: состояние 5 осталось состоянием 5.
  */
 describe("corp/connectors — пустые состояния витрины (AC-161, AC-158, AC-220, AC-221, AC-222)", () => {
   interface Input {
@@ -434,6 +438,14 @@ describe("corp/connectors — пустые состояния витрины (AC
   }
   const view = (data: unknown) => state({ data })?.text
   const withDropped = (data: unknown, dropped: number) => state({ data, dropped })?.text
+  /**
+   * Набор вкладок-фильтров, взятый из исходника, а не пересказанный литералом (AC-221): если
+   * третья вкладка когда-нибудь вернётся в `TAB_KEY`, каждый цикл ниже подхватит её сам, а не
+   * пройдёт мимо неё молча.
+   */
+  const tabKeys = Object.keys(
+    new Function(`return {${dialogBlock("const TAB_KEY = {")}}`)() as Record<string, string>,
+  )
 
   test("AC-161: все карточки отброшены — «Каталог не разобран» с числом отброшенных", () => {
     const catalog = parsed({
@@ -481,29 +493,84 @@ describe("corp/connectors — пустые состояния витрины (AC
     expect(result?.action).not.toBe("refresh")
   })
 
-  test("AC-221: во вкладке «Неподключённые» пусто — «Подключено всё» и тот же сброс фильтра", () => {
-    const result = state({ data: { servers: [{ alias: "tag" }] }, tab: "not_connected", visible: [] })
-    expect(result).toEqual({ text: "corp.empty.tabNotConnected", action: "resetFilter" })
+  // AC-221 ревизией 1.12 РАЗВЁРНУТ В ПРОТИВОПОЛОЖНОСТЬ: вкладку «Неподключённые» убрал заказчик
+  // (D-53, S-V11), а вместе с нею исчезло шестое пустое состояние «Подключено всё» — «состояния
+  // без вкладки не существует» (S-V12). Критерий требует ОТСУТСТВИЯ снятого требования, потому
+  // что «снятое требование обязано быть снято проверяемо, иначе вернётся само». Прежнюю проверку
+  // («во вкладке „Неподключённые“ пусто — „Подключено всё“») выполнить больше нельзя ни при каком
+  // составе каталога, и заменена она не ослабленной, а обратной. Третий пункт AC-221 — отсутствие
+  // ключей corp.connectors.tabNotConnected и corp.empty.tabNotConnected в словарях — проверяет
+  // packages/app/src/corp/dictionary.test.ts (ru, en), а таблицу пустых состояний TUI —
+  // packages/tui/src/corp/connectors-view.test.ts; здесь проверяется витрина Desktop/web, чей
+  // исходник этот файл исполняет.
+  test("AC-221: вкладки «Неподключённые» нет, и шестого пустого состояния не существует", () => {
+    // Набор доступных фильтров исчерпывается двумя: таблица подписей берётся из исходника и
+    // исполняется, а не пересказывается в тесте.
+    expect(tabKeys).toEqual(["all", "connected"])
+    expect(dialogSource).toContain('export type ConnectorsTab = "all" | "connected"')
+    // В разметке — те же две вкладки и ни одной третьей.
+    expect(dialogSource).toContain('<TabsV2.Trigger value="all">')
+    expect(dialogSource).toContain('<TabsV2.Trigger value="connected">')
+    expect(dialogSource).not.toContain('value="not_connected"')
+    // Ключей снятой вкладки витрина не упоминает вовсе — мёртвый ключ рано или поздно возвращается
+    // на экран (S-I1).
+    expect(dialogSource).not.toContain("tabNotConnected")
+
+    // Шестого состояния нет ни при каком составе каталога: ни когда подключено всё (тот самый
+    // случай, что прежде его давал), ни когда подключена часть, ни когда не подключено ничего.
+    const compositions = {
+      всёПодключено: [{ alias: "tag", state: "connected" }],
+      частьПодключена: [
+        { alias: "tag", state: "connected" },
+        { alias: "jira", state: "not_connected" },
+      ],
+      ничегоНеПодключено: [{ alias: "jira", state: "not_connected" }],
+    }
+    for (const [name, servers] of Object.entries(compositions))
+      // Снятое значение вкладки проверяется наравне с живыми (взятыми из исходника, tabKeys): даже
+      // если его кто-то подставит, состояния «Подключено всё» больше нет.
+      for (const tab of [...tabKeys, "not_connected"])
+        for (const visible of [servers, []]) {
+          const where = `${name}/${tab}/видимых:${visible.length}`
+          const result = state({ data: { servers }, tab, visible })
+          expect(result?.text, where).not.toBe("corp.empty.tabNotConnected")
+          // Единственное оставшееся состояние вкладки — пятое, и только во вкладке «Подключённые».
+          if (result?.action === "resetFilter")
+            expect([tab, result.text], where).toEqual(["connected", "corp.empty.tabConnected"])
+        }
+
+    // При этом состояние 5 и его действие «Показать все» работают как прежде (последний пункт AC-221).
+    expect(state({ data: { servers: [{ alias: "tag" }] }, tab: "connected", visible: [] })).toEqual({
+      text: "corp.empty.tabConnected",
+      action: "resetFilter",
+    })
   })
 
   test("AC-220, AC-221: пока во вкладке есть хоть одна строка, пустого состояния нет", () => {
-    for (const tab of ["all", "connected", "not_connected"])
+    // Перебор — по реальному набору вкладок (tabKeys), а не по литералу: появись третья вкладка
+    // снова, этот цикл сам начнёт проверять её, а не пройдёт мимо.
+    for (const tab of tabKeys)
       expect(state({ data: { servers: [{ alias: "tag" }] }, tab, visible: [{ alias: "tag" }] }), tab).toBeUndefined()
     // На вкладке «Все» пустой результат — причина в поиске, и об этом говорит сам список.
     expect(state({ data: { servers: [{ alias: "tag" }] }, tab: "all", visible: [] })).toBeUndefined()
   })
 
-  test("AC-222: все шесть состояний попарно различимы текстом", () => {
+  // «Все ШЕСТЬ состояний» → «все ПЯТЬ» (ревизия 1.12 в теле AC-222): шестое исчезло вместе со
+  // вкладкой «Неподключённые» (S-V12, D-53), прежние пять сохранены дословно и по-прежнему обязаны
+  // быть попарно различимы. Второй пункт AC-222 — вкладки не показываются при «Hub недоступен» и
+  // «Требуется вход» — проверяется по разметке в packages/app/src/corp/connectors-view.test.ts.
+  test("AC-222: все пять состояний попарно различимы текстом", () => {
     const texts = [
       state({ data: { servers: [], dropped: [] } })?.text,
       state({ data: { servers: [], dropped: [{ reason: "alias" }] }, dropped: 1 })?.text,
       state({ data: { servers: [], hub_error: "hub_unavailable" } })?.text,
       state({ data: { servers: [], hub_error: "unauthorized" } })?.text,
       state({ data: { servers: [{ alias: "tag" }] }, tab: "connected", visible: [] })?.text,
-      state({ data: { servers: [{ alias: "tag" }] }, tab: "not_connected", visible: [] })?.text,
     ]
-    expect(texts.filter(Boolean)).toHaveLength(6)
-    expect(new Set(texts).size).toBe(6)
+    expect(texts.filter(Boolean)).toHaveLength(5)
+    expect(new Set(texts).size).toBe(5)
+    // Ровно пять, а не «не меньше пяти»: прежний вход шестого состояния не даёт состояния вовсе.
+    expect(state({ data: { servers: [{ alias: "tag" }] }, tab: "not_connected", visible: [] })).toBeUndefined()
   })
 
   test("AC-158: разобрана хотя бы одна карточка — витрина показывает её и число отброшенных", () => {

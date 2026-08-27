@@ -275,7 +275,13 @@ if (import.meta.main) {
   const args = process.argv.slice(2)
   const index = args.indexOf("--update-url")
   const updateUrl = index === -1 ? undefined : args[index + 1]
-  const target = args.find((value, position) => !value.startsWith("--") && position !== index + 1)
+  // Позиция ЗНАЧЕНИЯ флага — его нельзя принять за путь к бандлу. Когда флага нет, позиции нет
+  // тоже: `-1` не совпадает ни с одним индексом. Прежняя редакция считала её как `index + 1` без
+  // оглядки на отсутствие флага и при `index === -1` исключала позицию `0` — то есть единственный
+  // позиционный аргумент вызова без `--update-url` (BUG-I12-001). В CI дефект не проявлялся:
+  // адрес обновлений там задан всегда, и путь стоит первым.
+  const valuePosition = index === -1 ? -1 : index + 1
+  const target = args.find((value, position) => !value.startsWith("--") && position !== valuePosition)
   if (!target) {
     console.error("укажите путь к бандлу .app или к каталогу сборки Desktop")
     process.exit(1)

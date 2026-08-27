@@ -360,3 +360,84 @@ describe("проверка бандла: каталог кеша обновле�
     expect(VANILLA_CACHE).toContain("@opencode-ai")
   })
 })
+
+/**
+ * Разбор аргументов командной строки (BUG-I12-001).
+ *
+ * Модуль экспортирует функции проверки, но у него есть и второй вход — запуск скриптом. Проверка
+ * бандла ВЫЗЫВАЕТСЯ из корп-CI и руками на стенде, и до этого дефекта весь разбор аргументов не
+ * проверялся ни одним тестом: `verifyBundle` тесты звали напрямую, минуя `import.meta.main`.
+ *
+ * Дефект: позиция значения флага считалась как `index + 1` без оглядки на отсутствие флага, а при
+ * `index === -1` это даёт `0` — то есть исключается позиция единственного позиционного аргумента.
+ * Любой корректный вызов БЕЗ `--update-url` отвечал «укажите путь…» и кодом 1. В CI не проявлялось:
+ * адрес обновлений там задан всегда.
+ */
+describe("verify-desktop-bundle: разбор аргументов запуска (BUG-I12-001)", () => {
+  const SCRIPT = path.join(ROOT, "corp/verify-desktop-bundle.ts")
+  const URL = "https://updates.example.corp/opencode"
+
+  function run(args: string[]) {
+    const proc = Bun.spawnSync({
+      cmd: [process.execPath, "run", SCRIPT, ...args],
+      cwd: ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, NO_COLOR: "1" },
+    })
+    return { code: proc.exitCode, out: proc.stdout.toString() + proc.stderr.toString() }
+  }
+
+  test("BUG-I12-001: вызов без --update-url принимает путь и проверяет бандл", () => {
+    // Сборка с выключенным автообновлением: фида быть не должно, и проверка обязана пройти.
+    const { dist } = bundle({ updateFeed: false })
+    const result = run([dist])
+    expect(result.out, result.out).not.toContain("укажите путь")
+    expect(result.out).toContain("автообновление выключено")
+    expect(result.out).toContain("бандл соответствует")
+    expect(result.code).toBe(0)
+  }, 30_000)
+
+  test("BUG-I12-001: без --update-url принимается и сам бандл .app, а не только каталог", () => {
+    const { app } = bundle({ updateFeed: false })
+    const result = run([app])
+    expect(result.out, result.out).not.toContain("укажите путь")
+    expect(result.code).toBe(0)
+  }, 30_000)
+
+  test("BUG-I12-001: без --update-url расхождение по-прежнему даёт код 1 — не «всё зелено»", () => {
+    // Контроль на противоположную поломку: «путь принят» не должно означать «проверка пропущена».
+    const { dist } = bundle({ feed: CORP_FEED, updateFeed: false })
+    const result = run([dist])
+    expect(result.out).toContain("app-update.yml есть в бандле")
+    expect(result.code).toBe(1)
+  }, 30_000)
+
+  test("AC-153: с --update-url путь распознаётся в обоих порядках, а адрес не принят за путь", () => {
+    const { dist } = bundle({ feed: CORP_FEED })
+    for (const args of [
+      [dist, "--update-url", URL],
+      ["--update-url", URL, dist],
+    ]) {
+      const result = run(args)
+      expect(result.out, args.join(" ")).toContain(`проверка бандла: ${dist}`)
+      expect(result.out, args.join(" ")).toContain(`ожидаемый адрес обновлений: ${URL}`)
+      expect(result.code, args.join(" ")).toBe(0)
+    }
+  }, 30_000)
+
+  test("AC-153: значение --update-url никогда не становится путём к бандлу", () => {
+    // Адрес стоит сразу за флагом и позиционным аргументом не является: иначе скрипт пошёл бы
+    // искать бандл по адресу сервера обновлений.
+    const result = run(["--update-url", URL])
+    expect(result.out).toContain("укажите путь")
+    expect(result.out).not.toContain(`проверка бандла: ${URL}`)
+    expect(result.code).toBe(1)
+  }, 30_000)
+
+  test("BUG-I12-001: без аргументов вовсе — понятный отказ и код 1", () => {
+    const result = run([])
+    expect(result.out).toContain("укажите путь к бандлу .app или к каталогу сборки Desktop")
+    expect(result.code).toBe(1)
+  }, 30_000)
+})

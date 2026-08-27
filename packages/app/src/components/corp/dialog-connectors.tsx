@@ -316,15 +316,28 @@ export const DialogConnectors: Component = () => {
     dialog.show(() => <module.DialogCorpLogin />)
   }
 
-  const needsLogin = createMemo(() => catalog.data?.hub_error === "unauthorized")
-
   /**
-   * Вход выполнен — ключ `magnit_prod` есть в auth-store (S-A16).
+   * Есть ли ключ `magnit_prod` (S-A16) — **три** значения, а не два.
    *
-   * Этим одним признаком определяется вся пара «Войти»/«Выйти»: это одна позиция в ряду с двумя
-   * взаимоисключающими состояниями, и одновременно они не показываются никогда.
+   * `true` — ключ есть, `false` — ключа нет, `undefined` — этого ещё не известно: статус не
+   * загружен либо корп-функции недоступны (`enabled:false` — и транспортный сбой, подменяемый
+   * `STATUS_UNAVAILABLE`, попадает сюда же). Третье значение обязано быть отдельным: пара
+   * «Войти»/«Выйти» — одна позиция в ряду, и до ответа сервера рисовать в ней **любую** из двух
+   * кнопок значит либо мигнуть неверной, либо соврать о состоянии входа.
+   *
+   * Признак — только наличие ключа. `hub_error` каталога им не является: в сборке со статическим
+   * каталогом (S-C10) и при недоступном Hub каталог приходит **без** `hub_error`, и вход по нему
+   * не предложился бы вовсе (то самое «после выхода приложение предлагает вход», S-A16).
+   * Та же логика, тем же полем и с тем же третьим состоянием, — в TUI
+   * (`packages/tui/src/component/corp/dialog-connectors.tsx`, `hidden: authenticated() !== …`).
    */
-  const signedIn = createMemo(() => status.data?.enabled === true && status.data.authenticated === true)
+  const authenticated = createMemo(() => (status.data?.enabled === true ? status.data.authenticated : undefined))
+
+  /** Вход выполнен — показывается «Выйти» (S-A16). */
+  const signedIn = createMemo(() => authenticated() === true)
+
+  /** Ключа нет — показывается «Войти» (S-A16, AC-287). */
+  const signedOut = createMemo(() => authenticated() === false)
 
   /** Провайдер выключен личным конфигом пользователя, и сервер знает файл (S-C11 п.1). */
   const providerDisabled = createMemo(() => status.data?.provider_disabled)
@@ -372,11 +385,14 @@ export const DialogConnectors: Component = () => {
               </div>
             )}
           </Show>
-          {/* S-A16: «Войти» — когда ключа нет, «Выйти» — когда есть; одновременно никогда. */}
+          {/* S-A16: «Войти» — когда ключа нет, «Выйти» — когда есть; одновременно никогда.
+              Пока наличие ключа неизвестно (`authenticated()` — undefined), не показывается ни
+              одна: обе ветви спрашивают признак явным сравнением, поэтому третье состояние не
+              достаётся ни «Войти», ни «Выйти» и кнопка не мигает подменой при первом ответе. */}
           <Show
             when={signedIn()}
             fallback={
-              <Show when={needsLogin()}>
+              <Show when={signedOut()}>
                 <Button size="small" onClick={() => void openLogin()}>
                   {language.t("corp.connectors.login")}
                 </Button>

@@ -749,7 +749,15 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
           title: t("logout.action"),
           side: "right",
           hidden: authenticated() !== true,
-          onTrigger: () => dialog.replace(() => <DialogCorpLogout />),
+          onTrigger: () => {
+            // Экран выхода заменяет витрину — стека диалогов в терминале нет (S-T10), — поэтому
+            // возврат на неё описывается здесь, как у страницы коннектора и экрана прав. Возврат
+            // нужен обоим исходам, при которых экран входа не открывается: отмене (она не меняет
+            // ни ключа, ни экрана, S-A16) и выходу в сборке без Hub (витрина продолжает работать
+            // на статическом каталоге, S-T11). Уход на экран входа этот возврат гасит сам.
+            const exit = leaving(() => backToList())
+            dialog.replace(() => <DialogCorpLogout onLeave={exit.suppress} />, exit.done)
+          },
         },
       ]}
     />

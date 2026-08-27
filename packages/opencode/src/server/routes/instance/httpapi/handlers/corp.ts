@@ -309,10 +309,13 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const url = hubUrl()
       const outcome = yield* CorpLogout.perform({ auth: authSvc, ...(url === undefined ? {} : { hubUrl: url }) })
       // S-A14 п.8: в лог уходит факт и исход, но ни ключ, ни его часть, ни заголовок авторизации.
+      // Код `revoke_error` пишется в лог **как пришёл** (S-A14 п.1, S-I1): пользователю
+      // показывается наш текст по закрытому набору причин, и неизвестный код виден только здесь.
       yield* Effect.logInfo("corp logout", {
         key_removed: outcome.keyRemoved,
         hub: outcome.hub,
         ...(outcome.hubError === undefined ? {} : { hub_error: outcome.hubError }),
+        ...(outcome.revokeError === undefined ? {} : { revoke_error: outcome.revokeError }),
       })
       if (outcome.removeError !== undefined)
         yield* Effect.logError("corp logout: запись auth-store не удалена", { error: outcome.removeError })

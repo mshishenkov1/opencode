@@ -22218,7 +22218,7 @@
       },
       "CorpLogoutHubOutcome": {
         "type": "string",
-        "enum": ["revoked", "unavailable", "skipped"]
+        "enum": ["revoked", "not_revoked", "unavailable", "skipped"]
       },
       "CorpLogoutResult": {
         "type": "object",
@@ -22246,6 +22246,9 @@
               "not_found",
               "invalid_request"
             ]
+          },
+          "revoke_error": {
+            "type": "string"
           }
         },
         "required": ["key_removed", "hub"],

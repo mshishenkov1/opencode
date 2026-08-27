@@ -1,7 +1,7 @@
 import type { CorpLogoutResult } from "@opencode-ai/sdk/v2"
 import { createSignal, onMount } from "solid-js"
 import { useSDK } from "../../context/sdk"
-import { errorText, format, t } from "../../corp/i18n"
+import { errorText, format, revokeReasonText, t } from "../../corp/i18n"
 import { setCorpKey } from "../../corp/state"
 import { useDialog } from "../../ui/dialog"
 import { DialogSelect } from "../../ui/dialog-select"
@@ -39,15 +39,25 @@ export function DialogCorpLogout() {
   /**
    * Исход выхода построчно (S-A15, S-A16): по строке на часть, чтобы каждая была видна отдельно.
    * Ключа не было — идемпотентный случай S-A14 п.5: «уже вышел» не ошибка.
+   *
+   * Различимых исхода три (микроревизия 1.12.1): успех целиком; «на сервере не отозван» с причиной
+   * по `revoke_error`; «связаться с сервером не удалось». Сливать второй с третьим запрещено.
    */
   function outcome(data: CorpLogoutResult) {
     if (!data.key_removed && data.hub === "skipped")
       return { variant: "info" as const, message: t("logout.notSignedIn") }
-    if (data.hub === "unavailable")
-      // Действие выполнено: ключ у пользователя удалён, не удалась только серверная часть.
+    if (data.hub === "not_revoked")
+      // Сервер ответил и ключ НЕ отозвал: причина известна, ключ модели может остаться живым
+      // (S-A14 п.1). Предупреждение, а не ошибка: действие выполнено (D-49).
       return {
         variant: "warning" as const,
-        message: format("logout.revokeFailed", { reason: errorText(data.hub_error) }),
+        message: format("logout.notRevoked", { reason: revokeReasonText(data.revoke_error) }),
+      }
+    if (data.hub === "unavailable")
+      // О судьбе ключа не известно ничего — и это другой текст, а не тот же самый (S-A16).
+      return {
+        variant: "warning" as const,
+        message: format("logout.revokeFailed", { reason: t("logout.reason.unreachable") }),
       }
     // `skipped` при удалённом ключе — сборка без Hub: серверной части не существует (S-A14 п.6).
     return { variant: "info" as const, message: t(data.hub === "revoked" ? "logout.done" : "logout.doneLocal") }

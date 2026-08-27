@@ -60,6 +60,10 @@ export function useCorpStatus() {
  * Ответ описывает **обе** части по отдельности, потому что они по-разному надёжны, и исход каждой
  * показывается, а не подразумевается. Отказ отзыва — **предупреждение, а не ошибка**: локальная
  * часть выполнена, пользователь вышел у себя, и отказать ему в этом нельзя (D-49).
+ *
+ * Различимых исхода **три** (микроревизия 1.12.1): успех целиком; «удалён у вас, но на сервере не
+ * отозван» с причиной по `revoke_error`; «удалён у вас, связаться с сервером не удалось». Второй и
+ * третий сливать запрещено: «точно не отозван» и «неизвестно» — разные факты (S-A16).
  */
 export function useCorpLogout() {
   const sdk = useServerSDK()
@@ -76,11 +80,21 @@ export function useCorpLogout() {
         // Идемпотентный случай (S-A14 п.5): ключа не было — «уже вышел» не ошибка.
         if (!result.key_removed && result.hub === "skipped") {
           showToast({ variant: "default", title: language.t("corp.logout.notSignedIn") })
+        } else if (result.hub === "not_revoked") {
+          // Сервер ответил и ключ **не** отозвал: причина известна, и ключ модели может остаться
+          // живым (S-A14 п.1). Предупреждение, а не ошибка: действие выполнено (D-49).
+          showToast({
+            variant: "default",
+            title: language.t("corp.logout.notRevoked", {
+              reason: language.t(logoutReasonKey(result.revoke_error)),
+            }),
+          })
         } else if (result.hub === "unavailable") {
+          // О судьбе ключа не известно ничего — и текст этого случая отличается от предыдущего.
           showToast({
             variant: "default",
             title: language.t("corp.logout.revokeFailed", {
-              reason: language.t(corpErrorKey(result.hub_error)),
+              reason: language.t("corp.logout.reason.unreachable"),
             }),
           })
         } else {
@@ -277,6 +291,29 @@ const CONNECT_ERROR_CLASSES = ["token_rejected", "method_unavailable", "hub_unre
 export function connectErrorKey(errorClass: string | undefined) {
   const known = CONNECT_ERROR_CLASSES.find((entry) => entry === errorClass)
   return `corp.error.connect.${known ?? "unknown"}` as `corp.error.connect.${(typeof CONNECT_ERROR_CLASSES)[number]}`
+}
+
+/**
+ * Причины отказа отзыва ключа — **закрытый набор** (S-A14 п.1, S-I1, микроревизия 1.12.1).
+ *
+ * Ключ словаря выбирается по коду `revoke_error`, пришедшему от Hub дословно; поле `message`
+ * ответа Hub не пересылается и не показывается (S-A5).
+ */
+const REVOKE_ERROR_KEYS = {
+  not_permitted: "notPermitted",
+  upstream_unavailable: "upstreamUnavailable",
+  invalid_response: "invalidResponse",
+} as const
+
+/**
+ * Ключ словаря по коду `revoke_error` (S-A14 п.1, S-I1).
+ *
+ * Неизвестный код — не повод показать код машины человеку: показывается
+ * `corp.logout.reason.invalidResponse`, а сам код называет лог сервера (запись `corp logout`).
+ */
+export function logoutReasonKey(code: string | undefined) {
+  const known = code === undefined ? undefined : REVOKE_ERROR_KEYS[code as keyof typeof REVOKE_ERROR_KEYS]
+  return `corp.logout.reason.${known ?? "invalidResponse"}` as `corp.logout.reason.${(typeof REVOKE_ERROR_KEYS)[keyof typeof REVOKE_ERROR_KEYS]}`
 }
 
 /** Ключ словаря по стабильному коду ошибки корп-роутов (S-A5, S-I1). */

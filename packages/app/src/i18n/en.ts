@@ -1075,8 +1075,16 @@ export const dict = {
   "corp.logout.confirmLocal": "Sign out of the corporate account? The key will be deleted on this computer.",
   "corp.logout.done": "Signed out: the key was revoked on the server and deleted on this computer",
   "corp.logout.doneLocal": "Signed out: the key was deleted on this computer",
-  "corp.logout.revokeFailed":
-    "The key was deleted on this computer, but revoking it on the server failed: {{reason}}",
+  "corp.logout.revokeFailed": "The key was deleted on this computer, but revoking it on the server failed: {{reason}}",
+  // Микроревизия 1.12.1: «сервер ответил и не отозвал» — не то же самое, что «сервер не ответил»
+  // (S-A14 п.1). Причина подставляется ТОЛЬКО из закрытого набора `corp.logout.reason.*`: текст
+  // `message`, пришедший от Hub, не пересылается и не показывается (S-A5).
+  "corp.logout.notRevoked":
+    "The key was deleted on this computer but not revoked on the server: {{reason}}; it may keep working until it expires",
+  "corp.logout.reason.notPermitted": "revoking the key is not permitted",
+  "corp.logout.reason.upstreamUnavailable": "the key service is unavailable",
+  "corp.logout.reason.invalidResponse": "the key service returned an unexpected response",
+  "corp.logout.reason.unreachable": "the server could not be reached",
   "corp.logout.notSignedIn": "You are not signed in",
 
   // corp: возврат выключенного провайдера (S-C11, S-I1)

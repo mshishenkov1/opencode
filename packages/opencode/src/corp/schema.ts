@@ -647,16 +647,42 @@ export const CorpStatus = Schema.Struct({
 }).annotate({ identifier: "CorpStatus" })
 export type CorpStatus = Schema.Schema.Type<typeof CorpStatus>
 
-// --- S-A14, S-C11: выход и возврат провайдера (ревизия 1.12) ---
+// --- S-A14, S-C11: выход и возврат провайдера (ревизия 1.12, микроревизия 1.12.1) ---
 
 /**
- * Исход серверной части выхода (S-A14 п.1).
+ * Ответ Hub на `DELETE {hub}/api/me/key` (§3.1, R-L11.6; микроревизия 1.12.1).
+ *
+ * Неудача отзыва в LiteLLM ошибочным ответ **не** делает: Hub отвечает `200` с `revoked:false` и
+ * кодом причины. Разбираются ровно два поля — `revoked` и `revoke_error` (S-A14 п.1); `status` и
+ * `message` в разбор не входят намеренно: `message` пользователю не показывается и наружу не
+ * пересылается (S-A5), а `status` дублирует HTTP-статус.
+ *
+ * `revoke_error` объявлен строкой, а не закрытым набором: значение переносится **дословно** (S-V3),
+ * и неизвестный код обязан дойти до оболочки и до лога, а не превратить весь ответ в
+ * `hub_invalid_response` — «неизвестная причина» и «ответ без смысла» это разные вещи.
+ */
+export const KeyRevoke = Schema.Struct({
+  revoked: Schema.Boolean,
+  revoke_error: Schema.optional(Schema.NullOr(Schema.String)),
+}).annotate({ identifier: "CorpKeyRevoke" })
+export type KeyRevoke = Schema.Schema.Type<typeof KeyRevoke>
+
+/**
+ * Исход серверной части выхода (S-A14 п.1) — закрытая таблица из **четырёх** значений
+ * (микроревизия 1.12.1: прежняя редакция знала три и не различала «Hub ответил, но не отозвал» и
+ * «Hub не ответил»).
  *
  * `revoked` — Hub подтвердил отзыв (или ответил `401`/`403`: ключ уже недействителен, цель
- * достигнута); `unavailable` — Hub не ответил, и ключ остался живым на сервере; `skipped` — шага
- * не было вовсе: либо ключа не было (п.5), либо адрес Hub не задан (п.6, сборка без Hub).
+ * достигнута); `not_revoked` — Hub ответил `200` с `revoked:false`: своё состояние он убрал, но в
+ * LiteLLM ключ **мог остаться живым**, а для корп-сборки это ключ модели (S-C4b); `unavailable` —
+ * Hub не ответил (`5xx`, таймаут, сетевая ошибка, нечитаемое тело), и о судьбе ключа не известно
+ * ничего; `skipped` — шага не было вовсе: либо ключа не было (п.5), либо адрес Hub не задан (п.6,
+ * сборка без Hub).
+ *
+ * `not_revoked` и `unavailable` — **разные** исходы, и сливать их запрещено: в первом случае
+ * известно, что ключ не отозван, и известна причина; во втором неизвестно ничего.
  */
-export const LogoutHubOutcome = Schema.Literals(["revoked", "unavailable", "skipped"]).annotate({
+export const LogoutHubOutcome = Schema.Literals(["revoked", "not_revoked", "unavailable", "skipped"]).annotate({
   identifier: "CorpLogoutHubOutcome",
 })
 export type LogoutHubOutcome = Schema.Schema.Type<typeof LogoutHubOutcome>
@@ -665,11 +691,16 @@ export type LogoutHubOutcome = Schema.Schema.Type<typeof LogoutHubOutcome>
  * Ответ `POST /corp/logout` (S-A1, S-A14): две части выхода описаны по отдельности, потому что они
  * по-разному надёжны. `key_removed:false` при `hub:"skipped"` — идемпотентный случай «ключа не было»
  * и не ошибка (п.5). Ключ, его часть и заголовок авторизации сюда не попадают (п.8).
+ *
+ * `hub_error` заполнен при `hub:"unavailable"` (код по S-A5), `revoke_error` — при
+ * `hub:"not_revoked"` (код Hub дословно, S-V3). Одновременно они не появляются: это два разных
+ * исхода, а не два поля одного.
  */
 export const LogoutResult = Schema.Struct({
   key_removed: Schema.Boolean,
   hub: LogoutHubOutcome,
   hub_error: Schema.optional(Code),
+  revoke_error: Schema.optional(Schema.String),
 }).annotate({ identifier: "CorpLogoutResult" })
 export type LogoutResult = Schema.Schema.Type<typeof LogoutResult>
 

@@ -25,6 +25,12 @@ export type Result<T> =
       data: T
       /** Элементы списочного ответа, отброшенные разбором (S-V14 п.5); только для `catalog`/`connections`. */
       dropped?: CorpSchema.Dropped[]
+      /**
+       * HTTP-статус успешного ответа. Нужен выходу (S-A14 п.1): `200` там разбирается телом, а
+       * `401`/`403` успешны сами по себе и тела не несут — по коду ошибки их не различить, потому
+       * что оба пути дают `ok:true`.
+       */
+      status?: number
     }
   | ({ ok: false } & CorpErrors.HubFailure)
 
@@ -100,7 +106,8 @@ export function make(options: Options) {
       }
     }
 
-    if (!response.ok && input.successStatuses?.includes(response.status)) return { ok: true, data: parsed }
+    if (!response.ok && input.successStatuses?.includes(response.status))
+      return { ok: true, data: parsed, status: response.status }
 
     if (!response.ok) {
       return fail(
@@ -109,7 +116,7 @@ export function make(options: Options) {
       )
     }
 
-    return { ok: true, data: parsed }
+    return { ok: true, data: parsed, status: response.status }
   }
 
   async function call<S extends Schema.Codec<any, any, never, never>>(
@@ -166,14 +173,26 @@ export function make(options: Options) {
     },
 
     /**
-     * §3.1 `POST {hub}/cli/logout` — отзыв **того самого** ключа, которым выполняется вызов (S-A14).
+     * §3.1 `DELETE {hub}/api/me/key` — отзыв **того самого** ключа, которым выполняется вызов
+     * (R-L11, S-A14; путь приведён к фактическому контракту Hub микроревизией 1.12.1).
      *
-     * Тело ответа не разбирается: нужен только факт. `401`/`403` — успех: ключ уже недействителен,
-     * повторять нечего. Сетевая ошибка, таймаут и `5xx` дают `hub_unavailable` общим правилом `raw`.
+     * Аутентификация — только Bearer этого ключа (R-L11.2), **тела у запроса нет** (R-L11.1):
+     * отозвать чужой ключ, ключ по имени или «все свои ключи» этим вызовом нельзя.
+     *
+     * `200` **разбирается телом**: неудача отзыва в LiteLLM ответ ошибочным не делает (R-L11.6), и
+     * `revoked:false` — не успех. Нечитаемое тело даёт `hub_invalid_response`: «ответ есть, смысла
+     * в нём нет» ближе к неизвестности, чем к успеху (S-A14 п.1). `401`/`403` — успех без тела:
+     * ключ уже недействителен, повторять нечего; отсюда `data: undefined`. Сетевая ошибка, таймаут
+     * и `5xx` дают `hub_unavailable` общим правилом `raw`.
      */
-    async logout(): Promise<Result<void>> {
-      const result = await raw({ method: "POST", path: "/cli/logout", successStatuses: [401, 403] })
-      return result.ok ? { ok: true, data: undefined } : result
+    async logout(): Promise<Result<CorpSchema.KeyRevoke | undefined>> {
+      const result = await raw({ method: "DELETE", path: "/api/me/key", successStatuses: [401, 403] })
+      if (!result.ok) return result
+      // Ключ уже недействителен: тела у такого ответа нет и разбирать нечего.
+      if (result.status === 401 || result.status === 403) return { ok: true, data: undefined }
+      const decoded = Schema.decodeUnknownOption(CorpSchema.KeyRevoke)(result.data)
+      if (Option.isNone(decoded)) return fail("hub_invalid_response")
+      return { ok: true, data: decoded.value }
     },
 
     /** §3.2 `GET {hub}/api/me` */

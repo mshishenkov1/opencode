@@ -2211,7 +2211,7 @@ export type CorpLoginCancel = {
   cancelled: boolean
 }
 
-export type CorpLogoutHubOutcome = "revoked" | "unavailable" | "skipped"
+export type CorpLogoutHubOutcome = "revoked" | "not_revoked" | "unavailable" | "skipped"
 
 export type CorpLogoutResult = {
   key_removed: boolean
@@ -2230,6 +2230,7 @@ export type CorpLogoutResult = {
     | "unauthorized"
     | "not_found"
     | "invalid_request"
+  revoke_error?: string
 }
 
 export type CorpProviderDisabled = {

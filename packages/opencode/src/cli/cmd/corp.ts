@@ -178,11 +178,32 @@ export const CorpStatusCommand = effectCmd({
  */
 export const LOGOUT_LINES = {
   revoked: "Ключ отозван на сервере.",
+  /** Микроревизия 1.12.1: сервер ответил и **не** отозвал (`hub:"not_revoked"`), причина известна. */
+  notRevoked: (reason: string) =>
+    `Ключ на сервере не отозван: ${reason}. Он может продолжать работать до истечения срока.`,
   revokeFailed: (reason: string) => `Отозвать ключ на сервере не удалось: ${reason}.`,
   removed: "Локальный ключ удалён.",
   notSignedIn: "Ключ не найден: выход не требуется.",
   removeFailed: (reason: string) => `Локальный ключ удалить не удалось: ${reason}.`,
 } as const
+
+/**
+ * Причина отказа отзыва по коду `revoke_error` (S-A14 п.1, S-I1) — **закрытый набор**.
+ *
+ * Неизвестный код человеку не показывается: он не объясняет ничего, — показывается текст
+ * «неожиданного ответа», а сам код называет лог сервера (`corp logout` в `Effect.logInfo`).
+ * Текст `message` ответа Hub не пересылается и не показывается (S-A5).
+ */
+export function revokeReasonText(code: string | undefined): string {
+  switch (code) {
+    case "not_permitted":
+      return "отзыв ключа не разрешён"
+    case "upstream_unavailable":
+      return "сервис ключей недоступен"
+    default:
+      return "сервис ключей вернул неожиданный ответ"
+  }
+}
 
 export const CorpLogoutCommand = effectCmd({
   command: "logout",
@@ -208,7 +229,11 @@ export const CorpLogoutCommand = effectCmd({
     }
 
     // Строка серверной части печатается по своему фактическому исходу и код выхода не определяет.
+    // Исходов четыре (S-A14 п.1), и `not_revoked` со `unavailable` сливать нельзя: первое —
+    // «сервер ответил и точно не отозвал, причина такая-то», второе — «о судьбе ключа не известно».
     if (outcome.hub === "revoked") yield* println(LOGOUT_LINES.revoked)
+    else if (outcome.hub === "not_revoked")
+      yield* println(LOGOUT_LINES.notRevoked(revokeReasonText(outcome.revokeError)))
     else if (outcome.hub === "unavailable")
       yield* println(LOGOUT_LINES.revokeFailed(errorText(outcome.hubError ?? "hub_unavailable")))
 

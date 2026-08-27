@@ -31,6 +31,14 @@ const ru = {
   "logout.done": "Выход выполнен: ключ отозван на сервере и удалён на этом компьютере",
   "logout.doneLocal": "Выход выполнен: ключ удалён на этом компьютере",
   "logout.revokeFailed": "Ключ удалён на этом компьютере, отозвать его на сервере не удалось: {{reason}}",
+  // Микроревизия 1.12.1: «сервер ответил и не отозвал» — не то же самое, что «сервер не ответил»
+  // (S-A14 п.1). Причина — только из закрытого набора `logout.reason.*` (S-A5, S-T11).
+  "logout.notRevoked":
+    "Ключ удалён на этом компьютере, но на сервере не отозван: {{reason}}; он может продолжать работать до истечения срока",
+  "logout.reason.notPermitted": "отзыв ключа не разрешён",
+  "logout.reason.upstreamUnavailable": "сервис ключей недоступен",
+  "logout.reason.invalidResponse": "сервис ключей вернул неожиданный ответ",
+  "logout.reason.unreachable": "связаться с сервером не удалось",
   "logout.notSignedIn": "Вы не выполняли вход",
 
   // Возврат выключенного провайдера (S-C11, S-T11).
@@ -163,11 +171,18 @@ const en: Record<Key, string> = {
   "login.needsHub": "Corporate SSO sign-in is not configured in this build",
 
   "logout.action": "Sign out",
-  "logout.confirm": "Sign out of the corporate account? The key will be revoked on the server and deleted on this computer.",
+  "logout.confirm":
+    "Sign out of the corporate account? The key will be revoked on the server and deleted on this computer.",
   "logout.confirmLocal": "Sign out of the corporate account? The key will be deleted on this computer.",
   "logout.done": "Signed out: the key was revoked on the server and deleted on this computer",
   "logout.doneLocal": "Signed out: the key was deleted on this computer",
   "logout.revokeFailed": "The key was deleted on this computer, but revoking it on the server failed: {{reason}}",
+  "logout.notRevoked":
+    "The key was deleted on this computer but not revoked on the server: {{reason}}; it may keep working until it expires",
+  "logout.reason.notPermitted": "revoking the key is not permitted",
+  "logout.reason.upstreamUnavailable": "the key service is unavailable",
+  "logout.reason.invalidResponse": "the key service returned an unexpected response",
+  "logout.reason.unreachable": "the server could not be reached",
   "logout.notSignedIn": "You are not signed in",
 
   "provider.disabledTitle": "The Magnit Copilot provider is disabled in your config, file {{file}}",
@@ -300,6 +315,18 @@ export function errorText(code: string | undefined): string {
   if (!code) return t("error.unknown")
   const key = `error.${code}` as Key
   return key in ru ? t(key) : code
+}
+
+/**
+ * Причина отказа отзыва ключа по коду `revoke_error` — **закрытый набор** (S-A14 п.1, S-T11).
+ *
+ * Неизвестный код человеку не показывается: показывается текст «неожиданного ответа», а сам код
+ * называет лог сервера. Поле `message` ответа Hub не пересылается и не показывается (S-A5).
+ */
+export function revokeReasonText(code: string | undefined): string {
+  if (code === "not_permitted") return t("logout.reason.notPermitted")
+  if (code === "upstream_unavailable") return t("logout.reason.upstreamUnavailable")
+  return t("logout.reason.invalidResponse")
 }
 
 /**

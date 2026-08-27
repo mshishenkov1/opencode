@@ -24,6 +24,13 @@ export interface Outcome {
   /** Код ошибки Hub при `hub:"unavailable"` (S-A5). */
   hubError?: CorpErrors.Code
   /**
+   * Код причины при `hub:"not_revoked"` — значение `revoke_error` ответа Hub **дословно** (S-V3):
+   * клиент его не переименовывает и не обобщает, а текст пользователю подставляет из своего
+   * словаря (S-I1). Неизвестный код доходит сюда как есть: обобщить его здесь значило бы отнять у
+   * лога единственное место, где он назван.
+   */
+  revokeError?: string
+  /**
    * Локальная часть не выполнена: запись auth-store не удалась. Наружу роутом не отдаётся — от неё
    * зависит **код выхода** команды (S-A15, D-49), а не форма ответа, которую фиксирует S-A1.
    */
@@ -60,6 +67,7 @@ export const perform = Effect.fn("CorpLogout.perform")(function* (input: Input) 
   // Шаг 1 — отзыв, best effort и строго до удаления (п.1, п.3).
   let hub: CorpSchema.LogoutHubOutcome = "skipped"
   let hubError: CorpErrors.Code | undefined
+  let revokeError: string | undefined
   if (input.hubUrl) {
     const client = CorpHub.make({
       hubUrl: input.hubUrl,
@@ -67,10 +75,21 @@ export const perform = Effect.fn("CorpLogout.perform")(function* (input: Input) 
       ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
     })
     const revoked = yield* Effect.promise(() => client.logout())
-    if (revoked.ok) hub = "revoked"
-    else {
+    // Закрытая таблица из четырёх исходов (п.1, микроревизия 1.12.1). `not_revoked` и `unavailable`
+    // сливать запрещено: «точно не отозван, причина известна» и «неизвестно ничего» — разные факты.
+    if (!revoked.ok) {
+      // `5xx` (включая `500` R-L11.6), таймаут, сетевая ошибка и нечитаемое тело `200`
+      // (`hub_invalid_response`): о судьбе ключа не известно ничего.
       hub = "unavailable"
       hubError = revoked.code
+    } else if (revoked.data === undefined || revoked.data.revoked) {
+      // `200 revoked:true` — отозван и в Hub, и в LiteLLM; `401`/`403` — уже недействителен.
+      hub = "revoked"
+    } else {
+      // `200 revoked:false` — Hub убрал ключ у себя, но в LiteLLM отозвать не удалось: ключ модели
+      // может остаться живым (S-C4b), и молчать об этом нельзя. Код причины переносится дословно.
+      hub = "not_revoked"
+      revokeError = revoked.data.revoke_error ?? undefined
     }
   }
 
@@ -85,6 +104,7 @@ export const perform = Effect.fn("CorpLogout.perform")(function* (input: Input) 
     keyRemoved: removed === true,
     hub,
     ...(hubError === undefined ? {} : { hubError }),
+    ...(revokeError === undefined ? {} : { revokeError }),
     ...(removed === true ? {} : { removeError: removed }),
   } satisfies Outcome
 })
@@ -95,5 +115,6 @@ export function toResult(outcome: Outcome): CorpSchema.LogoutResult {
     key_removed: outcome.keyRemoved,
     hub: outcome.hub,
     ...(outcome.hubError === undefined ? {} : { hub_error: outcome.hubError }),
+    ...(outcome.revokeError === undefined ? {} : { revoke_error: outcome.revokeError }),
   }
 }

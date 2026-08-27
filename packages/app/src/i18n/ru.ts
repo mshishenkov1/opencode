@@ -973,14 +973,22 @@ export const dict = {
   "corp.logout.done": "Выход выполнен: ключ отозван на сервере и удалён на этом компьютере",
   "corp.logout.doneLocal": "Выход выполнен: ключ удалён на этом компьютере",
   "corp.logout.revokeFailed": "Ключ удалён на этом компьютере, отозвать его на сервере не удалось: {{reason}}",
+  // Микроревизия 1.12.1: «сервер ответил и не отозвал» — не то же самое, что «сервер не ответил»
+  // (S-A14 п.1). Причина подставляется ТОЛЬКО из закрытого набора `corp.logout.reason.*`: текст
+  // `message`, пришедший от Hub, не пересылается и не показывается (S-A5).
+  "corp.logout.notRevoked":
+    "Ключ удалён на этом компьютере, но на сервере не отозван: {{reason}}; он может продолжать работать до истечения срока",
+  "corp.logout.reason.notPermitted": "отзыв ключа не разрешён",
+  "corp.logout.reason.upstreamUnavailable": "сервис ключей недоступен",
+  "corp.logout.reason.invalidResponse": "сервис ключей вернул неожиданный ответ",
+  "corp.logout.reason.unreachable": "связаться с сервером не удалось",
   "corp.logout.notSignedIn": "Вы не выполняли вход",
 
   // corp: возврат выключенного провайдера (S-C11, S-I1)
   "corp.provider.disabledTitle": "Провайдер Magnit Copilot выключен в вашем конфиге, файл {{file}}",
   "corp.provider.enable": "Включить",
   "corp.provider.enableConfirm": "Включить провайдера Magnit Copilot? Будет изменён файл {{file}}.",
-  "corp.provider.enableForeignLayer":
-    "Запись лежит в файле {{file}} — приложение его не редактирует, измените вручную",
+  "corp.provider.enableForeignLayer": "Запись лежит в файле {{file}} — приложение его не редактирует, измените вручную",
   "corp.login.teamTitle": "Выберите команду",
   "corp.login.success": "Вход выполнен: {{email}}",
 

@@ -149,11 +149,27 @@ export const DialogConnectors: Component = () => {
    */
   const visible = createMemo(() => cards().filter((card) => matchesTab(card, tab()) && matchesQuery(card, query())))
 
+  /**
+   * Задан ли адрес Hub в этой сборке (S-C10 п.7). Поле необязательно ради совместимости ответа:
+   * его отсутствие означает «сборка с Hub» — поведение до ревизии 1.11.
+   */
+  const hubConfigured = createMemo(() => catalog.data?.hub_configured !== false)
+
+  /**
+   * Недоступный источник называется своим именем (S-V12 п.3, D-43): в сборке без Hub слово «Hub»
+   * не показывается нигде, поэтому ни текст класса ошибки (`corp.error.hub_*`), ни дата кэша с
+   * упоминанием Hub туда не подставляются — сообщение называет недоступным **каталог**.
+   */
+  const unavailableSource = createMemo(() =>
+    hubConfigured() ? language.t("corp.connectors.hubDown") : language.t("corp.connectors.catalogUnavailable"),
+  )
+
   const banner = createMemo(() => {
     const data = catalog.data
     if (!data?.hub_error) return undefined
     if (data.hub_error === "unauthorized") return language.t("corp.connectors.needsLogin")
-    if (!data.cached_at) return `${language.t("corp.connectors.hubDown")}: ${language.t(corpErrorKey(data.hub_error))}`
+    if (!hubConfigured()) return unavailableSource()
+    if (!data.cached_at) return `${unavailableSource()}: ${language.t(corpErrorKey(data.hub_error))}`
     return language.t("corp.connectors.hubDownCached", { at: new Date(Number(data.cached_at)).toLocaleString() })
   })
 
@@ -187,12 +203,15 @@ export const DialogConnectors: Component = () => {
     if (catalog.isLoading) return undefined
     const data = catalog.data
     if (cards().length === 0) {
-      if (!data) return { text: language.t("corp.connectors.hubDown"), action: "refresh" as const }
+      if (!data) return { text: unavailableSource(), action: "refresh" as const }
       if (data.hub_error === "unauthorized")
         return { text: language.t("corp.connectors.needsLogin"), action: "login" as const }
       if (data.hub_error)
         return {
-          text: `${language.t("corp.connectors.hubDown")}: ${language.t(corpErrorKey(data.hub_error))}`,
+          // Состояние 3 (S-V12 п.3): текст называет недоступный **источник**, а не Hub безусловно.
+          text: hubConfigured()
+            ? `${unavailableSource()}: ${language.t(corpErrorKey(data.hub_error))}`
+            : unavailableSource(),
           action: "refresh" as const,
         }
       // Состояния 1 и 2 обязаны различаться текстом: первое — правда о каталоге, второе —

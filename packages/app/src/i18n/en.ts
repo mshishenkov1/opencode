@@ -1063,6 +1063,8 @@ export const dict = {
   "corp.login.retry": "Retry",
   "corp.login.cancel": "Cancel",
   "corp.login.otherProvider": "Other provider",
+  // corp: вход по SSO остаётся Hub-зависимым (S-C5, S-C10 п.2)
+  "corp.login.needsHub": "Corporate SSO sign-in is not configured in this build",
   "corp.login.teamTitle": "Select a team",
   "corp.login.success": "Signed in as {{email}}",
 
@@ -1109,6 +1111,13 @@ export const dict = {
   "corp.connectors.columnType": "Type",
   "corp.connectors.columnStatus": "Status",
   "corp.connectors.resetFilter": "Show all",
+
+  // corp: сборка без Hub — недоступный источник и Hub-зависимые швы (S-C10, S-I1)
+  "corp.connectors.catalogUnavailable": "Catalog unavailable: the connector list could not be fetched",
+  // Слова «Hub» в этих двух текстах нет намеренно (S-I1, D-43): они показываются ровно и только в
+  // сборке без Hub. Формулировки совпадают со словарём TUI дословно.
+  "corp.connectors.facadeNeedsHub": "Connecting this connector is not configured in this build",
+  "corp.connectors.permissionsNeedHub": "Managing permissions for this connector is not configured in this build",
 
   // corp: страница коннектора (S-D11, S-I1)
   "corp.connector.back": "Back",

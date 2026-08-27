@@ -96,6 +96,21 @@ export function rowMode(state: CorpPermissionState | undefined, row: PermissionR
 }
 
 /**
+ * Есть ли что показывать в ряду действий (S-C10 п.7–8).
+ *
+ * В сборке без Hub карточка `mode:"facade"` теряет и «Подключить», и «Открыть в Hub»: набор
+ * действий становится пустым, и ряд не рисуется вовсе — пустой flex-контейнер с отступами оставил
+ * бы на экране полосу, за которой ничего нет. Причина недоступности при этом всё равно видна:
+ * `connect_needs_hub` сам по себе делает ряд непустым.
+ */
+export function hasActions(card: CorpCatalogCard): boolean {
+  if (card.connect_needs_hub) return true
+  if (card.actions.includes("connect") || card.actions.includes("reconnect")) return true
+  if (card.actions.includes("disconnect")) return true
+  return card.actions.includes("open_hub") && !!card.hub_url
+}
+
+/**
  * Агрегат группового селектора (S-V23): одинаковый режим у всех групп — этот режим, иначе
  * «Смешанно». «Смешанно» — только отображаемое значение.
  */
@@ -473,8 +488,16 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                   <span class="text-12-regular text-text-weak">{language.t("corp.connectors.stale")}</span>
                 </Show>
                 {/* Предлагаемое действие показывается тем же элементом, которым выполняется
-                    (S-V19): отдельной «кнопкой-советом» страница не обзаводится. */}
+                    (S-V19): отдельной «кнопкой-советом» страница не обзаводится. Пустого ряда
+                    действий не бывает: в сборке без Hub у карточки `facade` не остаётся ни одного
+                    действия, и контейнер тогда не рисуется вовсе, а не висит пустой полосой. */}
+                <Show when={hasActions(entry())}>
                 <div class="flex items-center gap-2">
+                  {/* S-V7, S-C10 п.8: подключение `facade` идёт через Hub-фасад, а Hub в этой
+                      сборке нет — действия в наборе уже нет, и на его месте названа причина. */}
+                  <Show when={entry().connect_needs_hub}>
+                    <span class="text-12-regular text-text-weak">{language.t("corp.connectors.facadeNeedsHub")}</span>
+                  </Show>
                   <Show when={entry().actions.includes("connect") || entry().actions.includes("reconnect")}>
                     <Button
                       size="small"
@@ -506,6 +529,9 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                       {language.t("corp.connectors.disconnect")}
                     </Button>
                   </Show>
+                  {/* S-C10 п.7: без адреса Hub `open_hub` из набора действий уже удалён сервером;
+                      ссылка не рисуется и заблокированной не показывается — ссылка в никуда хуже
+                      её отсутствия. Условие по `hub_url` остаётся вторым рубежом (S-V10). */}
                   <Show when={entry().actions.includes("open_hub") && entry().hub_url}>
                     <a
                       class="text-12-regular text-text-weak underline whitespace-nowrap"
@@ -517,6 +543,7 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                     </a>
                   </Show>
                 </div>
+                </Show>
               </div>
 
               {/* 5. «Разрешения»: блок есть всегда. Вид `permission_groups` — режим каждой группы
@@ -524,15 +551,33 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
               <Show when={entry().actions.includes("permissions")}>
                 <div class="flex flex-col gap-2">
                   <Show
-                    when={entry().permission_groups}
+                    when={!entry().permissions_need_hub}
                     fallback={
                       <>
                         <span class="text-12-regular text-text-weak">{language.t("corp.permissions.title")}</span>
-                        <ConnectorPresets card={entry()} />
+                        {/* S-V9, S-C10 п.7: подтверждение этих видов модели прав идёт в Hub, а Hub
+                            в этой сборке нет — экран заблокирован с названной причиной. Причина
+                            отдельная от «модель прав не поддерживается этой версией приложения»:
+                            «эта сборка без Hub» и «эта версия не умеет» — разные беды и разные
+                            советы. Вид `permission_groups` целиком локален, и признак у него не
+                            выставляется. */}
+                        <span class="text-12-regular text-text-weak">
+                          {language.t("corp.connectors.permissionsNeedHub")}
+                        </span>
                       </>
                     }
                   >
-                    <ConnectorPermissionGroups card={entry()} />
+                    <Show
+                      when={entry().permission_groups}
+                      fallback={
+                        <>
+                          <span class="text-12-regular text-text-weak">{language.t("corp.permissions.title")}</span>
+                          <ConnectorPresets card={entry()} />
+                        </>
+                      }
+                    >
+                      <ConnectorPermissionGroups card={entry()} />
+                    </Show>
                   </Show>
                 </div>
               </Show>

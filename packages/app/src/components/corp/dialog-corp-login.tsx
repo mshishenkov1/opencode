@@ -27,6 +27,12 @@ type Step =
   | { kind: "waiting"; loginID: string; code: string; url: string }
   | { kind: "teams"; loginID: string; teams: CorpTeam[] }
   | { kind: "error"; code: string }
+  /**
+   * Сборка без Hub (S-C5, S-C10 п.2): корп-функции включены каталогом, а вход по SSO зависит от
+   * Hub и потому недоступен. Причина называется вслух — вместо запроса на незаданный адрес и
+   * вместо неправды «корпоративный режим не настроен».
+   */
+  | { kind: "no_hub" }
 
 export const DialogCorpLogin: Component = () => {
   // Экран открывается из `Layout` — директорного SDK-контекста там нет, корп-роуты его и не требуют
@@ -94,6 +100,9 @@ export const DialogCorpLogin: Component = () => {
       .client.corp.status()
       .catch(() => undefined)
     setHub(status?.data?.hub_url)
+    // S-C10 п.2: корп-режим включён, но адреса Hub нет — стартовать вход нечем и незачем.
+    // `enabled` без `hub_url` бывает только в сборке, где каталог статический (S-C10 п.7).
+    if (status?.data?.enabled && !status.data.hub_url) return setStep({ kind: "no_hub" })
     const started = await sdk()
       .client.corp.login.start()
       .catch(() => undefined)
@@ -175,6 +184,22 @@ export const DialogCorpLogin: Component = () => {
 
       <Show when={!teams()}>
         <div class="px-3 pb-3 flex flex-col gap-4">
+          {/* S-C5, S-C10 п.2: в сборке без Hub формы входа нет — вместо неё названа причина.
+              «Другой провайдер» остаётся: вход в саму модель этой сборкой не запрещён. */}
+          <Show when={step().kind === "no_hub"}>
+            <div class="flex flex-col gap-3">
+              <div class="text-14-regular text-text-strong">{language.t("corp.login.needsHub")}</div>
+              <div class="flex items-center gap-2">
+                <Button size="large" onClick={() => void openOtherProvider()}>
+                  {language.t("corp.login.otherProvider")}
+                </Button>
+                <Button size="large" variant="ghost" onClick={() => dialog.close()}>
+                  {language.t("corp.login.cancel")}
+                </Button>
+              </div>
+            </div>
+          </Show>
+
           <Show when={step().kind === "starting"}>
             <div class="text-14-regular text-text-base">{language.t("corp.login.waiting")}</div>
           </Show>

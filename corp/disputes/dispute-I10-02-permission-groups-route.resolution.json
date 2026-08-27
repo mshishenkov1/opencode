@@ -1,0 +1,30 @@
+{
+  "dispute": "corp/disputes/dispute-I10-02-permission-groups-route.json",
+  "id": "DISPUTE-I10-02-01",
+  "subject": "Роут применения разрешений по группам: промпт требует новый путь и новое тело, спека — расширение существующего",
+  "resolved_by": "test-agent",
+  "date": "2026-08-27",
+  "verdict": "dev-agent прав; претензия принята полностью",
+  "reasoning": [
+    "Спецификация главнее промпта оркестратора: промпт — способ поставить задачу, контракт фиксирует spec.md. S-V1 в редакции ревизии 1.10 (коммит d466fa0b5d) прямо описывает `PUT /corp/connectors/:alias/permissions` с двумя взаимоисключающими телами `{preset}` и `{modes: {<groupId>: allow|ask|deny}}`; отдельного пути `…/permission-groups` в спецификации нет ни в таблице роутов, ни в тексте.",
+    "AC-239 — приёмочный критерий именно этой формы: «роут PUT /corp/connectors/<alias>/permissions… отправлено тело с полем modes… тело с одновременно переданными preset и modes отвергнуто как ошибка запроса». Тест, написанный по промпту, требовал бы роута, которого критерии не знают.",
+    "Поля `all` в спецификации нет, и заводить его незачем: S-V23 говорит, что групповой селектор «ставит режим всем группам сразу… тем же правилом S-V21 (одна перезапись блока)», то есть клиент присылает один и тот же режим каждой группе в `modes`. Отдельное поле дало бы второй способ выразить то же самое и второй путь в коде без критерия, который бы его проверял.",
+    "Реализация проверена и соответствует спеке: `PermissionsPayload` допускает `preset?`, `groups?`, `modes?`; одновременные `preset` и `modes` дают `CorpBadRequestError{error:\"conflicting_body\"}` со статусом 400, пустое тело — `missing_body`; ветка `modes` уходит из обработчика раньше любого обращения к Hub, а `applyPermissionGroups` не содержит ни `CorpHub`, ни `hub.`, ни `fetch`."
+  ],
+  "resolution": [
+    "Оставить реализацию как есть: путь прежний, тело расширено полем `modes`, поля `all` нет.",
+    "Тесты написаны против формы из спеки, а не из промпта: набор путей проверяется на отсутствие `permission-groups` (в том числе на то, что такого пути нет ни у одного роута), форма тела и ответа — на схемах, а «Hub не участвует» и «до записи дело не доходит» — на порядке шагов в обработчике.",
+    "Правку спецификации ревизия не требует: расхождения реализации с ней нет — расхождение было между промптом и спекой."
+  ],
+  "tests": [
+    "packages/opencode/src/corp/permissions-route.test.ts::AC-239: путь остался прежним, отдельного роута для групп не заведено",
+    "packages/opencode/src/corp/permissions-route.test.ts::AC-239: тело принимает и {preset}, и {modes}; режим вне перечисления не принимается",
+    "packages/opencode/src/corp/permissions-route.test.ts::AC-239: одновременные preset и modes — ошибка запроса 400 с названной причиной",
+    "packages/opencode/src/corp/permissions-route.test.ts::AC-239: ответ несёт permission_state и reauth_required, а preset стал необязательным",
+    "packages/opencode/src/corp/permissions-route.test.ts::AC-239: запрос к Hub не выполняется вовсе — в ветке modes его нет",
+    "packages/opencode/src/corp/permissions-route.test.ts::AC-239: ветка modes уходит раньше, чем обработчик добирается до Hub",
+    "packages/opencode/src/corp/permissions-route.test.ts::AC-239: при конфликте тела конфиг не изменяется — проверка стоит до любой записи",
+    "packages/opencode/src/corp/permissions-route.test.ts::AC-206: подтверждение по-прежнему уходит в Hub тем же вызовом"
+  ],
+  "status": "resolved"
+}

@@ -19,6 +19,9 @@ const ru = {
   "login.teamTitle": "Выберите команду",
   "login.success": "Вход выполнен",
   "login.cancelled": "Вход отменён",
+  // S-C5, S-C10 п.6: вход по SSO остаётся зависимым от Hub. Слова «Hub» в тексте нет — в сборке
+  // без него оно пользователю не показывается нигде (D-43).
+  "login.needsHub": "Вход по корпоративному SSO в этой сборке не настроен",
 
   "connectors.title": "Коннекторы",
   "connectors.command": "Витрина коннекторов",
@@ -64,6 +67,12 @@ const ru = {
   "empty.tabNotConnected": "Подключено всё",
   "empty.unparsed": "Каталог не разобран: отброшены все карточки ({{dropped}})",
   "connectors.partial": "Часть карточек каталога не разобрана и не показана: {{dropped}}",
+
+  // Сборка без Hub (S-C10, ревизия 1.11). Ни один из трёх текстов не называет Hub (D-43):
+  // недоступный источник называется каталогом, а причины швов — «в этой сборке».
+  "connectors.catalogUnavailable": "Каталог недоступен: получить список коннекторов не удалось",
+  "connectors.facadeNeedsHub": "Подключение этого коннектора в этой сборке не настроено",
+  "connectors.permissionsNeedHub": "Управление правами этого коннектора в этой сборке не настроено",
 
   // Страница коннектора (S-D11, S-T10).
   "connector.back": "Назад",
@@ -130,6 +139,7 @@ const en: Record<Key, string> = {
   "login.teamTitle": "Select a team",
   "login.success": "Signed in",
   "login.cancelled": "Sign-in cancelled",
+  "login.needsHub": "Corporate SSO sign-in is not configured in this build",
 
   "connectors.title": "Connectors",
   "connectors.command": "Connector catalog",
@@ -175,6 +185,10 @@ const en: Record<Key, string> = {
   "empty.tabNotConnected": "Everything is connected",
   "empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
   "connectors.partial": "Some catalog cards were not parsed and are hidden: {{dropped}}",
+
+  "connectors.catalogUnavailable": "Catalog unavailable: the connector list could not be fetched",
+  "connectors.facadeNeedsHub": "Connecting this connector is not configured in this build",
+  "connectors.permissionsNeedHub": "Managing permissions for this connector is not configured in this build",
 
   "connector.back": "Back",
   "connector.owner": "Owner",

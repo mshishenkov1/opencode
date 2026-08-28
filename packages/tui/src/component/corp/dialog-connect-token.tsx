@@ -222,16 +222,11 @@ export function DialogConnectToken(props: DialogConnectTokenProps) {
     } catch (error) {
       // Отказ роута — не исход проверки: сюда попадают предпроверки и отказ хранилища (S-V25 п.1).
       const body = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : undefined
-      const code = typeof body?.["error"] === "string" ? (body["error"] as string) : undefined
+      const code = body?.["error"]
+      const unavailable = body?.["unavailable_code"]
       if (code === "storage_unavailable") setFailure(t("connect.storageUnavailable"))
       else if (code === "auth_method_unavailable")
-        setFailure(
-          t(
-            methodUnavailableKey(
-              typeof body?.["unavailable_code"] === "string" ? (body["unavailable_code"] as string) : undefined,
-            ),
-          ),
-        )
+        setFailure(t(methodUnavailableKey(typeof unavailable === "string" ? unavailable : undefined)))
       else setFailure(t("connect.noMethod"))
     } finally {
       setBusy(false)

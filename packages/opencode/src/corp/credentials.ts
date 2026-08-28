@@ -255,15 +255,16 @@ export async function requestHeaders(
   const record = store[alias]
   // S-V26 п.3: запись применима только при посимвольном совпадении адреса. Не совпал — заголовки
   // не подставляются вовсе, и карточка переходит в «нужно ввести токен заново».
-  if (!applicable(record, url)) return configHeaders
+  if (!record || !applicable(record, url)) return configHeaders
   const upstream = await catalogUpstream(alias).catch(() => undefined)
-  const credential = upstream?.url === url ? upstream.credential_headers : record!.credential_headers
-  const staticHeaders = upstream?.url === url ? upstream.static_headers : record!.static_headers
+  const fromCatalog = upstream?.url === url ? upstream : undefined
+  const credential = fromCatalog ? fromCatalog.credential_headers : record.credential_headers
+  const staticHeaders = fromCatalog ? fromCatalog.static_headers : record.static_headers
   if (!credential || Object.keys(credential).length === 0) return configHeaders
   return mergeHeaders({
     static: staticHeaders,
     config: configHeaders,
     credential,
-    token: record!.token,
+    token: record.token,
   })
 }

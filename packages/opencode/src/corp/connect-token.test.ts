@@ -3,6 +3,7 @@ import fs from "fs/promises"
 import path from "path"
 import { Effect } from "effect"
 import { Global } from "@opencode-ai/core/global"
+import * as CorpCredentials from "./credentials"
 import * as Harness from "../../test/fixture/corp-direct-harness"
 
 /**
@@ -454,6 +455,127 @@ describe("connect-token — сохранение и соединение (S-V25 
       expect("headers" in config.mcp[alias]).toBe(false)
       expect(Harness.state.calls).toContain(`add:${alias}`)
     }),
+  )
+})
+
+/**
+ * MAJ-2 ревью review-i4-rev113-1: AC-324 и AC-325 объявлены `type: integration` («when: выполнен
+ * POST …/connect-token» / «when: открыта витрина и страница коннектора»), а были реализованы
+ * unit-тестом чистой функции `CorpCredentials.save()`/`read()` в `credentials.test.ts` — роут не
+ * поднимался вовсе. Инъекция ИНЖ-8 (снят охранник `if (!saved.ok)` в `connectToken`) оставляла
+ * 556/0 зелёными именно из-за этого: юнит видел отказ `save()`, но не видел, что роут с ним делает.
+ * Здесь оба критерия проходятся через настоящий HTTP-роут харнесса (`Harness.post`/`Harness.get`),
+ * а не через прямой вызов модуля `credentials.ts`.
+ */
+describe("connect-token — хранилище недоступно на настоящем роуте, а не только в модуле (S-V26 п.5; AC-324, AC-325)", () => {
+  Harness.it.live(
+    "AC-324: POST …/connect-token с недоступным для записи каталогом данных — 500 storage_unavailable, mcp.<alias> НЕ записан, соединение НЕ поднято, карточка НЕ подключена",
+    () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return // fs.chmod на Windows переключает только read-only
+        const alias = "direct-storage-unavailable"
+        const target = Harness.state.target
+        target.routes.set("/verify", () => Harness.json({ account: "ivanov" }))
+        serveCatalog([directCard(alias, target.url)])
+        const before = yield* Effect.promise(() => snapshotFiles())
+
+        // Тот же приём, что в юнит-тесте AC-324 (`credentials.test.ts`), применённый к
+        // `Global.Path.data`, которым реально пользуется роут: `CorpCredentials.save()` внутри
+        // `connectToken` вызывается БЕЗ явного `dataDir` и падает на настоящем каталоге данных.
+        yield* Effect.promise(() => fs.chmod(Global.Path.data, 0o500))
+
+        const response = yield* Harness.post(Harness.connectTokenRoute(alias), {
+          method: "personal_token",
+          token: "abcdef",
+        })
+        expect(response.status).toBe(500)
+        const result = yield* Harness.body<{ error: string; message: string }>(response)
+        expect(result.error).toBe("storage_unavailable")
+        expect(result.message).toBeTruthy()
+        // Значение токена не отдаётся ни в каком поле ответа.
+        expect(JSON.stringify(result)).not.toContain("abcdef")
+
+        // Проверка verify состоялась (ровно один запрос) — отказ хранилища наступает ПОСЛЕ неё,
+        // а не подменяет её; но ни конфиг, ни соединение MCP этим не затронуты (S-V26 п.5).
+        const verifyRequests = target.requests.filter((request) => request.path === "/verify")
+        expect(verifyRequests).toHaveLength(1)
+
+        // Восстанавливаем права ДО чтения снимка: сравнение файлов не должно упасть на правах,
+        // а не на содержимом — сути отказа хранилища это не отменяет, отказ уже зафиксирован ответом.
+        yield* Effect.promise(() => fs.chmod(Global.Path.data, 0o700))
+        const after = yield* Effect.promise(() => snapshotFiles())
+        // Конфиг НЕ изменился: ключ mcp.<alias> не появился (S-V26 п.5, AC-324).
+        expect(after.config).toBe(before.config)
+
+        // Соединение НЕ поднято: ни mcp.add, ни mcp.authenticate не вызваны.
+        expect(Harness.state.calls).not.toContain(`add:${alias}`)
+        expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+
+        // Карточка НЕ показана подключённой на настоящем роуте каталога.
+        const catalogResponse = yield* Harness.get(Harness.CorpPaths.catalog)
+        const view = yield* Harness.body<{
+          servers: { alias: string; status: string; state: string; has_credentials: boolean }[]
+        }>(catalogResponse)
+        const card = view.servers.find((entry) => entry.alias === alias)!
+        expect(card.status).not.toBe("connected")
+        expect(card.state).not.toBe("connected")
+        expect(card.has_credentials).toBe(false)
+      }),
+  )
+
+  Harness.it.live(
+    "AC-325: файл хранилища с битым JSON — витрина открывается через настоящий роут, карточка теряет has_credentials, предупреждение уходит в лог, файл НЕ удалён",
+    () =>
+      Effect.gen(function* () {
+        const alias = "direct-corrupted-store"
+        const target = Harness.state.target
+        target.routes.set("/verify", () => Harness.json({ account: "ivanov" }))
+        serveCatalog([directCard(alias, target.url)])
+
+        // Сперва подключаем по-настоящему — запись хранилища существует и применима.
+        const MARKER = "MARKER-ac325-token"
+        const connectResponse = yield* Harness.post(Harness.connectTokenRoute(alias), {
+          method: "personal_token",
+          token: MARKER,
+        })
+        expect(connectResponse.status).toBe(200)
+        const connectedCatalog = yield* Harness.get(Harness.CorpPaths.catalog)
+        const connectedView = yield* Harness.body<{ servers: { alias: string; has_credentials: boolean }[] }>(
+          connectedCatalog,
+        )
+        expect(connectedView.servers.find((entry) => entry.alias === alias)!.has_credentials).toBe(true)
+
+        // Файл хранилища портится напрямую на диске — не через модуль `credentials.ts` (это уже
+        // проверено юнит-тестом), а как внешнее событие между запусками сборки.
+        Harness.logs.length = 0
+        const file = CorpCredentials.file()
+        yield* Effect.promise(() => fs.writeFile(file, "{not valid json", { mode: 0o600 }))
+
+        // Витрина открывается через настоящий роут — не падает, карточки показаны. `refresh=true`
+        // обходит memo каталога (S-V3, 60 секунд): без него второй `GET /corp/catalog` в пределах
+        // окна вернул бы кэшированный до порчи файла снимок и проверка была бы бессмысленной —
+        // страница коннектора (тот же ответ, отфильтрованный на один alias) читает те же карточки.
+        const catalogResponse = yield* Harness.get(`${Harness.CorpPaths.catalog}?refresh=true`)
+        expect(catalogResponse.status).toBe(200)
+        const view = yield* Harness.body<{
+          servers: { alias: string; has_credentials: boolean; connect_mode: string }[]
+        }>(catalogResponse)
+        const card = view.servers.find((entry) => entry.alias === alias)!
+        // Затронутая карточка «нужно ввести токен заново»: учётных данных больше не видно, хотя
+        // способ прямого подключения по-прежнему доступен — форма ввода токена на экране остаётся.
+        expect(card.has_credentials).toBe(false)
+        expect(card.connect_mode).toBe("direct")
+
+        // Предупреждение ушло в лог — по имени файла, без значения маркера.
+        const logText = JSON.stringify(Harness.logs)
+        expect(logText).toContain("corp credentials")
+        expect(logText).not.toContain(MARKER)
+
+        // Файл НЕ удалён автоматически и НЕ переписан открытием витрины — битое содержимое на месте;
+        // перезаписывается только следующим успешным сохранением (проверено в credentials.test.ts).
+        const stillCorrupted = yield* Effect.promise(() => fs.readFile(file, "utf8"))
+        expect(stillCorrupted).toBe("{not valid json")
+      }),
   )
 })
 

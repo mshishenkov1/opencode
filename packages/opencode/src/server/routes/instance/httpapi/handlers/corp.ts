@@ -1399,10 +1399,19 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // Признак тот же и спрашивается так же, как в `connect`: `nativeConnectDisabled`, а не
       // производный код причины карточки, у которого есть путь стать `null` при `connect_mode`,
       // вычисленном не в `"none"` (см. охранник `connect`).
-      const oauthClosed = CorpStatus.nativeConnectDisabled({
-        ...(server === undefined ? {} : { server }),
-        hubConfigured: true,
-      })
+      //
+      // **Карточки нет — шаг 2 не запускается.** Этот роут — единственный из трёх, который при
+      // отсутствующем alias не прекращает действие: `connect-token` отвечает `404`, `connect` —
+      // `unavailable/not_found`, а здесь ветка `{preset}` осмысленна и без карточки (права пишет
+      // Hub, а карточка нужна лишь для патча конфига и ответа). Поэтому сторона деградации
+      // называется **здесь**: режим карточки, которой нет, **неизвестен**, а неизвестный признак
+      // по S-V28 п.1б деградирует в сторону запрета. Иначе достижим обход: у alias локально
+      // осталась запись `mcp.<alias>`, а карточка из каталога исчезла (убрал администратор либо
+      // отбросил разбор S-V14 — для рукописного статического каталога S-C10 п.3 это рядовое
+      // событие), Hub отвечает `needs_reauth` — и запрещённый браузерный шаг S-V7 запускается на
+      // карточке, о режиме которой не известно ничего. Цена названа S-V28 п.9: повторная
+      // авторизация из экрана прав для такого alias не работает — как и для закрытой карточки.
+      const oauthClosed = server === undefined || CorpStatus.nativeConnectDisabled({ server, hubConfigured: true })
       if (reauth && !oauthClosed) {
         yield* mcpSvc.authenticate(alias).pipe(Effect.catch(() => Effect.void))
       }

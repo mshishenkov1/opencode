@@ -392,9 +392,20 @@ export function authMethods(
  * Поле `connect_mode_unavailable_code` при этом **не меняется**: у `direct`-карточки оно
  * по-прежнему `null` (строка «а» обязательна — форма ввода токена на такой карточке работает и
  * запретом не закрыта: прямое подключение браузера не открывает и OAuth не касается).
+ *
+ * **Карточка обязательна, и это часть охранника.** Признак отвечает на вопрос «закрыт ли **этот**
+ * режим», поэтому карточки, которой нет, он не описывает: на пустом входе честного ответа у него
+ * нет, а прежняя сигнатура (`server?`) заставляла его отвечать `false` — «не запрещено» — там, где
+ * режим **неизвестен**. Ровно этим ответом роут `permissions` пропускал шаг 2 правила S-V7 у
+ * alias, чья карточка из каталога исчезла. Требование непустого `server` в типе делает эту форму
+ * вызова ошибкой сборки, а не поведением: вызывающий обязан назвать сторону деградации сам —
+ * и по S-V28 п.1б она одна, в сторону **запрета** (там неразобранное `available` даёт
+ * `catalog_unavailable`, а не «доступен»).
  */
-export function nativeConnectDisabled(input: ConnectInput & OauthBanOptions): boolean {
-  return input.server?.mode === "native" && banActive(input)
+export function nativeConnectDisabled(
+  input: ConnectInput & OauthBanOptions & { server: CorpSchema.CatalogServer },
+): boolean {
+  return input.server.mode === "native" && banActive(input)
 }
 
 /**
@@ -418,7 +429,7 @@ export function connectMode(input: ConnectInput & OauthBanOptions): CorpSchema.C
   // Строка 2 спрашивает тот же предикат, что строка «в» таблицы S-V28 п.1 (п.7), — через общий
   // признак уровня карточки: при действующем запрете строка не срабатывает и выбор идёт дальше —
   // до строки 4.
-  if (server.mode === "native") return nativeConnectDisabled(input) ? "none" : "native"
+  if (server.mode === "native") return nativeConnectDisabled({ ...input, server }) ? "none" : "native"
   if (server.mode === "facade" && input.hubConfigured !== false) return "facade"
   return "none"
 }
@@ -440,7 +451,10 @@ export function connectModeUnavailableCode(
 ): CorpSchema.ConnectModeUnavailableCode | null {
   if (connectMode(input) !== "none") return null
   const server = input.server
-  if (nativeConnectDisabled(input)) return "oauth_disabled"
+  // Карточки нет — строка «б» неприменима: код причины описывает карточку, а её нет. Ответ идёт в
+  // строку «г» (`no_method`), как и прежде: это **предъявление**, а не охранник, и запрещать здесь
+  // нечего — вход в браузерный шаг закрывают роуты (S-V28 п.5), а не текст причины.
+  if (server !== undefined && nativeConnectDisabled({ ...input, server })) return "oauth_disabled"
   if (server?.mode === "facade" && input.hubConfigured === false) return "facade_needs_hub"
   return "no_method"
 }

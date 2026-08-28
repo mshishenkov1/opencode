@@ -60,11 +60,11 @@ export class CorpBadRequestError extends Schema.ErrorClass<CorpBadRequestError>(
 ) {}
 
 /**
- * Ошибка запроса прямого подключения (S-V25 п.1, строки 2 и 5).
+ * Ошибка запроса прямого подключения (S-V25 п.1, строки 2, 4 и 6).
  *
- * Строки 2 и 5 таблицы дают один и тот же код и различаются только моментом срабатывания — это не
- * два разных исхода, и различать их пользователю не требуется. `message` называет, что именно не
- * годится в запросе; текста целевой системы в нём нет.
+ * Строки 2, 4 и 6 таблицы дают один и тот же код и различаются только моментом срабатывания — это
+ * не три разных исхода, и различать их пользователю не требуется. `message` называет, что именно
+ * не годится в запросе; текста целевой системы в нём нет.
  */
 export class CorpInvalidRequestError extends Schema.ErrorClass<CorpInvalidRequestError>("CorpInvalidRequestError")(
   { error: Schema.Literal("invalid_request"), message: Schema.String },
@@ -96,7 +96,7 @@ export class CorpAuthMethodUnavailableError extends Schema.ErrorClass<CorpAuthMe
   { httpApiStatus: 409 },
 ) {}
 
-/** У карточки не разобран блок `upstream` — прямым режимом она не подключается (S-V25 п.1, строка 4). */
+/** У карточки не разобран блок `upstream` — прямым режимом она не подключается (S-V25 п.1, строка 5). */
 export class CorpDirectUnavailableError extends Schema.ErrorClass<CorpDirectUnavailableError>(
   "CorpDirectUnavailableError",
 )({ error: Schema.Literal("direct_unavailable"), message: Schema.String }, { httpApiStatus: 409 }) {}

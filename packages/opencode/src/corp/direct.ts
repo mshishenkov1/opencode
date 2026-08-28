@@ -159,8 +159,14 @@ export async function exchange(
     options,
   )
   if (!answer) return { result: "exchange_unreachable" }
-  if (answer.status === 401 || answer.status === 403) return { result: "exchange_denied" }
-  if (answer.status !== spec.expect_status) return { result: "exchange_failed" }
+  // Порядок тот же, что в `verify()`: сперва сравнение с `expect_status`, и только неподошедший код
+  // разбирается на «система сказала „нет“» (`401`/`403`) и «ответ был, толку нет». Строка
+  // `exchange_failed` таблицы S-V25 п.5 говорит про «любой другой **неподошедший** код» — значит
+  // подошедший код исходом-неуспехом не бывает, и способ, объявивший `exchange.expect_status: 401`,
+  // получает `exchanged`, а не `exchange_denied`. На умолчании (`200`) и на любом `expect_status`
+  // вне пары `401`/`403` поведение прежнее.
+  if (answer.status !== spec.expect_status)
+    return { result: answer.status === 401 || answer.status === 403 ? "exchange_denied" : "exchange_failed" }
   const issued = readField(answer.text, spec.token_field)
   // Подошедший код, из тела которого не удалось прочитать непустой `token_field`, — тот же исход
   // «ответ был, толку нет»: выпущенного токена у нас всё равно нет.

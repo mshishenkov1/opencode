@@ -1119,8 +1119,15 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // записи `mcp.<alias>` и до единого исходящего запроса — ни discovery, ни DCR, ни
       // `authorize`, ни `token`, ни открытия браузера. Запрос, посланный мимо интерфейса, получает
       // тот же отказ, что и кнопка: запрет программный, а не косметический.
+      //
+      // Спрашивается **признак** `nativeConnectDisabled` (S-V28 п.2, п.7), а не производный от него
+      // код причины карточки: `connect_mode_unavailable_code` равен `null` у любой карточки, чей
+      // `connect_mode` вычислился не в `"none"`, — в том числе у `native`-карточки с разобранным
+      // `upstream` и доступным способом `user_token` (строка 1 таблицы S-V7 даёт `"direct"`).
+      // Охранник на коде причины такую карточку пропускал бы к шагу 2 S-V7, то есть к штатному
+      // MCP OAuth с браузером. У предиката пути стать `null` нет.
       const connectInput = { server, hubConfigured: addr.hub !== undefined }
-      if (CorpStatus.connectModeUnavailableCode(connectInput) === "oauth_disabled")
+      if (CorpStatus.nativeConnectDisabled(connectInput))
         return yield* new CorpAuthMethodUnavailableError({
           error: "auth_method_unavailable",
           unavailable_code: "oauth_disabled",
@@ -1383,15 +1390,19 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       }
       yield* dropMemo(addr)
 
-      // S-V28 п.5, третья строка (микроревизия 1.13.1): у карточки, чей
-      // `connect_mode_unavailable_code` равен `oauth_disabled`, шаг 2 правила S-V7 **не
-      // запускается** — браузер не открывается и ни одного исходящего запроса по OAuth-адресам
-      // MCP-сервера нет. Ответ при этом прежний и несёт `reauth_required: true`: причину экран
-      // берёт из `connect_mode_unavailable_code` карточки, которая у него уже есть. Запись прав в
-      // Hub выполнена выше — закрыт **браузерный шаг**, а не выбор пресета.
-      const oauthClosed =
-        CorpStatus.connectModeUnavailableCode({ ...(server === undefined ? {} : { server }), hubConfigured: true }) ===
-        "oauth_disabled"
+      // S-V28 п.5, третья строка (микроревизия 1.13.1): у карточки, закрытой запретом, шаг 2
+      // правила S-V7 **не запускается** — браузер не открывается и ни одного исходящего запроса по
+      // OAuth-адресам MCP-сервера нет. Ответ при этом прежний и несёт `reauth_required: true`:
+      // причину экран берёт из `connect_mode_unavailable_code` карточки, которая у него уже есть.
+      // Запись прав в Hub выполнена выше — закрыт **браузерный шаг**, а не выбор пресета.
+      //
+      // Признак тот же и спрашивается так же, как в `connect`: `nativeConnectDisabled`, а не
+      // производный код причины карточки, у которого есть путь стать `null` при `connect_mode`,
+      // вычисленном не в `"none"` (см. охранник `connect`).
+      const oauthClosed = CorpStatus.nativeConnectDisabled({
+        ...(server === undefined ? {} : { server }),
+        hubConfigured: true,
+      })
       if (reauth && !oauthClosed) {
         yield* mcpSvc.authenticate(alias).pipe(Effect.catch(() => Effect.void))
       }

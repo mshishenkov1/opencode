@@ -288,7 +288,8 @@ export function oauthScope(server: Pick<CorpSchema.CatalogServer, "alias" | "mod
  * Действует ли запрет OAuth-путей подключения (S-V28 п.7, D-62).
  *
  * **Одна** чистая функция без аргументов, и её спрашивают ровно две точки: строка «в» таблицы
- * S-V28 п.1 (способ `type:"oauth2"`) и строка «б» таблицы S-V28 п.2 (режим `mode:"native"`).
+ * S-V28 п.1 (способ `type:"oauth2"`) — через {@link methodAvailability} — и признак уровня
+ * карточки S-V28 п.2 (режим `mode:"native"`) — через {@link nativeConnectDisabled}.
  * Второго условия, второго флага и второй переменной сборки нет: когда OAuth-приложения целевых
  * систем будут выданы, запрет снимается изменением **этой** функции и ничем больше — ни экраны,
  * ни роуты, ни словари, ни контракт каталога править не требуется.
@@ -371,6 +372,32 @@ export function authMethods(
 }
 
 /**
+ * Закрыта ли карточка запретом OAuth-путей **на уровне режима** (S-V28 п.2, п.5, п.7).
+ *
+ * Это и есть тот признак уровня карточки, который называет S-V28 п.2: «`mode: "native"` **и**
+ * запрет действует». Он считается **здесь и только здесь**, а `connectMode` (строка 2 таблицы
+ * S-V7), `connectModeUnavailableCode` (строка «б» таблицы S-V28 п.2) и охранники корп-роутов
+ * (S-V28 п.5) его **спрашивают** — второй копии условия в коде нет (S-V28 п.3).
+ *
+ * **Почему роут спрашивает этот признак, а не `connectModeUnavailableCode`.** Код причины —
+ * величина **производная**: по строке «а» таблицы S-V28 п.2 он равен `null` у любой карточки, чей
+ * `connect_mode` вычислился не в `"none"`. У `native`-карточки, где разобран блок `upstream` и
+ * есть доступный способ `user_token`, строка 1 таблицы S-V7 даёт `"direct"` — и код причины
+ * становится `null` на карточке, которую запрет закрывает. Охранник, спрашивающий код причины,
+ * на такой карточке молча пропускает браузерный шаг S-V7; охранник, спрашивающий **этот**
+ * предикат, пути стать `null` не имеет. Такую форму данных Hub не выпускает (R-U8.1 п.4:
+ * `user_token` при `mode: "native"` запрещён схемой), но статический каталог (S-C10 п.3) пишется
+ * руками, а S-V24 п.6 запрещает опираться на добросовестность источника.
+ *
+ * Поле `connect_mode_unavailable_code` при этом **не меняется**: у `direct`-карточки оно
+ * по-прежнему `null` (строка «а» обязательна — форма ввода токена на такой карточке работает и
+ * запретом не закрыта: прямое подключение браузера не открывает и OAuth не касается).
+ */
+export function nativeConnectDisabled(input: ConnectInput & OauthBanOptions): boolean {
+  return input.server?.mode === "native" && banActive(input)
+}
+
+/**
  * Способ подключения карточки (S-V7, таблица ревизии 1.13). Порядок строк — порядок проверок:
  * 1) разобран `upstream` **и** есть хотя бы один доступный способ `user_token` → `"direct"`;
  * 2) иначе `mode: "native"` **и** запрет OAuth снят → `"native"`;
@@ -388,9 +415,10 @@ export function connectMode(input: ConnectInput & OauthBanOptions): CorpSchema.C
     upstream !== undefined &&
     authMethods(input).some((entry) => entry.method.type === "user_token" && entry.availability.available)
   if (direct) return "direct"
-  // Строка 2 спрашивает тот же предикат, что строка «в» таблицы S-V28 п.1 (п.7): при действующем
-  // запрете строка не срабатывает и выбор идёт дальше — до строки 4.
-  if (server.mode === "native") return banActive(input) ? "none" : "native"
+  // Строка 2 спрашивает тот же предикат, что строка «в» таблицы S-V28 п.1 (п.7), — через общий
+  // признак уровня карточки: при действующем запрете строка не срабатывает и выбор идёт дальше —
+  // до строки 4.
+  if (server.mode === "native") return nativeConnectDisabled(input) ? "none" : "native"
   if (server.mode === "facade" && input.hubConfigured !== false) return "facade"
   return "none"
 }
@@ -412,7 +440,7 @@ export function connectModeUnavailableCode(
 ): CorpSchema.ConnectModeUnavailableCode | null {
   if (connectMode(input) !== "none") return null
   const server = input.server
-  if (server?.mode === "native" && banActive(input)) return "oauth_disabled"
+  if (nativeConnectDisabled(input)) return "oauth_disabled"
   if (server?.mode === "facade" && input.hubConfigured === false) return "facade_needs_hub"
   return "no_method"
 }

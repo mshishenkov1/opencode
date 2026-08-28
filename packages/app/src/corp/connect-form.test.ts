@@ -207,12 +207,35 @@ describe("dialog-connector — разметка: oauth_disabled рисует д�
 
   test("AC-341: кнопка «Подключить» отрисована с disabled по connect_mode_unavailable_code === \"oauth_disabled\"", () => {
     expect(statusBlock).toContain('data-action="corp-connect"')
-    expect(statusBlock).toContain('entry().connect_mode_unavailable_code === "oauth_disabled"')
+    // Утверждение привязано к самому атрибуту `disabled=`, а не к произвольному месту в срезе:
+    // та же подстрока встречается ещё раз ниже, в условии `<Show>` причины недоступности — там она
+    // ничего не доказывает про активность кнопки. Приём — как в TUI-близнеце AC-344
+    // (dialog-connectors.test.ts), который проверяет `disabled: () => …` дословно у самой строки
+    // меню, а не где-то в срезе исходника.
+    const buttonAt = statusBlock.indexOf('data-action="corp-connect"')
+    expect(buttonAt).toBeGreaterThan(-1)
+    const disabledAt = statusBlock.indexOf("disabled={", buttonAt)
+    expect(disabledAt, "у кнопки corp-connect нет атрибута disabled=").toBeGreaterThan(-1)
+    let depth = 0
+    let end = -1
+    for (let index = disabledAt + "disabled=".length; index < statusBlock.length; index++) {
+      if (statusBlock[index] === "{") depth += 1
+      else if (statusBlock[index] === "}") {
+        depth -= 1
+        if (depth === 0) {
+          end = index
+          break
+        }
+      }
+    }
+    expect(end, "атрибут disabled= не закрыт").toBeGreaterThan(-1)
+    const disabledValue = statusBlock.slice(disabledAt, end + 1)
+    expect(disabledValue).toContain('entry().connect_mode_unavailable_code === "oauth_disabled"')
+
     // Кнопка — ВНУТРИ общего условия по actions.includes("connect"/"reconnect"), а не спрятана за
     // отдельной проверкой oauth_disabled: у native-карточки "connect" остаётся в actions (S-V16
     // не тронут), поэтому кнопка присутствует и лишь неактивна — не исчезает.
     const connectShow = statusBlock.indexOf('entry().actions.includes("connect") || entry().actions.includes("reconnect")')
-    const buttonAt = statusBlock.indexOf('data-action="corp-connect"')
     expect(connectShow).toBeGreaterThan(-1)
     expect(buttonAt).toBeGreaterThan(connectShow)
   })

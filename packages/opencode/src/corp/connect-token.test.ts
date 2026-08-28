@@ -823,6 +823,105 @@ describe("connect-token — запрет native (S-V28, микроревизия
   )
 })
 
+/**
+ * BLK-1 (review-i4-rev113-1): сторож на этот дефект отсутствовал ни в одном из 1289 тестов сборки —
+ * ни один не бил по карточке `mode:"native"` с разобранным `upstream` **и** доступным способом
+ * `user_token`. Такую форму данных Hub не выпускает (R-U8.1 п.4: `user_token` при `mode:native`
+ * запрещён его схемой), но статический каталог (S-C10 п.3) пишется руками, а S-V24 п.6 запрещает
+ * клиенту опираться на добросовестность источника.
+ *
+ * На такой карточке строка 1 таблицы S-V7 сильнее строки 2: `connect_mode` вычисляется в
+ * `"direct"`, и производный `connect_mode_unavailable_code` поэтому равен `null` (строка «а»
+ * таблицы S-V28 п.2). Охранник роута, спрашивающий этот ПРОИЗВОДНЫЙ код причины, такую карточку
+ * пропускал бы к штатному MCP OAuth с браузером — ровно это ревью и воспроизвело временным тестом
+ * через настоящий роут (POST /connect → 200, mcp.<alias> записан, mcp.add и mcp.authenticate
+ * вызваны). Оба роута теперь спрашивают признак `nativeConnectDisabled` напрямую — по
+ * `server.mode === "native"` — у которого пути стать неверным на этой карточке нет; тесты ниже
+ * проверяют это на **настоящем** HTTP-роуте, а не на чистой функции `status.ts`.
+ */
+describe("connect-token — BLK-1: запрет native не обходится карточкой mode:native с разобранным upstream и доступным user_token (S-V7, S-V28 п.2, п.5)", () => {
+  function forbiddenNativeCard(alias: string, overrides: Record<string, unknown> = {}) {
+    const target = Harness.state.target.url
+    return nativeCard(alias, {
+      auth_methods: [tokenMethod(target)],
+      upstream: upstreamBlock(target),
+      ...overrides,
+    })
+  }
+
+  Harness.it.live(
+    'POST /connect на карточке native+direct — 409 oauth_disabled, а не штатный MCP OAuth, хотя connect_mode == "direct" и connect_mode_unavailable_code == null',
+    () =>
+      Effect.gen(function* () {
+        const alias = "native_direct_shape"
+        serveCatalog([forbiddenNativeCard(alias)])
+
+        // Подтверждаем предпосылку теста: производный код причины действительно `null` на этой
+        // карточке (иначе тест проверял бы не то, что сломалось в BLK-1: S-V7 строка 1 сильнее строки 2).
+        const precheckCatalog = yield* Harness.get(Harness.CorpPaths.catalog)
+        const precheckView = yield* Harness.body<{
+          servers: { alias: string; connect_mode: string; connect_mode_unavailable_code?: string }[]
+        }>(precheckCatalog)
+        const precheckCard = precheckView.servers.find((entry) => entry.alias === alias)!
+        expect(precheckCard.connect_mode).toBe("direct")
+        expect(precheckCard.connect_mode_unavailable_code).toBeUndefined()
+
+        const before = yield* Effect.promise(() => snapshotFiles())
+        const response = yield* Harness.post(Harness.connectRoute(alias), {})
+        expect(response.status).toBe(409)
+        const result = yield* Harness.body<{ error: string; unavailable_code: string }>(response)
+        expect(result.error).toBe("auth_method_unavailable")
+        expect(result.unavailable_code).toBe("oauth_disabled")
+
+        // Ни единого исходящего запроса, кроме получения каталога — ни discovery, ни DCR, ни
+        // authorize, ни token; браузер не открыт.
+        expect(Harness.state.target.requests.filter((request) => request.path !== "/catalog")).toEqual([])
+        expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
+        expect(Harness.state.calls).not.toContain(`add:${alias}`)
+        expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+
+        // Конфиг побайтово тот же: mcp.<alias> не создан ни штатным MCP OAuth, ни прямым режимом
+        // (прямой режим на этой карточке подключается только через POST …/connect-token, не /connect).
+        const after = yield* Effect.promise(() => snapshotFiles())
+        expect(after).toEqual(before)
+      }),
+  )
+
+  Harness.it.live(
+    "PUT /permissions на карточке native+direct с ответом Hub needs_reauth — права записаны в Hub, но повторная авторизация НЕ запущена",
+    () =>
+      Effect.gen(function* () {
+        const alias = "native_direct_shape_reauth"
+        const target = Harness.state.target
+        target.routes.set(`/api/me/connections/${alias}/permissions`, () =>
+          Harness.json({ alias, status: "needs_reauth", preset: "readwrite" }),
+        )
+        Harness.state.key = "sk-magnit-test"
+        process.env["OPENCODE_CORP_HUB_URL"] = target.url
+        serveCatalog([forbiddenNativeCard(alias)])
+
+        const response = yield* Harness.put(Harness.permissionsRoute(alias), { preset: "readwrite" })
+        expect(response.status).toBe(200)
+        const result = yield* Harness.body<{ preset: string; reauth_required: boolean }>(response)
+        expect(result.preset).toBe("readwrite")
+        // Запись прав в Hub ВЫПОЛНЕНА — запрет закрывает браузерный шаг, а не выбор пресета.
+        expect(result.reauth_required).toBe(true)
+        const sent = target.requests.find((request) => request.path === `/api/me/connections/${alias}/permissions`)
+        expect(sent?.method).toBe("PUT")
+
+        // Шаг 2 правила S-V7 НЕ запущен: ни одного запроса по OAuth-адресам, браузер не открыт,
+        // mcp.authenticate не вызван — несмотря на то, что connect_mode этой карточки "direct" и
+        // connect_mode_unavailable_code равен null.
+        const oauthRequests = target.requests.filter(
+          (request) => request.path !== "/catalog" && request.path !== `/api/me/connections/${alias}/permissions`,
+        )
+        expect(oauthRequests).toEqual([])
+        expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
+        expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+      }),
+  )
+})
+
 describe("connect-token — отзыв при «Отключить» (S-V27; AC-327, AC-328)", () => {
   Harness.it.live("AC-327: три РАЗНЫХ исхода revoke; запись хранилища удалена во всех трёх, без Hub", () =>
     Effect.gen(function* () {

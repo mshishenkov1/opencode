@@ -1241,3 +1241,242 @@ describe("connect-token — «Убрать из списка» у прямого
     }),
   )
 })
+
+/**
+ * BLK-3 (errata 1.13.5, ревью `review-i4-rev113-3`): четвёртый обход того же класса, что BLK-1/BLK-2
+ * (S-V28 п.10). `permissionsPatch` не создавал запись `mcp.<alias>`, а **изменял** её: на прямо
+ * подключённом alias `PUT …/permissions` переписывал `mcp.<alias>.oauth` с `false` на `{scope}`,
+ * снимая разоружение D-63, и роут запускал на такой записи `mcp.authenticate` — цепочку `native` в
+ * два шага мимо запрета S-V28 (S-V25 п.6б создаёт запись, upstream-роут `POST
+ * /mcp/:alias/auth/authenticate` её авторизует). Пятый путь того же класса, найденный при починке
+ * первого: после «Отключить» учётные данные удалены, но запись остаётся `{enabled:false,
+ * url:<целевая система>, oauth:false}` — признак способа подключения (`directConnected`) её уже не
+ * ловит, а `PUT permissions` при `needs_reauth` звал `authenticate` на записи с адресом целевой
+ * системы, опираясь на чужой охранник `MCP.startAuth` (`mcp/index.ts`, D-63) как на единственный.
+ *
+ * Оба следствия закрыты одним условием `CorpConnectors.oauthDisarmed` (записано один раз, S-V28
+ * п.3), которое спрашивают independently ДВЕ точки: `permissionsPatch` (два независимых отказа —
+ * `directConnected` и `oauthDisarmed(current)`, ни один не покрывает другой) и охранник браузерного
+ * шага `oauthClosed` в роуте (`directConnected || oauthDisarmed(entry) || server === undefined ||
+ * nativeConnectDisabled(...)`).
+ *
+ * AC-351 — перебор действий витрины над ОДНИМ прямо подключённым alias, плюс обязательный
+ * контрольный случай (обычная facade-карточка, где перевооружение и повторная авторизация ДОЛЖНЫ
+ * происходить — без него сторож удовлетворяла бы реализация «никогда не менять права»).
+ */
+describe("connect-token — BLK-3: «Права»/«Отключить»/«Убрать из списка» не перевооружают прямое подключение (S-V9, S-V25, S-V28, S-V29; AC-351)", () => {
+  Harness.it.live(
+    "AC-351: пять действий подряд над прямо подключённым alias — oauth остаётся РОВНО false до конца, authenticate не вызван ни разу",
+    () =>
+      Effect.gen(function* () {
+        const alias = "blk3-direct-showcase"
+        const target = Harness.state.target
+        target.routes.set("/verify", () => Harness.json({ account: "ivanov" }))
+        Harness.state.key = "sk-magnit-test"
+        process.env["OPENCODE_CORP_HUB_URL"] = target.url
+        serveCatalog([directCard(alias, target.url)])
+
+        // Предпосылка (S-V25 п.6б): alias подключён ПРЯМЫМ способом через connect-token.
+        const connected = yield* Harness.post(Harness.connectTokenRoute(alias), {
+          method: "personal_token",
+          token: "abcdef",
+        })
+        expect(connected.status).toBe(200)
+        const upstreamUrl = `${target.url}/mcp`
+        const afterConnect = yield* Effect.promise(() => Harness.globalConfig())
+        expect(afterConnect.mcp[alias]).toEqual({ type: "remote", url: upstreamUrl, enabled: true, oauth: false })
+
+        const permissionsPath = `/api/me/connections/${alias}/permissions`
+        const connectionsPath = `/api/me/connections/${alias}`
+        const setHubPermissionsResponse = (status: "needs_reauth" | "connected", preset: string) =>
+          target.routes.set(permissionsPath, () => Harness.json({ alias, status, preset }))
+
+        function expectOauthStillFalse(config: any) {
+          expect("oauth" in config.mcp[alias]).toBe(true)
+          expect(config.mcp[alias].oauth).toBe(false)
+        }
+
+        // --- (1) PUT permissions {preset:"readwrite"}, Hub needs_reauth ---
+        setHubPermissionsResponse("needs_reauth", "readwrite")
+        const run1 = yield* Harness.put(Harness.permissionsRoute(alias), { preset: "readwrite" })
+        expect(run1.status).toBe(200)
+        const result1 = yield* Harness.body<{ preset: string; reauth_required: boolean }>(run1)
+        expect(result1.preset).toBe("readwrite")
+        expect(result1.reauth_required).toBe(true)
+        expect(target.requests.filter((request) => request.path === permissionsPath)).toHaveLength(1)
+        expectOauthStillFalse(yield* Effect.promise(() => Harness.globalConfig()))
+        expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+
+        // --- (2) PUT permissions {preset:"readonly"}, Hub {status:"connected"} — ОТДЕЛЬНО от (1):
+        // перевооружение шло и без повторной авторизации; реализация, закрывшая только браузерный
+        // шаг, обязана краснеть здесь.
+        setHubPermissionsResponse("connected", "readonly")
+        const run2 = yield* Harness.put(Harness.permissionsRoute(alias), { preset: "readonly" })
+        expect(run2.status).toBe(200)
+        const result2 = yield* Harness.body<{ preset: string; reauth_required: boolean }>(run2)
+        expect(result2.preset).toBe("readonly")
+        expect(result2.reauth_required).toBe(false)
+        expect(target.requests.filter((request) => request.path === permissionsPath)).toHaveLength(2)
+        expectOauthStillFalse(yield* Effect.promise(() => Harness.globalConfig()))
+        expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+
+        // --- (3) POST disconnect — действие ОБЯЗАНО работать (200, поля как в AC-62/AC-327). Hub-шага
+        // у прямого подключения нет вовсе (S-V27 п.1): учётные данные ещё есть в этом самом вызове.
+        const run3 = yield* Harness.post(Harness.disconnectRoute(alias))
+        expect(run3.status).toBe(200)
+        const result3 = yield* Harness.body<{ status: string; revoke?: string }>(run3)
+        expect(result3.status).toBe("not_connected")
+        const afterDisconnect = yield* Effect.promise(() => Harness.globalConfig())
+        expectOauthStillFalse(afterDisconnect)
+        expect(afterDisconnect.mcp[alias].enabled).toBe(false)
+        expect(afterDisconnect.mcp[alias].url).toBe(upstreamUrl)
+        const store = yield* Effect.promise(() => Harness.credentialsFileText())
+        expect(store === undefined || !store.includes(`"${alias}"`)).toBe(true)
+        expect(target.requests.filter((request) => request.path === connectionsPath)).toEqual([])
+        expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+
+        // --- (4) PUT permissions ПОСЛЕ отключения, снова needs_reauth — ОТДЕЛЬНО от (1): признак
+        // способа подключения здесь отвечает «не прямое» (учётные данные удалены шагом (3)), запись
+        // держится только собственным oauth===false (S-V9, D-64) — и это условие закрывает не
+        // только патч, но и браузерный шаг.
+        setHubPermissionsResponse("needs_reauth", "readwrite")
+        const run4 = yield* Harness.put(Harness.permissionsRoute(alias), { preset: "readwrite" })
+        expect(run4.status).toBe(200)
+        const result4 = yield* Harness.body<{ preset: string; reauth_required: boolean }>(run4)
+        expect(result4.reauth_required).toBe(true)
+        expect(target.requests.filter((request) => request.path === permissionsPath)).toHaveLength(3)
+        expectOauthStillFalse(yield* Effect.promise(() => Harness.globalConfig()))
+        expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+
+        // --- (5) DELETE /corp/connectors/:alias — «Убрать из списка» ОБЯЗАНО работать. Учётных
+        // данных уже нет с шага (3): признак способа отвечает «не прямое», и на этом шаге Hub
+        // получает штатный (необязательный) запрос удаления связи — тот же путь, что и у ЛЮБОГО
+        // alias без прямых учётных данных (AC-176); ответ ему не нужен для локальных шагов.
+        target.routes.set(connectionsPath, () => Harness.json({ alias, status: "not_connected" }))
+        const run5 = yield* Harness.del(Harness.forgetRoute(alias))
+        expect(run5.status).toBe(200)
+        const result5 = yield* Harness.body<{ removed: boolean; hub_error?: string }>(run5)
+        expect(result5.removed).toBe(true)
+        expect(result5.hub_error).toBeUndefined()
+        const afterForget = yield* Effect.promise(() => Harness.globalConfig())
+        expect(afterForget.mcp?.[alias]).toBeUndefined()
+        expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+
+        // --- Итог по всему прогону: браузер не открыт ни разу, ни одного запроса по OAuth-адресам
+        // MCP-сервера (discovery, DCR, authorize, token) — только каталог, verify и обращения к Hub,
+        // которые сам прогон и сделал.
+        expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
+        const oauthRequests = target.requests.filter(
+          (request) => !["/catalog", "/verify", permissionsPath, connectionsPath].includes(request.path),
+        )
+        expect(oauthRequests).toEqual([])
+      }),
+  )
+
+  /**
+   * Обязательный контрольный случай (AC-351, then): без него сторож удовлетворяла бы реализация
+   * «никогда не менять права и не звать authenticate» — она проходит весь прогон выше нулём записей
+   * и нулём вызовов, ничего не проверяя по существу. Карточка здесь — штатная `facade` БЕЗ
+   * `upstream` и БЕЗ `user_token`: `directConnected` ложен, запись создаётся `connectPatch`
+   * (`oauth.scope`, не `oauth:false`), и `oauthDisarmed` тоже ложен. Перевооружение и повторная
+   * авторизация здесь ОБЯЗАНЫ произойти.
+   */
+  Harness.it.live(
+    "контроль AC-351: обычная facade-карточка без upstream/user_token, Hub needs_reauth — oauth.scope перевооружается, authenticate вызван",
+    () =>
+      Effect.gen(function* () {
+        const alias = "blk3-control-facade"
+        const target = Harness.state.target
+        Harness.state.key = "sk-magnit-test"
+        process.env["OPENCODE_CORP_HUB_URL"] = target.url
+        serveCatalog([
+          {
+            alias,
+            title: alias,
+            status: "beta",
+            mode: "facade",
+            mcp_url: `${target.url}/mcp-proxy/${alias}`,
+            permission_model: { kind: "consent", presets: { default: "Экран согласия" } },
+          },
+        ])
+
+        const connected = yield* Harness.post(Harness.connectRoute(alias), {})
+        expect(connected.status).toBe(200)
+        Harness.state.calls = []
+
+        target.routes.set(`/api/me/connections/${alias}/permissions`, () =>
+          Harness.json({ alias, status: "needs_reauth", preset: "readwrite" }),
+        )
+        const response = yield* Harness.put(Harness.permissionsRoute(alias), { preset: "readwrite" })
+        expect(response.status).toBe(200)
+        const result = yield* Harness.body<{ reauth_required: boolean }>(response)
+        expect(result.reauth_required).toBe(true)
+        expect(Harness.state.calls).toContain(`authenticate:${alias}`)
+
+        const config = yield* Effect.promise(() => Harness.globalConfig())
+        expect(config.mcp[alias].oauth).toEqual({ scope: `${alias}:readwrite` })
+      }),
+  )
+
+  /**
+   * Признак `directConnected` независим от `oauthDisarmed` (S-V28 п.5): штатный поток connect-token
+   * пишет учётные данные и `oauth:false` ДВУМЯ отдельными шагами — (а) `CorpCredentials.save`,
+   * ЗАТЕМ (б) `configSvc.updateGlobal(directConnectPatch(...))`. Если шаг (б) не выполнится (диск
+   * недоступен для записи ровно в этот момент — тот же приём, что у AC-324/AC-325 выше, только на
+   * `Global.Path.config`, а не на `Global.Path.data`), учётные данные остаются сохранёнными, а
+   * `mcp.<alias>` не появляется вовсе: `entry` для этого alias — `undefined`, и `oauthDisarmed
+   * (undefined)` ложно (условие явно требует `entry !== undefined`). Единственное, что здесь
+   * закрывает браузерный шаг, — признак СПОСОБА подключения (`directConnected`, по наличию
+   * учётных данных, а не по записи конфига).
+   */
+  Harness.it.live(
+    "AC-351 (доп.): признак directConnected нужен отдельно от oauthDisarmed — учётные данные есть, а mcp.<alias> нет вовсе",
+    () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return // fs.chmod на Windows переключает только read-only
+        const alias = "blk3-config-write-failed"
+        const target = Harness.state.target
+        target.routes.set("/verify", () => Harness.json({ account: "ivanov" }))
+        Harness.state.key = "sk-magnit-test"
+        process.env["OPENCODE_CORP_HUB_URL"] = target.url
+        serveCatalog([directCard(alias, target.url)])
+
+        // Тот же приём, что у AC-324 (`fs.chmod` на файле, который `connectToken` пишет), но на
+        // ФАЙЛЕ глобального конфига: шаг (а) (сохранение учётных данных) успевает пройти раньше,
+        // шаг (б) (патч `mcp.<alias>`) падает на этом же файле. Права каталога здесь не годятся
+        // (0o500 на директории не мешает ПЕРЕЗАПИСИ уже существующего файла) — нужен файл.
+        const configFile = path.join(Global.Path.config, "opencode.json")
+        yield* Effect.promise(() => fs.chmod(configFile, 0o400))
+        const connectResponse = yield* Harness.post(Harness.connectTokenRoute(alias), {
+          method: "personal_token",
+          token: "abcdef",
+        })
+        // Восстанавливаем права СРАЗУ после действия, которое должно было упасть на записи, —
+        // дальнейшие шаги теста (включая cleanup) пишут в этот же файл штатно.
+        yield* Effect.promise(() => fs.chmod(configFile, 0o600))
+        expect(connectResponse.status).not.toBe(200)
+
+        // Предпосылка теста подтверждена явно: учётные данные ЕСТЬ, записи `mcp.<alias>` — НЕТ.
+        const store = yield* Effect.promise(() => Harness.credentialsFileText())
+        expect(store).toContain(`"${alias}"`)
+        const config = yield* Effect.promise(() => Harness.globalConfig())
+        expect(config.mcp?.[alias]).toBeUndefined()
+
+        target.routes.set(`/api/me/connections/${alias}/permissions`, () =>
+          Harness.json({ alias, status: "needs_reauth", preset: "readwrite" }),
+        )
+        const response = yield* Harness.put(Harness.permissionsRoute(alias), { preset: "readwrite" })
+        expect(response.status).toBe(200)
+
+        // Способ подключения (учётные данные) один решает исход: authenticate не вызван, несмотря
+        // на то, что записи `mcp.<alias>` нет вовсе — `oauthDisarmed(undefined)` на этой форме
+        // солгала бы «не закрыто», реши эту форму только он.
+        expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+        expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
+
+        // Запись прав в Hub всё равно выполнена — закрыт браузерный шаг, а не выбор пресета.
+        const sent = target.requests.find((request) => request.path === `/api/me/connections/${alias}/permissions`)
+        expect(sent?.method).toBe("PUT")
+      }),
+  )
+})

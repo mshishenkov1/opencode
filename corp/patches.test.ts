@@ -203,4 +203,19 @@ describe("corp/patches.md — реестр правок upstream (AC-13, AC-108,
     expect(git(["rev-parse", "--verify", `${base}^{commit}`]).trim()).toMatch(/^[0-9a-f]{40}$/)
     expect(markdown).toContain(base)
   })
+
+  /**
+   * S-V28 п.5, AC-345 (ревизия 1.13): запрет OAuth живёт в корп-роутах и корп-коде, а не в upstream.
+   * Файл, содержащий роут `POST /mcp/:A/auth/authenticate` (F13/F15), и `packages/opencode/src/mcp/auth.ts`
+   * НЕ изменены в диффе ветки относительно базового тега. Критерия «запрос по upstream-роуту тоже
+   * отвечает 409» здесь нет намеренно — на верной реализации, не трогающей upstream, такой тест
+   * краснел бы (S-V28 п.5, спецификация).
+   */
+  test("AC-345: файлы upstream-роута authenticate не изменены; в реестре нет записей о S-V28", () => {
+    const changed = new Set(changedUpstreamFiles(git(["diff", "--name-status", `${base}...HEAD`])))
+    expect(changed.has("packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts")).toBe(false)
+    expect(changed.has("packages/opencode/src/mcp/auth.ts")).toBe(false)
+
+    for (const row of rows(markdown)) expect(row.rule, row.file).not.toContain("S-V28")
+  })
 })

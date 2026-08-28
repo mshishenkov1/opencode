@@ -220,3 +220,71 @@ describe("corp/catalog-cache — принятые карточки и досло
     )
   })
 })
+
+/**
+ * `auth_methods`/`upstream` и `mode:"native"` в кэше — дословно, включая неразобранные элементы
+ * (S-V24 п.5, S-V28 п.6, ревизия 1.13; AC-307, AC-338).
+ */
+describe("corp/catalog-cache — дословное хранение ревизии 1.13 (AC-307, AC-338)", () => {
+  test("AC-307: auth_methods и upstream переживают запись и чтение кэша ДОСЛОВНО, включая неразобранный элемент", async () => {
+    const dir = await dataDir()
+    const card = {
+      alias: "svc",
+      title: "Служба",
+      status: "beta" as const,
+      mode: "facade" as const,
+      mcp_url: `${HUB}/mcp/svc`,
+      auth_methods: [
+        { id: "corp_oauth", title: "OAuth", type: "oauth2", available: true },
+        { id: "unparsed", weird: ["shape", 1, null] }, // ядро не разобрано этой версией клиента
+        {
+          id: "personal_token",
+          title: "Токен",
+          type: "user_token",
+          field: { label: "Токен", secret: true, min_length: 4 },
+          verify: { url: "https://target.test/verify", method: "GET" },
+          exchange: { url: "https://target.test/exchange", token_field: "access_token", revoke: { url: "https://target.test/revoke" } },
+        },
+      ],
+      upstream: {
+        url: "https://target.test/mcp",
+        credential_headers: { Authorization: "Bearer {{access_token}}" },
+        static_headers: { "X-Src": "catalog" },
+      },
+    }
+    const parsedCard = CorpSchema.parseCatalogServer(card)
+    if (!parsedCard.ok) throw new Error("карточка должна быть разобрана")
+
+    await CatalogCache.write({ hubUrl: HUB, fetchedAt: 1, version: "v1", servers: [parsedCard.server] }, dir)
+    const entry = await CatalogCache.read(HUB, dir)
+    const cached = entry?.servers[0]!
+
+    expect(cached.auth_methods).toEqual(card.auth_methods)
+    expect(cached.upstream).toEqual(card.upstream)
+    // Введённого пользователем токена в файле кэша нет ни в каком виде — в карточке его и не было.
+    const raw = JSON.parse(await fs.readFile(CatalogCache.fileFor(HUB, dir), "utf8"))
+    expect(JSON.stringify(raw)).not.toContain("access_token_value")
+
+    // Неразобранный элемент по-прежнему отбрасывается ТОЛЬКО поэлементным разбором на чтении, но
+    // хранится дословно и остаётся доступным для будущей версии клиента, которая его поймёт.
+    expect(CorpSchema.parseAuthMethods(cached.auth_methods).map((method) => method.id)).toEqual([
+      "corp_oauth",
+      "personal_token",
+    ])
+  })
+
+  test("AC-338: карточка mode:\"native\" переживает перезапуск — mode остаётся \"native\", не подменён на facade", async () => {
+    const dir = await dataDir()
+    const card = server("native_srv")
+    const nativeCard = { ...card, mode: "native" as const }
+    const parsedCard = CorpSchema.parseCatalogServer(nativeCard)
+    if (!parsedCard.ok) throw new Error("карточка должна быть разобрана")
+
+    await CatalogCache.write({ hubUrl: HUB, fetchedAt: 1, version: "v1", servers: [parsedCard.server] }, dir)
+    const entry = await CatalogCache.read(HUB, dir)
+
+    expect(entry?.servers).toHaveLength(1)
+    expect(entry?.servers[0]!.mode).toBe("native")
+    expect(entry?.servers[0]!.alias).toBe("native_srv")
+  })
+})

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
 import * as CorpConnectors from "./connectors"
+import * as CorpCredentials from "./credentials"
 import * as CorpSchema from "./schema"
 import * as CorpStatus from "./status"
 import { liveCatalogBody, liveTagCard } from "../../test/fixture/corp-hub-live"
@@ -624,5 +625,226 @@ describe("corp/connectors — диагностика отброшенных ка
     expect(JSON.stringify(catalog.dropped)).not.toContain(secret)
     for (const entry of catalog.dropped)
       expect(Object.keys(entry).sort()).toEqual(entry.alias === undefined ? ["reason"] : ["alias", "reason"])
+  })
+})
+
+/**
+ * Разбор `auth_methods`/`upstream` и запрет OAuth (S-V24, S-V28, ревизия 1.13; AC-303…AC-310,
+ * AC-314, AC-338, AC-342).
+ *
+ * Роут `GET /corp/catalog` не поднимается — способ, доступность и `connect_mode` считают чистые
+ * функции `CorpSchema.parseAuthMethods`/`parseUpstream` и `CorpStatus.authMethods`/`connectMode`/
+ * `connectModeUnavailableCode`, общие для роута, Desktop и TUI (S-V28 п.3). То, что роут добавляет
+ * сверху (has_credentials, конверт ответа), — предмет `connect-token.test.ts` (интеграционные AC).
+ */
+
+const oauthMethodRaw = { id: "corp_oauth", title: "Корпоративная авторизация", type: "oauth2" }
+const tokenMethodRaw = {
+  id: "personal_token",
+  title: "Личный токен",
+  type: "user_token",
+  field: { label: "Токен" },
+  verify: { url: "https://target.test/verify" },
+}
+const upstreamRaw = {
+  url: "https://target.test/mcp",
+  credential_headers: { Authorization: "Bearer {{access_token}}" },
+}
+
+function directServerFixture(overrides: Record<string, unknown> = {}) {
+  const card = {
+    alias: "svc",
+    title: "Служба",
+    status: "beta",
+    mode: "facade",
+    mcp_url: "https://hub.test/mcp/svc",
+    permission_model: { kind: "consent", presets: { default: "x" } },
+    auth_methods: [oauthMethodRaw, tokenMethodRaw],
+    upstream: upstreamRaw,
+    ...overrides,
+  }
+  return parsed({ version: 1, servers: [card] }).servers[0]!
+}
+
+describe("corp/schema + corp/status — разбор auth_methods/upstream (S-V24; AC-303…AC-309)", () => {
+  test("AC-303: оба способа разобраны, connect_mode direct, verify/exchange/revoke/credential_headers наружу не уходят", () => {
+    const server = directServerFixture()
+    const connect = { server, hubConfigured: true }
+    const views = CorpStatus.authMethodViews(connect)
+
+    expect(views).toHaveLength(2)
+    expect(views.map((view) => [view.id, view.title, view.type])).toEqual([
+      ["corp_oauth", "Корпоративная авторизация", "oauth2"],
+      ["personal_token", "Личный токен", "user_token"],
+    ])
+    const dump = JSON.stringify(views)
+    expect(dump).not.toContain("verify")
+    expect(dump).not.toContain("exchange")
+    expect(dump).not.toContain("revoke")
+    expect(dump).not.toContain("credential_headers")
+
+    expect(CorpStatus.connectMode(connect)).toBe("direct")
+
+    // has_credentials (S-V24 п.7) — без сохранённой записи хранилища признак ложный; это та же
+    // функция, которой роут вычисляет поле has_credentials ответа.
+    const upstream = CorpSchema.parseUpstream(server.upstream)!
+    expect(CorpCredentials.applicable(undefined, upstream.url)).toBe(false)
+  })
+
+  test("AC-304: способ с неразобранным ядром отброшен ПООДИНОЧКЕ, карточка и прочие способы остаются", () => {
+    const server = directServerFixture({
+      auth_methods: [oauthMethodRaw, { id: "broken", title: "Без type" }, tokenMethodRaw],
+    })
+    const parsedMethods = CorpSchema.parseAuthMethods(server.auth_methods)
+    expect(parsedMethods.map((method) => method.id)).toEqual(["corp_oauth", "personal_token"])
+    // Перечень ядра карточки не расширен: карточка без auth_methods и upstream принимается как прежде.
+    const bare = parsed({
+      version: 1,
+      servers: [{ alias: "bare", title: "Bare", mode: "facade", mcp_url: "https://hub.test/mcp/bare" }],
+    }).servers
+    expect(bare).toHaveLength(1)
+  })
+
+  test("AC-305: user_token без field.label или с неабсолютным verify.url отброшен, карточка осталась", () => {
+    const noLabel = CorpSchema.parseAuthMethod({
+      id: "a",
+      title: "A",
+      type: "user_token",
+      field: {},
+      verify: { url: "https://target.test/verify" },
+    })
+    expect(noLabel).toBeUndefined()
+    const badVerify = CorpSchema.parseAuthMethod({
+      id: "b",
+      title: "B",
+      type: "user_token",
+      field: { label: "Token" },
+      verify: { url: "not-a-url" },
+    })
+    expect(badVerify).toBeUndefined()
+
+    // Без других способов user_token connect_mode считается дальше по таблице S-V7 — не "direct".
+    const server = directServerFixture({
+      auth_methods: [oauthMethodRaw, { id: "b", title: "B", type: "user_token", field: { label: "T" }, verify: { url: "not-a-url" } }],
+    })
+    expect(CorpStatus.connectMode({ server, hubConfigured: true })).not.toBe("direct")
+  })
+
+  test("AC-306: карточка без upstream или с пустым credential_headers НЕ отброшена, connect_mode != direct", () => {
+    const noUpstream = directServerFixture({ upstream: undefined })
+    expect(CorpSchema.parseUpstream(noUpstream.upstream)).toBeUndefined()
+    expect(CorpStatus.connectMode({ server: noUpstream, hubConfigured: true })).not.toBe("direct")
+    expect(CorpStatus.connectMode({ server: noUpstream, hubConfigured: true })).toBe("facade")
+    expect(CorpStatus.connectMode({ server: noUpstream, hubConfigured: false })).toBe("none")
+
+    const emptyCredentialHeaders = directServerFixture({ upstream: { ...upstreamRaw, credential_headers: {} } })
+    expect(CorpSchema.parseUpstream(emptyCredentialHeaders.upstream)).toBeUndefined()
+  })
+
+  test("AC-308: available:\"yes\" (не булево) деградирует В СТОРОНУ ЗАПРЕТА — catalog_unavailable, не разрешения", () => {
+    const method = CorpSchema.parseAuthMethod({ ...tokenMethodRaw, available: "yes" })!
+    expect(method.availableInvalid).toBe(true)
+    const availability = CorpStatus.methodAvailability(method)
+    expect(availability.available).toBe(false)
+    expect(availability.unavailableCode).toBe("catalog_unavailable")
+  })
+
+  test("AC-309: env: в verify.headers или в upstream.credential_headers — способ недоступен, без подстановки", () => {
+    const envInVerify = CorpSchema.parseAuthMethod({
+      ...tokenMethodRaw,
+      verify: { url: "https://target.test/verify", headers: { "X-Tag": "env:TAG_TOKEN" } },
+    })!
+    expect(CorpStatus.methodAvailability(envInVerify).unavailableCode).toBe("env_header")
+
+    const server = directServerFixture({ upstream: { ...upstreamRaw, credential_headers: { Authorization: "env:TAG_TOKEN" } } })
+    const upstream = CorpSchema.parseUpstream(server.upstream)!
+    expect(upstream.envHeader).toBe(true)
+    // Значение не молча пропущено и не развёрнуто литералом — разбор хранит его как пришло, а
+    // признак `envHeader` — единственное, что решает недоступность (S-V24 п.6).
+    expect(upstream.credential_headers["Authorization"]).toBe("env:TAG_TOKEN")
+    const methods = CorpStatus.authMethods({ server, hubConfigured: true })
+    const tokenEntry = methods.find((entry) => entry.method.id === "personal_token")!
+    expect(tokenEntry.availability.unavailableCode).toBe("env_header")
+  })
+})
+
+describe("corp/status — запрет OAuth: разбор сохраняется, доступность закрыта (S-V28 п.1, п.6; AC-310)", () => {
+  test("AC-310: способ oauth2 РАЗОБРАН (присутствует со своими id/title/type) и одновременно НЕДОСТУПЕН", () => {
+    const server = directServerFixture()
+    const views = CorpStatus.authMethodViews({ server, hubConfigured: true })
+    const oauth = views.find((view) => view.type === "oauth2")!
+    expect(oauth).toBeDefined()
+    expect(oauth.id).toBe("corp_oauth")
+    expect(oauth.title).toBe("Корпоративная авторизация")
+    expect(oauth.available).toBe(false)
+    expect(oauth.unavailable_code).toBe("oauth_disabled")
+  })
+})
+
+describe("corp/status — снятие запрета одним предикатом, без правки экранов/роутов/словарей (S-V28 п.7; AC-314, AC-342)", () => {
+  test("AC-314: oauthDisabled:false в вызове делает oauth2 доступным; способ, закрытый каталогом, остаётся закрытым", () => {
+    const method = CorpSchema.parseAuthMethod(oauthMethodRaw)!
+    const banned = CorpStatus.methodAvailability(method)
+    expect(banned).toEqual({ available: false, unavailableCode: "oauth_disabled" })
+    const lifted = CorpStatus.methodAvailability(method, { oauthDisabled: false })
+    expect(lifted).toEqual({ available: true, unavailableCode: null })
+
+    const closedByCatalog = CorpSchema.parseAuthMethod({ ...oauthMethodRaw, available: false })!
+    expect(CorpStatus.methodAvailability(closedByCatalog, { oauthDisabled: false })).toEqual({
+      available: false,
+      unavailableCode: "catalog_unavailable",
+    })
+  })
+
+  test("AC-338: карточка mode:\"native\" разобрана (не отброшена), connect_mode none/oauth_disabled, mode сохранён дословно", () => {
+    const card = {
+      alias: "native_srv",
+      title: "Native",
+      status: "beta" as const,
+      mode: "native" as const,
+      mcp_url: "https://hub.test/mcp/native_srv",
+      permission_model: { kind: "consent", presets: { default: "x" } },
+    }
+    const catalog = parsed({ version: 1, servers: [card] })
+    expect(catalog.dropped).toEqual([])
+    const server = catalog.servers[0]!
+    expect(server.alias).toBe("native_srv")
+    expect(server.mode).toBe("native") // дословно, не подменено на "facade"
+    expect(CorpStatus.connectMode({ server, hubConfigured: true })).toBe("none")
+    expect(CorpStatus.connectModeUnavailableCode({ server, hubConfigured: true })).toBe("oauth_disabled")
+  })
+
+  test("AC-342: ОДНО снятие предиката одновременно открывает oauth2-способ И native-карточку; facade_needs_hub не отменяется", () => {
+    const oauth2 = CorpSchema.parseAuthMethod(oauthMethodRaw)!
+    const nativeServer: CorpSchema.CatalogServer = {
+      alias: "native_srv",
+      title: "Native",
+      mode: "native",
+      mcp_url: "https://hub.test/mcp/native_srv",
+      permission_model: { kind: "consent", presets: { default: "x" } },
+    }
+    const facadeNoHub: CorpSchema.CatalogServer = {
+      alias: "facade_srv",
+      title: "Facade",
+      mode: "facade",
+      mcp_url: "https://hub.test/mcp/facade_srv",
+    }
+    const closedByCatalog = CorpSchema.parseAuthMethod({ ...oauthMethodRaw, available: false })!
+
+    // Запрет действует (умолчание):
+    expect(CorpStatus.methodAvailability(oauth2).unavailableCode).toBe("oauth_disabled")
+    expect(CorpStatus.connectMode({ server: nativeServer, hubConfigured: true })).toBe("none")
+
+    // Одно изменение — oauthDisabled:false — снимает ОБА запрета согласованно:
+    const lifted = { oauthDisabled: false }
+    expect(CorpStatus.methodAvailability(oauth2, lifted)).toEqual({ available: true, unavailableCode: null })
+    expect(CorpStatus.connectMode({ server: nativeServer, hubConfigured: true, ...lifted })).toBe("native")
+    expect(CorpStatus.connectModeUnavailableCode({ server: nativeServer, hubConfigured: true, ...lifted })).toBeNull()
+
+    // Решения каталога и отсутствие Hub снятие запрета не отменяет:
+    expect(CorpStatus.methodAvailability(closedByCatalog, lifted).unavailableCode).toBe("catalog_unavailable")
+    expect(CorpStatus.connectModeUnavailableCode({ server: facadeNoHub, hubConfigured: false, ...lifted })).toBe(
+      "facade_needs_hub",
+    )
   })
 })

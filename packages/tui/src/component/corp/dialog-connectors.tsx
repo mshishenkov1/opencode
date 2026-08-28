@@ -11,6 +11,7 @@ import { rememberTitles } from "../../corp/state"
 import { useDialog } from "../../ui/dialog"
 import { DialogSelect, type DialogSelectOption, type DialogSelectRef } from "../../ui/dialog-select"
 import { useToast } from "../../ui/toast"
+import { DialogConnectToken, methodUnavailableKey, revokeKey } from "./dialog-connect-token"
 import { DialogCorpLogin } from "./dialog-corp-login"
 import { DialogCorpLogout } from "./dialog-corp-logout"
 import { DialogPermissions } from "./dialog-permissions"
@@ -77,12 +78,16 @@ function Status(props: { card: CorpCatalogCard; busy: boolean }) {
   // S-V19: ошибка показывается текстом своего класса, а не голым кодом.
   const explained = props.card.error_class ? ` · ${connectErrorText(props.card.error_class)}` : ""
   const suffix = props.card.deprecated ? ` · ${t("connectors.deprecated")}` : ""
+  // S-V28 п.4 (микроревизия 1.13.1): у закрытой карточки причина названа там же, где статус, —
+  // действие остаётся в списке неактивным, а «почему» пользователь читает, ничего не нажимая.
+  const closed = connectDisabled(props.card) ? ` · ${connectDisabledText()}` : ""
   return (
     <span style={attributes === undefined ? { fg: color } : { fg: color, attributes }}>
       {label}
       {state}
       {explained}
       {suffix}
+      {closed}
     </span>
   )
 }
@@ -137,6 +142,30 @@ export function hubConfigured(view: CorpCatalogView | undefined) {
 /** Подключение идёт через Hub-фасад, а Hub в сборке нет (S-V7, S-C10 п.8). */
 export function connectNeedsHub(card: CorpCatalogCard) {
   return card.connect_needs_hub === true
+}
+
+/**
+ * Подключение карточки закрыто программным запретом OAuth (S-V28 п.2, микроревизия 1.13.1).
+ *
+ * Признак приходит **из ответа роута**: TUI условия запрета у себя не повторяет и `connect_mode`
+ * сам не вычисляет (S-V28 п.3, S-T12). Действие при этом из списка **не исчезает** — спрятанное
+ * действие в терминале так же неотличимо от несуществующего, как и в Desktop.
+ */
+export function connectDisabled(card: CorpCatalogCard | undefined) {
+  return card?.connect_mode_unavailable_code === "oauth_disabled"
+}
+
+/** Текст причины закрытого подключения — тот же, что у способа `oauth2` (D-62, S-I4). */
+export function connectDisabledText() {
+  return t(methodUnavailableKey("oauth_disabled"))
+}
+
+/**
+ * Подключение выполняется формой ввода токена в самом приложении (S-V7 строка 1, S-V25):
+ * браузер не открывается, Hub не участвует. Способ считает сервер и присылает полем `connect_mode`.
+ */
+export function connectDirect(card: CorpCatalogCard | undefined) {
+  return card?.connect_mode === "direct"
 }
 
 /** Экран прав Hub-зависимого вида модели, а Hub в сборке нет (S-V9, S-C10 п.7). */
@@ -324,6 +353,12 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
           message: removed ? t("connectors.forgetHubFailed") : errorText(data.hub_error),
         })
       }
+      // S-V27 п.2: исход отзыва выпущенного токена — закрытый набор из четырёх значений; `skipped`
+      // не показывает ничего («звать было некого»), прочие три различимы попарно.
+      if (data && "revoke" in data && data.revoke) {
+        const key = revokeKey(data.revoke)
+        if (key) toast.show({ variant: data.revoke === "revoked" ? "info" : "warning", message: t(key) })
+      }
       if (data && "error" in data && data.error) {
         // S-V19: рядом с кодом ошибки — объяснение её класса и предлагаемое действие.
         const explained = "error_class" in data && data.error_class ? connectErrorText(data.error_class) : undefined
@@ -503,6 +538,15 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
   }
 
   /**
+   * Форма прямого подключения токеном (S-T12, S-V25) — тот же роут и то же тело, что в Desktop.
+   * Экран открывается `dialog.replace`, как и прочие корп-экраны: стека диалогов в терминале нет.
+   */
+  function openConnectToken(card: CorpCatalogCard) {
+    const exit = leaving(() => backToList(card.alias))
+    dialog.replace(() => <DialogConnectToken card={card} onDone={exit.done} />, exit.done)
+  }
+
+  /**
    * Страница коннектора (S-D11) — `dialog.replace` вместо стека: стека диалогов в терминале нет
    * (S-T10). `esc` закрывает страницу и возвращает витрину тем же состоянием, из которого ушли.
    */
@@ -519,6 +563,8 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
           permissions={openPermissions}
           openHub={openHub}
           open={openConnector}
+          connectToken={openConnectToken}
+          notify={(message) => toast.show({ variant: "warning", message })}
         />
       ),
       exit.done,
@@ -680,8 +726,15 @@ export function DialogConnectors(props: { restore?: ConnectorsRestore }) {
           command: "dialog.corp.connect",
           // S-V16: «Повторить» в состоянии 3 честно называет, что попытка уже была.
           title: current()?.actions.includes("reconnect") ? t("connectors.retry") : t("connectors.connect"),
-          disabled: (option) => !allows(option?.value, "connect"),
-          onTrigger: (option) => void act(option.value, "connect"),
+          // S-V28 п.4: у закрытой карточки строка действия остаётся в подвале и не выбирается, а
+          // причина видна в статусе строки — прятать действие запрещено (микроревизия 1.13.1).
+          disabled: (option) => !allows(option?.value, "connect") || connectDisabled(option?.value),
+          onTrigger: (option) => {
+            // S-V7 строка 1: прямой режим открывает форму ввода токена в самом приложении —
+            // браузера в этом пути нет ни одного шага.
+            if (connectDirect(option.value)) return openConnectToken(option.value)
+            void act(option.value, "connect")
+          },
         },
         {
           command: "dialog.corp.disconnect",
@@ -773,6 +826,9 @@ type ConnectorRow =
   | "disconnect"
   | "open_hub"
   | "forget"
+  // S-V28 п.4 (микроревизия 1.13.1): строка действия «Подключить» у закрытой карточки — она
+  // присутствует и не выбирается, а не исчезает из списка.
+  | "connect_disabled"
   | "back"
 
 export interface DialogConnectorProps {
@@ -792,6 +848,10 @@ export interface DialogConnectorProps {
   permissions: (card: CorpCatalogCard, back: () => void) => Promise<void>
   openHub: (card: CorpCatalogCard) => Promise<void>
   open: (card: CorpCatalogCard) => void
+  /** Форма прямого подключения токеном (S-T12): тот же экран, что открывает витрина. */
+  connectToken: (card: CorpCatalogCard) => void
+  /** Показ причины, по которой закрытое действие ничего не делает (S-V28 п.4). */
+  notify: (message: string) => void
 }
 
 /**
@@ -826,6 +886,17 @@ export function DialogConnector(props: DialogConnectorProps) {
     if (row === "back") return props.onBack()
     // Строка причины — не действие: нажатие на неё ничего не делает, текст уже на экране.
     if (row === "connect_needs_hub") return
+    // S-V28 п.4: нажатие на закрытое действие ничего не меняет — ни конфига, ни состояния — и
+    // показывает ту же причину из словаря TUI, что стоит рядом со строкой.
+    if (row === "connect_disabled") {
+      props.notify(connectDisabledText())
+      return
+    }
+    if (row === "connect" && connectDirect(value)) {
+      // S-V7 строка 1: прямой режим — форма ввода токена в приложении, а не браузерный шаг.
+      props.onLeave()
+      return props.connectToken(value)
+    }
     if (row === "open_hub") return void props.openHub(value)
     if (row === "permissions") {
       props.onLeave()
@@ -842,10 +913,20 @@ export function DialogConnector(props: DialogConnectorProps) {
     const value = card()
     const list: DialogSelectOption<ConnectorRow>[] = []
     if (allows(value, "connect"))
-      list.push({
-        title: value.actions.includes("reconnect") ? t("connectors.retry") : t("connectors.connect"),
-        value: "connect",
-      })
+      list.push(
+        connectDisabled(value)
+          ? {
+              // Действие остаётся на месте и с прежней подписью, а причина стоит рядом с ним —
+              // в том же блоке, а не в другой части экрана (S-V28 п.4).
+              title: t("connectors.connect"),
+              value: "connect_disabled",
+              description: connectDisabledText(),
+            }
+          : {
+              title: value.actions.includes("reconnect") ? t("connectors.retry") : t("connectors.connect"),
+              value: "connect",
+            },
+      )
     // S-V7, S-C10 п.8: подключение `mode:"facade"` идёт через Hub-фасад, и без адреса Hub его
     // выполнить нечем. Действие сервер из набора снял, а на его месте — там же, где была бы
     // строка «Подключить», а не в другой части экрана, — стоит причина недоступности.
@@ -910,8 +991,8 @@ export function DialogConnector(props: DialogConnectorProps) {
         {
           command: "dialog.corp.connect",
           title: card().actions.includes("reconnect") ? t("connectors.retry") : t("connectors.connect"),
-          disabled: () => !allows(card(), "connect"),
-          onTrigger: () => void run("connect"),
+          disabled: () => !allows(card(), "connect") || connectDisabled(card()),
+          onTrigger: () => (connectDirect(card()) ? select("connect") : void run("connect")),
         },
         {
           command: "dialog.corp.disconnect",

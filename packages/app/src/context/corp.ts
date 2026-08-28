@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/solid-query"
-import type { CorpCatalogView, CorpPermissionMode, CorpStatus } from "@opencode-ai/sdk/v2"
+import type { CorpCatalogView, CorpConnectTokenResult, CorpPermissionMode, CorpStatus } from "@opencode-ai/sdk/v2"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
@@ -198,6 +198,93 @@ export type ConnectorAction =
    */
   | { kind: "permissionModes"; alias: string; modes: Record<string, CorpPermissionMode> }
 
+
+/**
+ * Прямое подключение токеном (S-V25, S-D13, ревизия 1.13).
+ *
+ * Отдельная мутация, а не ветка `useConnectorAction`: её исход показывается **в той же форме**, а
+ * не всплывающим окном (S-D13 п.6), поэтому вызывающему нужен сам ответ роута, а не тост. Значение
+ * токена живёт только в состоянии смонтированного компонента и не сохраняется нигде — ни в адресе
+ * страницы, ни в хранилище браузера, ни в состоянии витрины (S-D13 п.6, S-V26 п.6).
+ *
+ * Проверка, обмен, сохранение и запрет живут на сервере и здесь не дублируются ни строкой
+ * (S-T12): оболочка отправляет тело и показывает пришедшие исходы.
+ */
+export interface ConnectTokenInput {
+  alias: string
+  /** `id` способа; не передаётся, когда применимый способ у карточки ровно один (S-V25 п.1). */
+  method?: string
+  token: string
+}
+
+/**
+ * Отказ роута прямого подключения — **не** исход проверки (S-V25 п.3): исходы приходят кодом `200`
+ * и разбираются формой, а сюда попадают отказы предпроверок и хранилища.
+ */
+export interface ConnectTokenFailure {
+  /** Стабильный код ошибки роута: `invalid_request`, `auth_method_unavailable`, … (S-A5). */
+  code: string
+  /** Причина недоступности способа, если роут её назвал (S-V28 п.1). */
+  unavailableCode?: string
+}
+
+/** Ключ словаря по коду отказа роута (S-I1): «Сохранить токен не удалось» и причины S-V28 п.1. */
+export function connectFailureKey(failure: ConnectTokenFailure | undefined) {
+  if (!failure) return undefined
+  if (failure.code === "storage_unavailable") return "corp.connect.storageUnavailable" as const
+  if (failure.code === "auth_method_unavailable") return methodUnavailableKey(failure.unavailableCode)
+  return undefined
+}
+
+/**
+ * Ключ причины недоступности способа (S-V28 п.1, S-I1) — три **разных** ключа, потому что причины
+ * разные и советы разные. Неизвестный код падает в причину каталога: «так решил каталог» — самая
+ * общая из трёх и единственная, не обещающая пользователю ничего конкретного.
+ */
+export function methodUnavailableKey(code: string | null | undefined) {
+  if (code === "oauth_disabled") return "corp.connectors.methodUnavailable.oauthDisabled" as const
+  if (code === "env_header") return "corp.connectors.methodUnavailable.envHeader" as const
+  return "corp.connectors.methodUnavailable.catalog" as const
+}
+
+/** Разбор тела отказа роута: код и, если он назван, `unavailable_code` (S-A5, S-V28 п.1). */
+export function connectTokenFailure(error: unknown): ConnectTokenFailure {
+  const body = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : undefined
+  const code = typeof body?.["error"] === "string" ? (body["error"] as string) : "unknown"
+  const unavailable = typeof body?.["unavailable_code"] === "string" ? (body["unavailable_code"] as string) : undefined
+  return { code, ...(unavailable === undefined ? {} : { unavailableCode: unavailable }) }
+}
+
+export function useConnectToken() {
+  const sdk = useServerSDK()
+  const invalidate = useCorpInvalidate()
+
+  return useMutation(() => ({
+    mutationFn: (input: ConnectTokenInput): Promise<CorpConnectTokenResult> =>
+      sdk()
+        .client.corp.connectorConnectToken({
+          alias: input.alias,
+          body: { ...(input.method === undefined ? {} : { method: input.method }), token: input.token },
+        })
+        .then((response) => required(response.data)),
+    // Витрина и локальные статусы MCP обновляются после успеха: карточка обязана показать то же
+    // состояние, что покажет следующее открытие витрины (S-V15).
+    onSuccess: async () => {
+      await invalidate()
+    },
+  }))
+}
+
+/**
+ * Ключ исхода отзыва (S-V27 п.2, S-I1). Исход `skipped` показывать нечего — ключа под него нет, и
+ * сюда он не попадает: «отзывать было нечего» пользователю не сообщается вовсе.
+ */
+export function revokeKey(result: "revoked" | "not_revoked" | "unreachable" | "skipped") {
+  if (result === "revoked") return "corp.connect.revoke.revoked" as const
+  if (result === "not_revoked") return "corp.connect.revoke.notRevoked" as const
+  return "corp.connect.revoke.unreachable" as const
+}
+
 export function useConnectorAction() {
   const sdk = useServerSDK()
   const language = useLanguage()
@@ -251,6 +338,14 @@ export function useConnectorAction() {
             ? `${language.t(connectErrorKey(result.error_class), { code: result.error })} (${result.error})`
             : result.error
         showToast({ variant: "error", title: language.t("common.requestFailed"), description: explained })
+      }
+      // S-V27 п.2: исход отзыва выпущенного токена — закрытый набор из четырёх значений. `skipped`
+      // («звать было некого») не показывает ничего; прочие три различимы и сливать их запрещено.
+      if (result && "revoke" in result && result.revoke && result.revoke !== "skipped") {
+        showToast({
+          variant: result.revoke === "revoked" ? "success" : "default",
+          title: language.t(revokeKey(result.revoke)),
+        })
       }
       if (result && "reauth_required" in result && result.reauth_required) {
         showToast({ variant: "default", title: language.t("corp.connectors.reauth") })

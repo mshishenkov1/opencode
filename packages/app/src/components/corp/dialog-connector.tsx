@@ -1,5 +1,12 @@
 import { Component, createMemo, createSignal, For, Show } from "solid-js"
-import type { CorpCatalogCard, CorpPermissionMode, CorpPermissionModel, CorpPermissionState } from "@opencode-ai/sdk/v2"
+import type {
+  CorpAuthMethodField,
+  CorpAuthMethodView,
+  CorpCatalogCard,
+  CorpPermissionMode,
+  CorpPermissionModel,
+  CorpPermissionState,
+} from "@opencode-ai/sdk/v2"
 import { connectorType } from "@opencode-ai/core/corp/constants"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -9,7 +16,15 @@ import { SegmentedControlItemV2, SegmentedControlV2 } from "@opencode-ai/ui/v2/s
 import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
 import { SettingsListV2 } from "@/components/settings-v2/parts/list"
 import { SettingsRowV2 } from "@/components/settings-v2/parts/row"
-import { connectErrorKey, useConnectorAction, useCorpCatalog } from "@/context/corp"
+import {
+  connectErrorKey,
+  connectFailureKey,
+  connectTokenFailure,
+  methodUnavailableKey,
+  useConnectToken,
+  useConnectorAction,
+  useCorpCatalog,
+} from "@/context/corp"
 import { useLanguage } from "@/context/language"
 import { statusKey, statusTone } from "./dialog-connectors"
 import { CorpDialog } from "./dialog-shell"
@@ -412,6 +427,312 @@ const ConnectorPermissionGroups: Component<{ card: CorpCatalogCard }> = (props) 
   )
 }
 
+/**
+ * Три случая выбора способа на странице коннектора (S-V28 п.4).
+ *
+ * Недоступный способ **не прячется**: пользователь обязан видеть, что способ существует и почему
+ * сейчас не работает. Спрятанный способ неотличим от несуществующего, и пользователь идёт
+ * спрашивать, куда делось подключение.
+ *
+ * | Состав способов карточки | Что на экране |
+ * |---|---|
+ * | доступен ровно один, недоступных нет | выбора нет вовсе; сразу форма ввода токена |
+ * | способов больше одного (в любом сочетании) | список **всех**: доступные выбираются, каждый недоступный — элемент выбора с `disabled` и причиной рядом |
+ * | доступных нет ни одного | формы нет; список способов с причинами и ни одного поля ввода |
+ */
+export function methodChoice(methods: CorpAuthMethodView[]): "single" | "list" | "none" {
+  const available = methods.filter((method) => method.available)
+  if (available.length === 0) return "none"
+  if (methods.length === 1) return "single"
+  return "list"
+}
+
+/**
+ * Сообщение проверки длины (S-D13 п.4) — **до** сети: запрос не уходит вовсе.
+ *
+ * Прочих проверок значения форма не делает: годность токена решает целевая система, а не догадка о
+ * его виде. Пустое поле сообщения не даёт — там просто неактивна кнопка.
+ */
+export function lengthError(value: string, field: CorpAuthMethodField | undefined) {
+  if (value === "") return undefined
+  const min = bound(field?.min_length)
+  const max = bound(field?.max_length)
+  if (min !== undefined && value.length < min) return { key: "corp.connect.tooShort" as const, n: min }
+  if (max !== undefined && value.length > max) return { key: "corp.connect.tooLong" as const, n: max }
+  return undefined
+}
+
+/** Граница длины поля: нечисловое значение границей не является и ничего не ограничивает (S-V24 п.2). */
+function bound(value: number | string | undefined): number | undefined {
+  const parsed = typeof value === "string" ? Number(value) : value
+  return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : undefined
+}
+
+/**
+ * Ключ исхода проверки (S-V25 п.3, S-I1) — по ключу на исход, общего «не получилось» среди них нет.
+ * Успех с названным пользователем и успех без имени — разные тексты, а не один с подстановкой.
+ */
+export function verifyKey(result: string, account: string | undefined) {
+  if (result === "verified") return account ? "corp.connect.verify.verifiedAs" : "corp.connect.verify.verified"
+  if (result === "account_missing") return "corp.connect.verify.accountMissing"
+  if (result === "token_rejected") return "corp.connect.verify.tokenRejected"
+  if (result === "verify_failed") return "corp.connect.verify.verifyFailed"
+  return "corp.connect.verify.unreachable"
+}
+
+/**
+ * Ключ исхода обмена (S-V25 п.5). Три неуспешных исхода различимы и сливать их запрещено:
+ * различается **то, что известно**, а не совет. Отсутствие обмена (`null`) не показывает ничего.
+ */
+export function exchangeKey(result: string | null | undefined) {
+  if (result === "exchanged") return "corp.connect.exchange.exchanged"
+  if (result === "exchange_denied") return "corp.connect.exchange.denied"
+  if (result === "exchange_failed") return "corp.connect.exchange.failed"
+  if (result === "exchange_unreachable") return "corp.connect.exchange.unreachable"
+  return undefined
+}
+
+/**
+ * Есть ли на странице блок подключения (S-D13 п.1).
+ *
+ * Блок отрисован **тогда и только тогда**, когда одновременно: карточка получена; её
+ * `connect_mode` равен `"direct"`; карточка **не** в состоянии 4 («Подключено», S-V29 п.1). Пока
+ * ответ роута не получен, карточки нет — и блока нет: утверждения «форма всегда на экране»
+ * правило не делает.
+ *
+ * `justConnected` — успех, только что показанный в этой же форме (п.7): блок остаётся на экране и
+ * показывает признак «Подключено», а не исчезает вместе с ответом.
+ */
+export function connectBlockVisible(card: CorpCatalogCard | undefined, justConnected: boolean): boolean {
+  if (!card) return false
+  if (card.connect_mode !== "direct") return false
+  return justConnected || card.state !== "connected"
+}
+
+/**
+ * Причина отсутствия действия «Подключить» на уровне карточки (S-V28 п.2, S-I1).
+ *
+ * Ветвление идёт по `connect_mode_unavailable_code`, а **не** по одному лишь `connect_mode`:
+ * `oauth_disabled` рисует действие неактивным с причиной рядом, `facade_needs_hub` — прежнее
+ * поведение ревизии 1.11 дословно (действия нет, причина на его месте). Сливать эти два вида
+ * запрещено.
+ */
+export function connectUnavailableKey(card: CorpCatalogCard) {
+  if (card.connect_mode_unavailable_code === "oauth_disabled")
+    return "corp.connectors.methodUnavailable.oauthDisabled" as const
+  if (card.connect_mode_unavailable_code === "facade_needs_hub") return "corp.connectors.facadeNeedsHub" as const
+  if (card.connect_mode_unavailable_code === "no_method") return "corp.connect.noMethod" as const
+  return undefined
+}
+
+/**
+ * Блок подключения — блок 5 страницы коннектора, между «Статусом» и «Разрешениями» (S-D13).
+ *
+ * Форма живёт **в окне приложения**: отдельного окна, отдельной страницы и браузерного шага у
+ * подключения нет. Поле никогда не предзаполняется — ни сохранённым токеном, ни его маской:
+ * сохранённого токена в оболочке нет вовсе, она его не получает (S-V24 п.7).
+ */
+const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
+  const language = useLanguage()
+  const connect = useConnectToken()
+
+  const methods = createMemo(() => props.card.auth_methods ?? [])
+  const available = createMemo(() => methods().filter((method) => method.available))
+  const choice = createMemo(() => methodChoice(methods()))
+
+  const [chosen, setChosen] = createSignal<string | undefined>()
+  const selected = createMemo(() => {
+    const explicit = available().find((method) => method.id === chosen())
+    return explicit ?? available()[0]
+  })
+
+  /**
+   * Введённое значение живёт только в состоянии смонтированного компонента (S-D13 п.6): уход со
+   * страницы его теряет, в адрес страницы и в хранилище браузера оно не попадает никогда.
+   */
+  const [token, setToken] = createSignal("")
+  const [showResult, setShowResult] = createSignal(true)
+  const result = createMemo(() => (showResult() ? connect.data : undefined))
+  const failure = createMemo(() =>
+    showResult() && connect.error ? connectTokenFailure(connect.error) : undefined,
+  )
+  const connected = createMemo(() => result()?.verify_result === "verified")
+  const length = createMemo(() => lengthError(token(), selected()?.field))
+
+  function submit() {
+    // Пустое поле и непройденная проверка длины запроса не создают; повторное нажатие во время
+    // запроса второго запроса не создаёт (S-D13 п.4, п.5).
+    if (connect.isPending || token() === "" || length()) return
+    setShowResult(true)
+    const method = selected()
+    connect.mutate({
+      alias: props.card.alias,
+      ...(method && methods().length > 1 ? { method: method.id } : {}),
+      token: token(),
+    })
+  }
+
+  return (
+    <div class="flex flex-col gap-3" data-slot="corp-connect">
+      <span class="text-12-regular text-text-weak">{language.t("corp.connect.title")}</span>
+
+      <Show when={!connected()}>
+        {/* Случай 2 и 3 таблицы S-V28 п.4: список ВСЕХ способов. Недоступный отрисован элементом
+            выбора с атрибутом `disabled` и текстом причины в том же блоке — рядом с ним, а не в
+            другой части экрана. Поля ввода токена у недоступного способа в дереве нет. */}
+        <Show when={choice() !== "single"}>
+          <div class="flex flex-col gap-2" data-slot="corp-connect-methods">
+            <span class="text-12-regular text-text-weak">{language.t("corp.connect.chooseMethod")}</span>
+            <For each={methods()}>
+              {(method) => (
+                <div class="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    data-action="corp-connect-method"
+                    data-method={method.id}
+                    data-selected={method.available && selected()?.id === method.id ? "true" : undefined}
+                    disabled={!method.available}
+                    class="text-14-regular text-text-strong text-left disabled:text-text-weak"
+                    onClick={() => method.available && setChosen(method.id)}
+                  >
+                    {/* Подпись способа — данные каталога, клиент их не переводит (S-I6). */}
+                    {method.title}
+                  </button>
+                  <Show when={!method.available}>
+                    <span class="text-12-regular text-text-weak" data-slot="corp-connect-method-reason">
+                      {/* Текст причины из каталога показывается дословно, иначе — свой ключ (S-I6). */}
+                      {method.unavailable_reason ?? language.t(methodUnavailableKey(method.unavailable_code))}
+                    </span>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+
+        {/* Случай 3: доступных способов нет ни одного — формы нет, поля ввода нет, кнопки нет. */}
+        <Show when={selected()}>
+          {(method) => (
+            <div class="flex flex-col gap-2">
+              <label class="text-12-regular text-text-weak" for={`corp-connect-${props.card.alias}`}>
+                {/* Подпись поля — из каталога (S-I6, S-D13 п.8). */}
+                {method().field?.label}
+              </label>
+              <input
+                id={`corp-connect-${props.card.alias}`}
+                data-slot="corp-connect-token"
+                class="text-14-regular text-text-strong bg-background-element rounded px-2 py-1"
+                type={method().field?.secret === false ? "text" : "password"}
+                autocomplete="off"
+                placeholder={method().field?.placeholder ?? ""}
+                value={token()}
+                disabled={connect.isPending}
+                onInput={(event) => setToken(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") submit()
+                }}
+              />
+              {/* Отсутствующее необязательное поле строки не рисует — пустой строки не появляется. */}
+              <Show when={method().field?.hint}>
+                {(hint) => (
+                  <span class="text-12-regular text-text-weak" data-slot="corp-connect-hint">
+                    {hint()}
+                  </span>
+                )}
+              </Show>
+              <Show when={method().field?.docs_url}>
+                {(docs) => (
+                  <a
+                    class="text-12-regular text-text-weak underline break-all"
+                    data-slot="corp-connect-docs"
+                    href={docs()}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {language.t("corp.connect.docs")}
+                  </a>
+                )}
+              </Show>
+              <Show when={length()}>
+                {(error) => (
+                  <span class="text-12-regular text-text-error" data-slot="corp-connect-error">
+                    {language.t(error().key, { n: error().n })}
+                  </span>
+                )}
+              </Show>
+              <div class="flex items-center gap-2">
+                <Button
+                  size="small"
+                  data-action="corp-connect-submit"
+                  disabled={connect.isPending || token() === "" || length() !== undefined}
+                  onClick={() => submit()}
+                >
+                  {language.t("corp.connect.submit")}
+                </Button>
+                <Show when={connect.isPending}>
+                  <span class="text-12-regular text-text-weak" data-slot="corp-connect-pending" aria-busy="true">
+                    &hellip;
+                  </span>
+                </Show>
+              </div>
+            </div>
+          )}
+        </Show>
+      </Show>
+
+      {/* S-D13 п.7: после успеха блок заменяется признаком «Подключено» и строкой с account;
+          «Заменить токен» открывает ту же ПУСТУЮ форму. Значение токена не показывается нигде. */}
+      <Show when={connected()}>
+        <div class="flex items-center gap-2" data-slot="corp-connect-done">
+          <Tag class="corp-tag-connected">{language.t("corp.connectors.connected")}</Tag>
+          <span class="text-14-regular text-text-strong">
+            {language.t(verifyKey("verified", result()?.account), { account: result()?.account ?? "" })}
+          </span>
+          <Button
+            size="small"
+            variant="ghost"
+            data-action="corp-connect-replace"
+            onClick={() => {
+              setToken("")
+              setShowResult(false)
+              connect.reset()
+            }}
+          >
+            {language.t("corp.connect.replace")}
+          </Button>
+        </div>
+      </Show>
+
+      {/* S-D13 п.6: исход показывается В ТОМ ЖЕ блоке — не всплывающим окном, не на витрине и не в
+          другой части страницы. Неуспешные исходы проверки отрисовываются как ОШИБКА, неуспешные
+          исходы обмена — как ПРЕДУПРЕЖДЕНИЕ; различие в разметке, а не в тексте. */}
+      <Show when={connected() ? undefined : result()}>
+        {(outcome) => (
+          <span class="text-12-regular text-text-error" data-slot="corp-connect-verify" role="alert">
+            {language.t(verifyKey(outcome().verify_result, undefined), {
+              status: outcome().verify_status ?? "",
+            })}
+          </span>
+        )}
+      </Show>
+      <Show when={exchangeKey(result()?.exchange_result)}>
+        {(key) => (
+          <span class="text-12-regular text-text-weak" data-slot="corp-connect-exchange" role="status">
+            {language.t(key())}
+          </span>
+        )}
+      </Show>
+      <Show when={connectFailureKey(failure())}>
+        {(key) => (
+          <span class="text-12-regular text-text-error" data-slot="corp-connect-failure" role="alert">
+            {language.t(key())}
+          </span>
+        )}
+      </Show>
+    </div>
+  )
+}
+
 export const DialogConnector: Component<{ alias: string }> = (props) => {
   const language = useLanguage()
   const dialog = useDialog()
@@ -532,17 +853,40 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                   <Show when={entry().connect_needs_hub}>
                     <span class="text-12-regular text-text-weak">{language.t("corp.connectors.facadeNeedsHub")}</span>
                   </Show>
-                  <Show when={entry().actions.includes("connect") || entry().actions.includes("reconnect")}>
+                  {/* S-V25 п.7: в прямом режиме предлагаемое действие — «Ввести токен заново»: оно
+                      открывает ту же форму ниже, а не браузерный шаг, которого здесь не было.
+                      Роут `connect` при этом не зовётся: alias с действующими прямыми учётными
+                      данными фасадом не подключается (S-V29 п.1). */}
+                  <Show when={entry().connect_mode === "direct"}>
                     <Button
                       size="small"
-                      disabled={action.isPending || entry().blocked}
-                      onClick={() =>
+                      data-action="corp-connect-focus"
+                      onClick={() => document.getElementById(`corp-connect-${entry().alias}`)?.focus()}
+                    >
+                      {language.t("corp.connect.replace")}
+                    </Button>
+                  </Show>
+                  <Show when={entry().actions.includes("connect") || entry().actions.includes("reconnect")}>
+                    <Show when={entry().connect_mode !== "direct"}>
+                    {/* S-V28 п.4 (микроревизия 1.13.1): у закрытой карточки действие ОТРИСОВАНО
+                        неактивным, а не спрятано — спрятанное действие неотличимо от
+                        несуществующего. Ветвление идёт по `connect_mode_unavailable_code`, а не по
+                        одному лишь `connect_mode`: у `facade_needs_hub` действует прежнее правило
+                        ревизии 1.11 (кнопки нет, причина на её месте, ветка выше). */}
+                    <Button
+                      size="small"
+                      data-action="corp-connect"
+                      disabled={
+                        action.isPending || entry().blocked || entry().connect_mode_unavailable_code === "oauth_disabled"
+                      }
+                      onClick={() => {
+                        if (entry().connect_mode_unavailable_code === "oauth_disabled") return
                         action.mutate({
                           kind: "connect",
                           alias: entry().alias,
                           ...(entry().preset ? { preset: entry().preset } : {}),
                         })
-                      }
+                      }}
                     >
                       {/* S-V16: подпись действия в состоянии 3 — «Повторить»: попытка уже была, и
                           честнее это назвать; в состояниях 1 и 2 — «Подключить». */}
@@ -550,6 +894,15 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                         entry().actions.includes("reconnect") ? "corp.connectors.retry" : "corp.connectors.connect",
                       )}
                     </Button>
+                    </Show>
+                  </Show>
+                  {/* Причина неактивного действия — в том же блоке, рядом с ним (S-V28 п.4).
+                      `facade_needs_hub` сюда не попадает: у него кнопки нет вовсе, а причина
+                      показана на её месте веткой выше — сливать эти две отрисовки запрещено. */}
+                  <Show when={entry().connect_mode_unavailable_code === "oauth_disabled"}>
+                    <span class="text-12-regular text-text-weak" data-slot="corp-connect-disabled-reason">
+                      {language.t("corp.connectors.methodUnavailable.oauthDisabled")}
+                    </span>
                   </Show>
                   {/* S-V8, S-V16: «Отключить» существует ровно в состоянии «Подключено» — набор
                       действий считает общий модуль corp/status.ts, оболочка его не пересчитывает. */}
@@ -580,7 +933,25 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                 </Show>
               </div>
 
-              {/* 5. «Разрешения»: блок есть всегда. Вид `permission_groups` — режим каждой группы
+              {/* 5. Блок подключения (S-D13): между «Статусом» и «Разрешениями», в окне приложения.
+                  Отдельного окна, отдельной страницы и браузерного шага у подключения нет. Блок
+                  есть тогда и только тогда, когда карточка получена, её `connect_mode` равен
+                  `"direct"` и она не в состоянии «Подключено» (S-V29 п.1). У карточки с
+                  `connect_mode: "none"` блока нет вовсе — ни пустого, ни заглушки. */}
+              <Show when={entry().connect_mode === "direct" && entry().state !== "connected"}>
+                <ConnectorConnect card={entry()} />
+              </Show>
+              {/* S-V26 п.3: запись хранилища перестала применяться (каталог сменил адрес сервера
+                  или файл нечитаем) — карточка прямо об этом говорит, а не молчит. */}
+              <Show
+                when={entry().connect_mode === "direct" && entry().configured && entry().has_credentials === false}
+              >
+                <span class="text-12-regular text-text-weak" data-slot="corp-credentials-missing">
+                  {language.t("corp.connect.credentialsMissing")}
+                </span>
+              </Show>
+
+              {/* 6. «Разрешения»: блок есть всегда. Вид `permission_groups` — режим каждой группы
                   (S-V9 ревизии 1.10); прочие виды — прежний экран пресетов (S-V20, деградация). */}
               <Show when={entry().actions.includes("permissions")}>
                 <div class="flex flex-col gap-2">
@@ -616,7 +987,7 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                 </div>
               </Show>
 
-              {/* 6. «Убрать из списка» (S-V17) — со своим подтверждением; правило не изменено. */}
+              {/* 7. «Убрать из списка» (S-V17) — со своим подтверждением; правило не изменено. */}
               <Show when={entry().actions.includes("forget")}>
                 <div class="flex items-center">
                   <Button

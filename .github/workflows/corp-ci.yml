@@ -69,7 +69,11 @@ jobs:
         run: bun x playwright install --with-deps chromium
 
       - name: Тесты раскладки корп-окон (packages/app)
-        run: bun --cwd packages/app x playwright test --config test-layout/playwright.config.ts
+        # `bun --cwd <dir> x ...` НЕ работает: bun трактует `x` как имя скрипта пакета
+        # (`error: Script not found "x"`, проверено на bun 1.3.14 локально и в oven/bun:1.3).
+        # Рабочая форма — `bun x` из самого каталога пакета. Задание падало бы на старте.
+        working-directory: packages/app
+        run: bun x playwright test --config test-layout/playwright.config.ts
 
       # Наборы corp/*.test.ts не запускались корп-CI ни одним заданием: скрипт `test` пакета
       # opencode работает с cwd packages/opencode и каталог corp/ не обходит, а корневой `bun test`

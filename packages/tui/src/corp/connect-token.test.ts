@@ -197,3 +197,17 @@ describe("TUI словарь — тексты ревизии 1.13 без под�
     }
   })
 })
+
+/**
+ * Паритет с Desktop (S-V28 п.3; AC-313): TUI берёт доступность способа и `connect_mode` из ответа
+ * роута и сам их не вычисляет. `packages/app/src/corp/connect-form.test.ts` держит то же
+ * утверждение для Desktop на тех же функциях.
+ */
+describe("TUI — доступность способа не пересчитывается на клиенте (S-V28 п.3; AC-313)", () => {
+  test("исходники не импортируют corp/status.ts и не вызывают oauthDisabled()", () => {
+    for (const source of [connectSource, connectorsSource]) {
+      expect(source).not.toMatch(/from\s+["']@?.*corp\/status["']/)
+      expect(source).not.toContain("oauthDisabled(")
+    }
+  })
+})

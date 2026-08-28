@@ -272,3 +272,21 @@ describe("dialog-connector — блок подключения без слова
       }
   })
 })
+
+/**
+ * Паритет с TUI (S-V28 п.3, S-T12; AC-313): доступность способа и `connect_mode` считает один общий
+ * модуль `packages/opencode/src/corp/status.ts`, и Desktop его не пересчитывает — расхождение
+ * оболочек по вопросу «можно ли этим подключиться» исключается по построению. Строка
+ * `packages/tui/src/corp/connect-token.test.ts` держит то же утверждение для TUI на своих функциях
+ * (`connectDisabled`, `connectDirect`); сетевой гейт (AC-311, AC-343) проверен на уровне роута в
+ * `packages/opencode/src/corp/connect-token.test.ts`, общего для обеих оболочек.
+ */
+describe("dialog-connector — доступность способа не пересчитывается на клиенте (S-V28 п.3; AC-313)", () => {
+  test("исходник не импортирует corp/status.ts и не вызывает oauthDisabled() — поле available берётся из карточки", () => {
+    expect(source).not.toMatch(/from\s+["']@?.*corp\/status["']/)
+    expect(source).not.toContain("oauthDisabled(")
+    // Единственное упоминание "oauthDisabled" в файле — имя КЛЮЧА словаря, а не вызов предиката.
+    const occurrences = source.match(/oauthDisabled/g) ?? []
+    for (const _ of occurrences) expect(source).toContain("methodUnavailable.oauthDisabled")
+  })
+})

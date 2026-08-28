@@ -245,7 +245,7 @@ describe("экран разрешений — действующий режим,
  */
 describe("страница коннектора — деградация экрана прав (AC-206, AC-207)", () => {
   test("AC-206: без permission_groups показывается прежний экран пресетов, блок остаётся", () => {
-    const screen = source.slice(source.indexOf("{/* 5. «Разрешения»"), source.indexOf("{/* 6."))
+    const screen = source.slice(source.indexOf("{/* 6. «Разрешения»"), source.indexOf("{/* 7."))
     expect(screen).toContain("when={entry().permission_groups}")
     expect(screen).toContain("<ConnectorPresets card={entry()}")
     expect(screen).toContain("<ConnectorPermissionGroups card={entry()} />")
@@ -281,7 +281,9 @@ describe("страница коннектора — деградация экр�
   })
 
   test("AC-207: «Открыть в Hub», «Подключить» и «Отключить» живут отдельно от блока разрешений", () => {
-    const status = source.slice(source.indexOf("{/* 4. Статус"), source.indexOf("{/* 5. «Разрешения»"))
+    // Ревизия 1.13 сдвинула нумерацию: блок подключения (S-D13) стал блоком 5, «Разрешения» — 6
+    // (S-D13, S-D11). Верхняя граница здесь по-прежнему изолирует только блок 4 «Статус».
+    const status = source.slice(source.indexOf("{/* 4. Статус"), source.indexOf("{/* 5."))
     expect(status).toContain('entry().actions.includes("connect")')
     expect(status).toContain('entry().actions.includes("disconnect")')
     expect(status).toContain('entry().actions.includes("open_hub")')
@@ -391,7 +393,7 @@ describe("страница коннектора — причина блокир�
   })
 
   test("AC-274: блок «Разрешения» есть в обеих сборках, а причина «нет Hub» — отдельный текст", () => {
-    const screen = source.slice(source.indexOf("{/* 5. «Разрешения»"), source.indexOf("{/* 6."))
+    const screen = source.slice(source.indexOf("{/* 6. «Разрешения»"), source.indexOf("{/* 7."))
     // «Эта сборка без Hub» и «эта версия не умеет» — разные беды и разные советы, и текстов два.
     expect(screen).toContain('language.t("corp.connectors.permissionsNeedHub")')
     expect(screen).toContain('language.t("corp.permissions.title")')

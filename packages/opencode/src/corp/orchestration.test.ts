@@ -31,6 +31,8 @@ import { testInstanceStoreLayer } from "../../test/fixture/fixture"
 import { testEffect } from "../../test/lib/effect"
 import * as CorpCatalogCache from "./catalog-cache"
 import * as CorpConnections from "./connections"
+import * as CorpConnectors from "./connectors"
+import type * as CorpSchema from "./schema"
 import { liveCatalogBody, liveTagCard } from "../../test/fixture/corp-hub-live"
 
 /**
@@ -435,19 +437,33 @@ describe("оркестрация витрины — «Подключить» (AC
     }),
   )
 
-  it.live("AC-58: native-карточка подключается без ключа oauth в конфиге", () =>
-    Effect.gen(function* () {
-      yield* post(connectRoute(NATIVE.alias), {})
+  it.live(
+    "AC-58: native-карточка — патч без oauth (S-V28 п.6) остаётся под тестами, но подключение запрещено (S-V28)",
+    () =>
+      Effect.gen(function* () {
+        // (а) функция построения патча конфига не удалена и не даёт ключа oauth для native — код
+        // остаётся под тестами при действующем запрете (S-V28 п.6, D-5).
+        const nativeServer: CorpSchema.CatalogServer = {
+          ...NATIVE,
+          mcp_url: `${state.hub.url}/mcp/${NATIVE.alias}`,
+        }
+        const patch = CorpConnectors.connectPatch(nativeServer)
+        expect("oauth" in patch.mcp[NATIVE.alias]!).toBe(false)
 
-      const config = yield* Effect.promise(() => globalConfig())
-      expect(config.mcp[NATIVE.alias]).toEqual({
-        type: "remote",
-        url: `${state.hub.url}/mcp/${NATIVE.alias}`,
-        enabled: true,
-      })
-      expect(config.mcp[NATIVE.alias].oauth).toBeUndefined()
-      expect(state.calls).toContain(`authenticate:${NATIVE.alias}`)
-    }),
+        // (б) запрос «Подключить», посланный через корп-роут, отклонён запретом ДО единой записи и
+        // до любого исходящего вызова: вызов authenticate (браузерный шаг) становится ожидаемым
+        // только после снятия запрета (AC-342).
+        const response = yield* post(connectRoute(NATIVE.alias), {})
+        expect(response.status).toBe(409)
+        const result = yield* body<{ error: string; unavailable_code: string }>(response)
+        expect(result.error).toBe("auth_method_unavailable")
+        expect(result.unavailable_code).toBe("oauth_disabled")
+
+        const config = yield* Effect.promise(() => globalConfig())
+        expect(config.mcp?.[NATIVE.alias]).toBeUndefined()
+        expect(state.calls).not.toContain(`authenticate:${NATIVE.alias}`)
+        expect(state.calls).not.toContain(`add:${NATIVE.alias}`)
+      }),
   )
 
   it.live("AC-59: отказ OAuth оставляет запись в конфиге, статус карточки needs_auth и текст ошибки", () =>
@@ -600,19 +616,29 @@ describe("оркестрация витрины — «Права» (AC-64, AC-65
     }),
   )
 
-  it.live("AC-65: native — локальный oauth.scope не появляется, права меняются только в Hub", () =>
-    Effect.gen(function* () {
-      yield* post(connectRoute(NATIVE.alias), {})
-      state.calls = []
+  it.live(
+    "AC-65: native — запрет OAuth (S-V28) закрывает повторную авторизацию, а не запись прав в Hub",
+    () =>
+      Effect.gen(function* () {
+        // Hub требует повторной авторизации после смены пресета (дано критерием); запрет S-V28
+        // при этом действует, и это то, что проверяется: запись прав в Hub всё равно выполняется,
+        // а шаг 2 правила S-V7 (браузер) — нет. «Подключить» через корп-роут здесь не вызывается
+        // умышленно: этот путь у native-карточки запрещён (AC-58) и не нужен для этого сценария —
+        // роут прав читает карточку каталога, а не локальный статус MCP.
+        state.hub.permissions = (alias, payload) => json({ alias, status: "needs_reauth", preset: payload.preset })
 
-      const response = yield* put(permissionsRoute(NATIVE.alias), { preset: "extended" })
-      const result = yield* body<{ preset: string; reauth_required: boolean }>(response)
+        const response = yield* put(permissionsRoute(NATIVE.alias), { preset: "extended" })
+        const result = yield* body<{ preset: string; reauth_required: boolean }>(response)
 
-      expect(result.preset).toBe("extended")
-      const config = yield* Effect.promise(() => globalConfig())
-      expect(config.mcp[NATIVE.alias].oauth).toBeUndefined()
-      expect(state.hub.requests.some((request) => request.method === "PUT")).toBe(true)
-    }),
+        expect(result.preset).toBe("extended")
+        expect(result.reauth_required).toBe(true)
+        const config = yield* Effect.promise(() => globalConfig())
+        expect(config.mcp?.[NATIVE.alias]?.oauth).toBeUndefined()
+        const sent = state.hub.requests.find((request) => request.method === "PUT")
+        expect(sent?.path).toBe(`/api/me/connections/${NATIVE.alias}/permissions`)
+        // Запрет закрывает браузерный шаг, а не запись прав: authenticate НЕ вызван.
+        expect(state.calls).not.toContain(`authenticate:${NATIVE.alias}`)
+      }),
   )
 
   it.live("S-V9: тот же пресет и статус connected не требуют повторной авторизации", () =>

@@ -428,11 +428,12 @@ describe("corp/hub — разбор каталога по S-V14 (AC-154, AC-162,
     expect(Object.keys(model.presets)).toEqual(["readonly", "readwrite"])
   })
 
-  test("AC-162: auth_methods и любые неизвестные поля игнорируются и карточку не отбрасывают", async () => {
+  test("AC-162: auth_methods хранится ДОСЛОВНО (S-V24 п.5, AC-307), прочие неизвестные поля игнорируются", async () => {
     const body = liveCatalogBody()
     const card = (body["servers"] as Record<string, unknown>[])[0]!
     // Поле ревизии 3 Hub уже есть в живом теле; добавляем ещё неизвестное сверху и во вложенном объекте.
     expect(card["auth_methods"]).toBeDefined()
+    const rawAuthMethods = structuredClone(card["auth_methods"])
     card["totally_unknown_field"] = { any: ["shape", 1, null] }
     ;(card["connection"] as Record<string, unknown>)["unknown_nested"] = "ignore me"
 
@@ -445,9 +446,13 @@ describe("corp/hub — разбор каталога по S-V14 (AC-154, AC-162,
     const tag = result.data.servers[0]!
     expect(tag.alias).toBe("tag")
     expect(tag.connection?.status).toBe("connected")
-    // Неизвестные поля не доезжают до модели карточки, но и причиной отказа не являются (S-V14 п.4).
-    expect(tag).not.toHaveProperty("auth_methods")
+    // Ревизия 1.13 (S-V24 п.5): `auth_methods` больше не отбрасывается — он хранится дословно, как
+    // пришёл от Hub, включая элементы, которых эта версия клиента ещё не разбирает.
+    expect(tag.auth_methods).toEqual(rawAuthMethods)
+    // Прочие неизвестные поля верхнего уровня и вложенные по-прежнему не доезжают до модели карточки,
+    // но и причиной отказа не являются (S-V14 п.4).
     expect(tag).not.toHaveProperty("totally_unknown_field")
+    expect((tag.connection as unknown as Record<string, unknown>)?.["unknown_nested"]).toBeUndefined()
   })
 
   test("AC-168: version числом и version строкой принимаются одинаково, наружу уходит строка", async () => {

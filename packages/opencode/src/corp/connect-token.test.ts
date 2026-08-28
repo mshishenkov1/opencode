@@ -7,7 +7,7 @@ import * as Harness from "../../test/fixture/corp-direct-harness"
 
 /**
  * Прямое подключение токеном через настоящий корп-роут (S-V25…S-V29, ревизия 1.13;
- * AC-311, AC-315…AC-320, AC-327…AC-331, AC-339, AC-340, AC-343).
+ * AC-251, AC-311, AC-315…AC-320, AC-327…AC-331, AC-339, AC-340, AC-343).
  *
  * Внешних систем, кроме одного сервера «целевой системы» (`Harness.state.target`), нет: он же
  * отдаёт статический каталог, он же отвечает на `verify`/`exchange`/`revoke` и на `upstream.url`.
@@ -660,6 +660,43 @@ describe("connect-token — запрет native (S-V28, микроревизия
         expect(finalView.servers.map((entry) => entry.alias).sort()).toEqual(
           [nativeAlias, facadeAlias, directAlias].sort(),
         )
+      }),
+  )
+
+  Harness.it.live(
+    "AC-251: сборка без Hub, native — 409 oauth_disabled, конфиг побайтово тот же, браузер не открыт, карточка видна неактивной",
+    () =>
+      Effect.gen(function* () {
+        // Микроревизия 1.13.1 отменила прежнее требование AC-251 (записать mcp.<alias> и запустить
+        // штатный MCP OAuth) и заменила его тем же запретом S-V28, что и в сборке с Hub (AC-339):
+        // отсутствие Hub на исход не влияет — причина отказа та же (S-C10).
+        const alias = "native_no_hub"
+        serveCatalog([nativeCard(alias)])
+        const before = yield* Effect.promise(() => snapshotFiles())
+
+        const response = yield* Harness.post(Harness.connectRoute(alias), {})
+        expect(response.status).toBe(409)
+        const result = yield* Harness.body<{ error: string; unavailable_code: string }>(response)
+        expect(result.error).toBe("auth_method_unavailable")
+        expect(result.unavailable_code).toBe("oauth_disabled")
+
+        // Ни DCR, ни PKCE, ни callback — ни одного исходящего запроса, кроме получения каталога.
+        expect(Harness.state.target.requests.filter((request) => request.path !== "/catalog")).toEqual([])
+        expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
+        // Конфиг побайтово тот же, что в снимке — mcp.<alias> не создан.
+        const after = yield* Effect.promise(() => snapshotFiles())
+        expect(after).toEqual(before)
+
+        // Карточка остаётся в витрине с действием «Подключить», отрисованным неактивным по этой же
+        // причине — оболочка берёт connect_mode/connect_mode_unavailable_code из ответа роута
+        // (проверка разметки — AC-341), здесь проверяется сам ответ роута каталога.
+        const catalogResponse = yield* Harness.get(Harness.CorpPaths.catalog)
+        const view = yield* Harness.body<{
+          servers: { alias: string; connect_mode: string; connect_mode_unavailable_code?: string }[]
+        }>(catalogResponse)
+        const card = view.servers.find((entry) => entry.alias === alias)!
+        expect(card.connect_mode).toBe("none")
+        expect(card.connect_mode_unavailable_code).toBe("oauth_disabled")
       }),
   )
 })

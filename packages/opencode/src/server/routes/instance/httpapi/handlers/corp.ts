@@ -16,6 +16,8 @@ import * as CorpStatus from "@/corp/status"
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { CORP_PROVIDER_ID, corpUserEmail } from "@opencode-ai/core/corp/constants"
 import { Global } from "@opencode-ai/core/global"
+import { InstanceStore } from "@/project/instance-store"
+import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -105,9 +107,43 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
     const authSvc = yield* Auth.Service
     const configSvc = yield* Config.Service
     const mcpSvc = yield* MCP.Service
+    /**
+     * Хранилище инстансов — для инвалидации провайдеров после смены ключа (см. `invalidateProviders`).
+     * Берётся здесь, вместе с остальными службами группы, а не внутри обработчика: тогда это
+     * требование слоя, как у `Auth`/`Config`/`MCP`, а не требование каждого запроса.
+     */
+    const instanceStore = yield* InstanceStore.Service
 
     const hubUrl = () => CorpConfig.corpHubUrl()
     const catalogUrl = () => CorpConfig.corpCatalogUrl()
+
+    /**
+     * Инвалидация провайдеров после смены ключа `magnit_prod` в auth-store (S-A3, S-A14 п.4, S-C11 п.4).
+     *
+     * `Config.invalidate()` сбрасывает **только** кэш конфига, и одного его мало. Список провайдеров
+     * и их ключи живут не в конфиге, а в состоянии инстанса (`InstanceState` в `provider/provider.ts`):
+     * ключ читается из auth-store **один раз**, когда состояние строится, и после этого живой процесс
+     * держит его столько, сколько живёт инстанс. Вход в уже запущенном приложении оставлял поэтому
+     * состояние «ключа нет»: запрос уходил в LiteLLM без заголовка `Authorization` и возвращался
+     * ошибкой «No api key passed in» — притом что ключ уже лежал в auth-store (BUG-I12-002).
+     *
+     * Способ — тот же, которым upstream отвечает на смену учётных данных (F6): дизпоуз инстансов.
+     * Дизпоузятся **все**, а не только текущий: запись auth-store одна на процесс, а состояние
+     * провайдеров — на каждый рабочий каталог, и дизпоуз одного оставил бы соседние окна с тем же
+     * отказом. Ровно поэтому upstream-флоу в Desktop после `auth.set` зовёт `global.dispose()`.
+     * Событие `global.disposed` доводит вторую половину флоу — оболочка перечитывает состояние сама,
+     * и перезапуск не требуется (S-A3, S-C4b).
+     *
+     * Отказ дизпоуза не отменяет действия, ради которого его позвали (вход, выход, возврат
+     * провайдера): он уходит в лог предупреждением, а не в ответ роута.
+     */
+    const invalidateProviders = Effect.fnUntraced(function* () {
+      yield* Effect.provideService(
+        disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }),
+        InstanceStore.Service,
+        instanceStore,
+      )
+    })
 
     /**
      * Требование Hub (S-C5): вход по SSO и ветки, идущие через Hub-фасад.
@@ -252,7 +288,12 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         })
         .pipe(Effect.orDie)
       CorpLogin.store.drop(session.loginId)
+      // S-A3: конфиг и провайдеры инвалидируются так же, как это делает upstream-флоу (F6), —
+      // перезапуск не требуется. Одного `configSvc.invalidate()` для этого мало: ключи провайдеров
+      // читаются из auth-store при построении состояния инстанса и кэша конфига не касаются, а
+      // значит живой процесс остался бы в состоянии «ключа нет» (S-C4b, BUG-I12-002).
       yield* configSvc.invalidate()
+      yield* invalidateProviders()
       return { status: "ready" as const, user: publicUser(data.user), key_kind: data.key_kind }
     })
 
@@ -322,6 +363,10 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // S-A14 п.4: конфиг и провайдеры инвалидируются тем же способом, что при входе (S-A3), —
       // перезапуск не нужен, обращение к модели сразу даёт состояние «ключа нет» (S-C4b).
       if (outcome.keyRemoved) yield* configSvc.invalidate()
+      // Та же инвалидация провайдеров, что при входе (S-A3): кэш конфига их состояния не касается.
+      // Отдельным условием, а не общим блоком, — порядок «инвалидация только после успешного
+      // удаления» проверяется на исходнике текстом (AC-279).
+      if (outcome.keyRemoved) yield* invalidateProviders()
       return CorpLogout.toResult(outcome)
     })
 
@@ -368,7 +413,10 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
 
       yield* configSvc.updateGlobal(patch)
       // S-C11 п.4: провайдер доступен без перезапуска — та же инвалидация, что при входе (S-A3).
+      // Список провайдеров строится по `disabled_providers` один раз на инстанс, поэтому кэша
+      // конфига здесь так же недостаточно, как при входе.
       yield* configSvc.invalidate()
+      yield* invalidateProviders()
       // Состояние пересчитывается заново: предупреждение исчезает потому, что исчезло состояние.
       const after = yield* providerDisabled()
       return { changed: true, ...(after === undefined ? {} : { provider_disabled: after }) }

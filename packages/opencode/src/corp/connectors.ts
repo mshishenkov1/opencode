@@ -120,6 +120,21 @@ export interface PermissionsConnection {
 }
 
 /**
+ * Разоружена ли запись `mcp.<alias>` (D-63): ключ `oauth` присутствует и равен **ровно** `false`.
+ *
+ * Единственное место, где это условие записано (S-V28 п.3): его спрашивают и патч прав, и охранник
+ * браузерного шага в роуте `permissions`. `mcp/index.ts` считает MCP-OAuth выключенным ровно по
+ * этому значению — у записи без ключа `oauth` провайдер создаётся (`test/mcp/headers.test.ts`).
+ *
+ * Проверяется **форма**, а не дискриминант `type`: запись в конфиге пользователя могла быть
+ * дописана руками, а «Отключить» оставляет после себя `{enabled:false, …, oauth:false}` — третью
+ * форму значения, которую допускает схема конфига.
+ */
+export function oauthDisarmed(entry: NonNullable<ConfigV1.Info["mcp"]>[string] | undefined): boolean {
+  return entry !== undefined && "oauth" in entry && entry.oauth === false
+}
+
+/**
  * Патч для «Права» (S-V9): при `mode:"facade"` обновляется `mcp.<alias>.oauth.scope`.
  * Для `mode:"native"` локальный scope не меняется — возвращается `undefined`.
  *
@@ -143,10 +158,7 @@ export interface PermissionsConnection {
  */
 export function permissionsPatch(server: CorpSchema.CatalogServer, preset: string, connection: PermissionsConnection) {
   if (connection.directConnected) return undefined
-  // `"oauth" in current` — проверка формы, а не дискриминанта `type`: запись в файле пользователя
-  // могла быть дописана руками и без `type`, а нас интересует ровно один ключ.
-  if (connection.current !== undefined && "oauth" in connection.current && connection.current.oauth === false)
-    return undefined
+  if (oauthDisarmed(connection.current)) return undefined
   const scope = oauthScope(server, preset)
   if (scope === undefined) return undefined
   return { mcp: { [server.alias]: { oauth: { scope } } } } as unknown as ConfigV1.Info

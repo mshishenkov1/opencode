@@ -1401,16 +1401,17 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // более.
       const stored = (yield* readCredentials()).store[alias]
       const directConnected = stored !== undefined
+      // Действующая запись alias. Нужна и патчу, и охраннику браузерного шага ниже: разоружение
+      // D-63 живёт в записи и переживает свой признак — «Отключить» удаляет учётные данные, оставляя
+      // `{enabled:false, url:<адрес целевой системы>, oauth:false}`, а нечитаемый файл хранилища по
+      // S-V26 п.5 считается «данных нет». Читается **эффективный** конфиг: именно его читает
+      // `mcp/index.ts`, решая, вооружён ли провайдер.
+      const entry = (yield* configSvc.get()).mcp?.[alias]
 
       if (server) {
         // Патч правит **существующую** запись, поэтому ему передаётся и способ подключения, и сама
-        // запись: нечитаемый файл хранилища по S-V26 п.5 считается «данных нет», а разоружение
-        // D-63 живёт в записи и переживает удаление учётных данных при «Отключить».
-        const config = yield* configSvc.get()
-        const patch = CorpConnectors.permissionsPatch(server, preset, {
-          directConnected,
-          current: config.mcp?.[alias],
-        })
+        // запись.
+        const patch = CorpConnectors.permissionsPatch(server, preset, { directConnected, current: entry })
         if (patch) yield* configSvc.updateGlobal(patch)
       }
       yield* dropMemo(addr)
@@ -1443,8 +1444,19 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // есть запуск шага 2 здесь и есть та самая цепочка `native`, которую запрет закрывает.
       // Признак спрашивается у **способа** подключения (учётные данные), а не у режима карточки:
       // режим у такой карточки `facade`, и предикат про режим честно отвечает «не запрещено».
+      //
+      // Четвёртая сторона — **разоружённая запись** (`CorpConnectors.oauthDisarmed`). Она нужна
+      // отдельно от учётных данных: после «Отключить» запись остаётся с `oauth:false` и адресом
+      // целевой системы, а учётных данных уже нет, — и признак способа такой alias не ловит. Звать
+      // на нём `authenticate` бессмысленно и опасно: сегодня попытку останавливает охранник
+      // `MCP.startAuth` (`mcp/index.ts`, D-63), но корп-роут не вправе опираться на чужой охранник
+      // как на единственный (S-V28 п.5: запрет живёт в корп-роутах). Условие записано один раз — в
+      // `oauthDisarmed`, его же спрашивает патч прав (S-V28 п.3).
       const oauthClosed =
-        directConnected || server === undefined || CorpStatus.nativeConnectDisabled({ server, hubConfigured: true })
+        directConnected ||
+        CorpConnectors.oauthDisarmed(entry) ||
+        server === undefined ||
+        CorpStatus.nativeConnectDisabled({ server, hubConfigured: true })
       if (reauth && !oauthClosed) {
         yield* mcpSvc.authenticate(alias).pipe(Effect.catch(() => Effect.void))
       }

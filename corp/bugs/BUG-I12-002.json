@@ -1,0 +1,37 @@
+{
+  "id": "BUG-I12-002",
+  "related_ac": "AC-17, AC-18, AC-127, AC-128, AC-134 (S-A3); AC-07, AC-134, AC-135 (S-C4b)",
+  "severity": "critical",
+  "title": "Вход по SSO в уже запущенном приложении не доводит ключ до провайдера: следующий запрос уходит в LiteLLM без Authorization и возвращает «No api key passed in»",
+  "repro_steps": [
+    "Собранное Desktop-приложение корпоративной сборки (ветка corp/i4-sso-connectors), корп-конфиг задаёт magnit_prod без options.apiKey",
+    "Выйти: opencode corp logout (или «Выйти» в приложении) — запись magnit_prod из auth-store удалена",
+    "Запустить приложение (процесс стартует, когда ключа нет)",
+    "В уже запущенном приложении пройти вход через корпоративный SSO до ready — ключ записан в auth.json",
+    "Не перезапуская приложение, отправить любой запрос в чат моделью magnit_prod/MagnitCopilot"
+  ],
+  "expected": "S-A3: после Auth.set сервер инвалидирует конфиг и провайдеров тем же способом, что upstream-флоу (F6); перезапуск не требуется. S-C4b: первый же запрос уходит на адрес по S-C4a с заголовком Authorization: Bearer <ключ из auth-store> и возвращает ответ модели.",
+  "actual": "Запрос уходит в LiteLLM без заголовка Authorization и возвращается ошибкой «AI_APICallError: Authentication Error, No api key passed in.». Ключ при этом живой: тем же ключом POST /v1/chat/completions отвечает нормально. Состояние держится до перезапуска приложения.",
+  "failing_test": "(на момент заведения — нет; воспроизводящий сценарий передан test-агенту, см. notes)",
+  "evidence": "Живое наблюдение: auth.json с записью magnit_prod (type: api, key_kind: persistent, user_id, team_id) записан в 18:04:44, ошибка в ~/.local/share/opencode/log/opencode.log — в 18:04:51, через 7 секунд после; бандл от 18:02:47, запущен именно он. Лог: 15:04:51.383Z \"llm runtime selected\" llm.runtime=ai-sdk llm.provider=magnit_prod llm.model=MagnitCopilot; 15:04:51.707Z ERROR \"stream error\" providerID=magnit_prod error=\"AI_APICallError: Authentication Error, No api key passed in.\". Воспроизведено автотестом в процессе: старт без ключа -> Auth.set + Config.invalidate() (ровно те два шага, что делал сервер при ready) -> Provider.list() отдаёт magnit_prod с key === undefined, хотя auth.get(magnit_prod).key === ключ. Контрольный прогон: после дизпоуза инстансов тот же вызов отдаёт key === ключ.",
+  "suspected_area": "packages/opencode/src/server/routes/instance/httpapi/handlers/corp.ts::handlePoll — ветка ready звала только configSvc.invalidate(). Config.invalidate() (packages/opencode/src/config/config.ts:671) сбрасывает единственный кэш — глобальный конфиг. Список провайдеров и их ключи живут в состоянии инстанса (packages/opencode/src/provider/provider.ts:1298, InstanceState.make): цикл «load apikeys» читает auth.all() один раз, при построении состояния, и оттуда же берётся options.apiKey (provider.ts:1671). Состояние инстанса сбрасывается ровно одним способом — дизпоузом (packages/opencode/src/effect/instance-registry.ts::disposeInstance через InstanceStore.dispose/disposeAll), которого при входе не выполнял никто: TUI звал instance.dispose() сам (packages/tui/src/component/corp/dialog-corp-login.tsx::finish), Desktop — нет (packages/app/src/components/corp/dialog-corp-login.tsx::finish зовёт только инвалидацию запросов tanstack-query).",
+  "iteration": 12,
+  "status": "fixed",
+  "found_by": "заказчик, живая проверка собранного Desktop-приложения; воспроизведено dev-агентом автотестом",
+  "notes": "Почему отказ виден только на входе, хотя механизм сломан симметрично: охранник S-C4b (packages/opencode/src/corp/model.ts::guard) читает auth-store НАПРЯМУЮ на каждом обращении к модели, а не из состояния провайдера. После выхода он видит, что записи нет, и запрос не отправляется вовсе — правило S-A14 п.4 выглядело выполненным, хотя провайдер точно так же держал (уже отозванный) ключ. После входа охранник видит свежую запись и пропускает запрос — а провайдер отдаёт options без apiKey. Отсюда и «7 секунд после записи ключа». Тем же дефектом был поражён возврат провайдера S-C11 п.4 («доступен без перезапуска»): disabled_providers тоже читается один раз при построении состояния инстанса. Правило S-A3 текущее поведение НЕ допускает (субъект «инвалидирует конфиг/провайдеров» — сервер), диспут по тексту не заводился; замечание к формулировке: скобка «(instance.dispose() + sync.bootstrap() со стороны UI, F6)» называет исполнителем UI, тогда как само предложение возлагает обязанность на сервер, и именно эта двусмысленность позволила обеим сторонам считать, что шаг делает другая. Воспроизводящий сценарий для test-агента оформлен готовым файлом теста (два случая: S-A3 «после входа провайдер получает ключ без перезапуска» и регрессия «одного Config.invalidate() недостаточно»); передан отчётом dev-агента, в дерево не клался — зона тестов не наша.",
+  "fixed_in": {
+    "repo": "opencode",
+    "branch": "corp/i4-sso-connectors",
+    "commits": [
+      {
+        "hash": "7a5cb1b9f5",
+        "message": "corp: S-A3 — вход в живом процессе инвалидирует провайдеров, а не только кэш конфига (BUG-I12-002)",
+        "files": [
+          "packages/opencode/src/server/routes/instance/httpapi/handlers/corp.ts"
+        ]
+      }
+    ]
+  },
+  "fix": "В группе корп-роутов появился общий шаг invalidateProviders(): disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }) — тот же способ, которым upstream отвечает на смену учётных данных (F6, POST /global/dispose в Desktop после auth.set). Дизпоузятся все инстансы, а не текущий: запись auth-store одна на процесс, а состояние провайдеров — на каждый рабочий каталог. Событие global.disposed доводит вторую половину флоу — оболочка перечитывает состояние сама, клиентских правок не потребовалось. Шаг добавлен в три места, ссылающиеся на одну и ту же инвалидацию: ready-ветка handlePoll (S-A3), logout при keyRemoved (S-A14 п.4) и providerEnable (S-C11 п.4). InstanceStore.Service берётся в теле группы, рядом с Auth/Config/MCP: требование запроса, а не слоя, не удовлетворяется композицией слоёв в orchestration.test.ts.",
+  "verification": "bun run --cwd packages/opencode test src/corp — 503 pass / 0 fail; bun test patches.test.ts (из corp/) — 12 pass / 0 fail; bun run --cwd packages/opencode typecheck — чисто; test/server/httpapi-config.test.ts и test/server/httpapi-instance-context.test.ts — 10 pass / 0 fail (сборка слоя сервера с новым требованием). Воспроизводящий сценарий: до правки утверждение «провайдер получил ключ» падало (получено undefined), после — проходит; регрессионный случай «одного Config.invalidate() недостаточно» зафиксирован отдельным тестом."
+}

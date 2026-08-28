@@ -19,10 +19,22 @@ const source = fs.readFileSync(path.join(APP, "components/corp/dialog-connectors
 const connectorPageSource = fs.readFileSync(path.join(APP, "components/corp/dialog-connector.tsx"), "utf8")
 const contextSource = fs.readFileSync(path.join(APP, "context/corp.ts"), "utf8")
 
+/**
+ * Единственность вхождения маркера в тексте (review-i4-rev112-3, риск при H-1): `indexOf` берёт
+ * ПЕРВОЕ совпадение молча. Сегодня каждый маркер этого файла встречается в исходнике ровно один
+ * раз — но появление второго компонента с тем же именем мемо/атрибута увело бы извлечение не туда
+ * без единого красного теста. Проверка ловит это раньше, чем извлечение начнёт врать.
+ */
+function assertSingleOccurrence(text: string, marker: string, at: number) {
+  const second = text.indexOf(marker, at + 1)
+  expect(second, `маркер «${marker}» встречается более одного раза — indexOf возьмёт не то вхождение`).toBe(-1)
+}
+
 /** Содержимое JSX-атрибута/блока, ограниченное балансом фигурных скобок от первой `{` после marker. */
 function blockAfter(text: string, marker: string) {
   const at = text.indexOf(marker)
   expect(at, `не найдено ${marker}`).toBeGreaterThan(-1)
+  assertSingleOccurrence(text, marker, at)
   const open = text.indexOf("{", at + marker.length - 1)
   let depth = 0
   for (let index = open; index < text.length; index++) {
@@ -70,6 +82,23 @@ describe("витрина — заголовок: «Войти»/«Выйти» �
     expect(fallback).toContain('{language.t("corp.connectors.login")}')
   })
 
+  /**
+   * H-1 (review-i4-rev112-3): проверка выше подтверждает, ГДЕ в разметке стоит «Войти» (внутри
+   * fallback-ветки того же <Show>), но не ЧЕМ эта ветка гейтится. Инъекция И-6 меняет
+   * `fallback={<Show when={signedOut()}>` на `when={!signedIn()}` — обе кнопки остаются на своих
+   * местах в разметке, тест выше её не замечает, `describe` ниже (мемо `authenticated`/`signedIn`/
+   * `signedOut`, исполненные из исходника) её тоже не видит: он проверяет только вычисление самих
+   * мемо, а не то, какое из них читает разметка. `signedOut` при этом остаётся объявленным, но
+   * неиспользуемым — `noUnusedLocals` в пакете выключен, поэтому и typecheck молчит. Здесь —
+   * граница между мемо и разметкой: `when=` внутри `<Show>` внутри `fallback=` обязан быть
+   * буквально `signedOut()`, а не логически эквивалентным на вид выражением.
+   */
+  test("H-1: fallback-ветка «Войти» гейтится буквально signedOut(), а не производным !signedIn()", () => {
+    const match = action.match(/fallback=\{\s*<Show when=\{([^}]*)\}>/)
+    expect(match, "не найден <Show when={...}> внутри fallback").not.toBeNull()
+    expect(match![1]).toBe("signedOut()")
+  })
+
   test("AC-287: подпись пользователя и «Обновить» не зависят от состояния входа", () => {
     expect(action).toContain("<Show when={user()}>")
     expect(action).toContain('icon="reset"')
@@ -100,6 +129,7 @@ describe("AC-287, S-Q9 п.(р): признак «Войти»/«Выйти» б�
   function memoBody(marker: string) {
     const at = source.indexOf(marker)
     expect(at, `не найдено ${marker}`).toBeGreaterThan(-1)
+    assertSingleOccurrence(source, marker, at)
     const open = at + marker.length - 1
     expect(source[open], `${marker} не оканчивается «(»`).toBe("(")
     let depth = 0

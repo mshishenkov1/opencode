@@ -331,3 +331,104 @@ describe("TUI — отмена/отказ выхода возвращают на
     expect(loginBranch).toContain("else dialog.clear()")
   })
 })
+
+/**
+ * H-3 (review-i4-rev112-3). Ревизия 1.12 завела на Desktop четыре прогона AC-287 (`app/src/corp/
+ * logout-view.test.ts`, "AC-287, S-Q9 п.(р)"), проверяющих, что видимость «Войти»/«Выйти» берётся
+ * из `authenticated` и ни из чего другого — в том числе не схлопывает третье значение признака
+ * (статус не загружен) ни в «Войти», ни в «Выйти». Паритет S-T11 требует того же от TUI, но ни
+ * один тест `packages/tui/src/corp/` строк `hidden: authenticated() !== false/true` в
+ * `component/corp/dialog-connectors.tsx` не касался: инъекция R-5 (замена `!== false` на
+ * `=== true` в пункте «Войти» — точный аналог схлопывания И-5) проходила зелёной, 105/0.
+ *
+ * Критерий-близнец AC-287 для ряда TUI сейчас не существует (AC-287 привязан к S-D6 — только
+ * Desktop). TEST-AGENT правило не заводит — это зона spec-агента; тест ниже привязан к правилу
+ * S-T11 и должен быть переподписан на новый AC, когда тот появится.
+ *
+ * Приём — тот же, что в `app/src/corp/logout-view.test.ts`: выражение `hidden: …` вынимается ИЗ
+ * ИСХОДНИКА (не пересказывается в тесте) и исполняется как функция от `authenticated()`. Второй
+ * параметр `view` — не потому что текущий код его читает (не читает), а чтобы и текущий код, и
+ * гипотетический регресс вида «видимость снова считается по hub_error каталога» (в TUI это будет
+ * возврат к `view()?.hub_error`, аналог И-4/F-1) исполнялись без ReferenceError и ловились по
+ * значению, а не по исключению при извлечении.
+ */
+describe("TUI витрина — «Войти»/«Выйти» видны по authenticated(), третье значение не схлопывается (S-T11; критерий-близнец AC-287 не заведён)", () => {
+  /** Блок объекта действия `command: "<command>"` в массиве `actions` — от его `{` до парного `}`. */
+  function actionBlock(command: string) {
+    const marker = `command: "${command}"`
+    const at = connectorsSource.indexOf(marker)
+    expect(at, `не найдено ${marker}`).toBeGreaterThan(-1)
+    expect(
+      connectorsSource.indexOf(marker, at + 1),
+      `маркер «${marker}» встречается более одного раза — indexOf возьмёт не то вхождение`,
+    ).toBe(-1)
+    const open = connectorsSource.lastIndexOf("{", at)
+    let depth = 0
+    for (let index = open; index < connectorsSource.length; index++) {
+      if (connectorsSource[index] === "{") depth += 1
+      else if (connectorsSource[index] === "}") {
+        depth -= 1
+        if (depth === 0) return connectorsSource.slice(open, index + 1)
+      }
+    }
+    throw new Error(`объект действия ${command} не закрыт`)
+  }
+
+  /** Символ в символ выражение справа от `hidden:` внутри блока действия — то, что стоит в источнике сейчас. */
+  function hiddenExprOf(command: string) {
+    const block = actionBlock(command)
+    const match = block.match(/hidden:\s*([^\n,]*),/)
+    expect(match, `hidden: не найден в блоке ${command}`).not.toBeNull()
+    return match![1]!.trim()
+  }
+
+  const hiddenLoginExpr = hiddenExprOf("dialog.corp.login")
+  const hiddenLogoutExpr = hiddenExprOf("dialog.corp.logout")
+
+  test("выражения hidden видят только authenticated() — ни view(), ни hub_error, ни catalog не упомянуты", () => {
+    for (const expr of [hiddenLoginExpr, hiddenLogoutExpr]) {
+      expect(expr).not.toContain("view(")
+      expect(expr).not.toContain("hub_error")
+      expect(expr).not.toContain("catalog")
+    }
+  })
+
+  function hiddenFn(expr: string) {
+    return new Function("authenticated", "view", `return (${expr})`) as (
+      authenticated: () => boolean | undefined,
+      view: () => { hub_error?: string } | undefined,
+    ) => boolean
+  }
+  const hiddenLogin = hiddenFn(hiddenLoginExpr)
+  const hiddenLogout = hiddenFn(hiddenLogoutExpr)
+
+  /** Какой из двух пунктов действий окажется видимым (не hidden) — по факту выражений, а не по описанию. */
+  function visibleEntry(authValue: boolean | undefined, viewData: { hub_error?: string } | undefined = {}) {
+    const authenticated = () => authValue
+    const view = () => viewData
+    const loginHidden = hiddenLogin(authenticated, view)
+    const logoutHidden = hiddenLogout(authenticated, view)
+    expect(!loginHidden && !logoutHidden, "«Войти» и «Выйти» одновременно").toBeFalsy()
+    if (!logoutHidden) return "logout"
+    if (!loginHidden) return "login"
+    return "none"
+  }
+
+  test("прогон 1: ключ есть (authenticated:true) → «Выйти»", () => {
+    expect(visibleEntry(true)).toBe("logout")
+  })
+
+  test("прогон 2: ключа нет (authenticated:false), hub_error каталога пуст → «Войти»", () => {
+    expect(visibleEntry(false, {})).toBe("login")
+  })
+
+  test('прогон 3: ключ есть (authenticated:true), hub_error каталога "unauthorized" → «Выйти», а не «Войти»', () => {
+    // hub_error каталога — не тот же сигнал, что authenticated (loadUser() ≠ load()); признак
+    // обязан остаться «Выйти» независимо от того, что лежит в каталоге.
+    expect(visibleEntry(true, { hub_error: "unauthorized" })).toBe("logout")
+  })
+
+  test("прогон 4: статус не загружен (authenticated() — undefined, третье значение) → ни одной из двух", () => {
+    expect(visibleEntry(undefined, {})).toBe("none")
+  })
+})

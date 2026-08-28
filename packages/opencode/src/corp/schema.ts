@@ -218,6 +218,16 @@ export const CatalogServer = Schema.Struct({
   /** Человеческий тип коннектора на языке каталога (S-V22): данные, а не код — клиент их не переводит. */
   type: Schema.optional(Schema.String),
   auth_kind: Schema.optional(Schema.String),
+  /**
+   * Способы подключения (S-V24 п.1) — **дословно, как пришло от источника** (S-V3, ревизия 1.13),
+   * со всеми вложенными блоками и со всеми элементами, включая те, которых эта версия клиента не
+   * разобрала и которые объявила недоступными. Разобранная форма считается отдельно —
+   * `parseAuthMethods`: клиент, сохранивший только «понятые» им способы, при следующем обновлении
+   * приложения показал бы обеднённый список вместо каталога.
+   */
+  auth_methods: Schema.optional(Schema.Unknown),
+  /** Блок прямого подключения (S-V24 п.4) — тем же требованием дословности, что `auth_methods`. */
+  upstream: Schema.optional(Schema.Unknown),
   connection: Schema.optional(Connection),
 }).annotate({ identifier: "CorpCatalogServer" })
 export type CatalogServer = Schema.Schema.Type<typeof CatalogServer>
@@ -367,14 +377,361 @@ function parsePermissionGroupsRest(value: unknown): PermissionGroupsRest {
   }
 }
 
+// --- S-V24: способы подключения карточки и блок `upstream` (ревизия 1.13) ---
+
+/** Тип способа подключения (S-V24 п.1): ровно два значения, третьего контракт не знает. */
+export const AuthMethodType = Schema.Literals(["oauth2", "user_token"])
+export type AuthMethodType = Schema.Schema.Type<typeof AuthMethodType>
+
+/**
+ * Причина недоступности **способа** (S-V28 п.1) — закрытый набор из трёх значений.
+ *
+ * Микроревизией 1.13.1 набор **не расширен**: запрет `mode:"native"` живёт на уровне карточки и
+ * предъявляется полем `connect_mode_unavailable_code` (S-V28 п.2), а не четвёртым значением здесь.
+ */
+export const AuthMethodUnavailableCode = Schema.Literals(["catalog_unavailable", "oauth_disabled", "env_header"])
+export type AuthMethodUnavailableCode = Schema.Schema.Type<typeof AuthMethodUnavailableCode>
+
+/**
+ * Описание поля ввода токена (S-V24 п.2) — то и только то, что нужно оболочке, чтобы нарисовать
+ * форму. Секретов здесь не бывает: подпись, подсказка, ссылка на документацию и границы длины.
+ */
+export const AuthMethodField = Schema.Struct({
+  label: Schema.String,
+  secret: Schema.optional(Schema.Boolean),
+  hint: Schema.optional(Schema.String),
+  docs_url: Schema.optional(Schema.String),
+  placeholder: Schema.optional(Schema.String),
+  min_length: Schema.optional(Schema.Number),
+  max_length: Schema.optional(Schema.Number),
+}).annotate({ identifier: "CorpAuthMethodField" })
+export type AuthMethodField = Schema.Schema.Type<typeof AuthMethodField>
+
+/**
+ * Способ подключения в ответе `GET /corp/catalog` (S-V24 п.7).
+ *
+ * Блоки `verify`, `exchange`, `revoke` и заголовки `upstream` наружу **не отдаются**: их исполняет
+ * серверная часть, и оболочке они не нужны. `unavailable_reason` — текст каталога, показываемый
+ * дословно (S-I6).
+ */
+export const AuthMethodView = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  type: AuthMethodType,
+  available: Schema.Boolean,
+  unavailable_code: Schema.NullOr(AuthMethodUnavailableCode),
+  unavailable_reason: Schema.optional(Schema.String),
+  field: Schema.optional(AuthMethodField),
+}).annotate({ identifier: "CorpAuthMethodView" })
+export type AuthMethodView = Schema.Schema.Type<typeof AuthMethodView>
+
+/** Разобранное описание поля ввода с подставленными умолчаниями (S-V24 п.2). */
+export interface AuthMethodFieldSpec {
+  label: string
+  /** Умолчание `true`: поле ввода маскируется, пока каталог явно не сказал обратного. */
+  secret: boolean
+  hint?: string
+  docs_url?: string
+  placeholder?: string
+  min_length?: number
+  max_length?: number
+}
+
+/** Блок проверки токена (S-V24 п.2, S-V25 п.2). Исполняется серверной частью и наружу не уходит. */
+export interface AuthMethodVerify {
+  url: string
+  method: string
+  headers: Record<string, string>
+  /** Пустой массив означает «любой код 2xx» — умолчание `expect_status` (S-V24 п.2). */
+  expect_status: number[]
+  account_field?: string
+  require_account: boolean
+}
+
+/** Блок обмена введённого токена на выпущенный (S-V25 п.5). */
+export interface AuthMethodExchange {
+  url: string
+  method: string
+  headers: Record<string, string>
+  body?: unknown
+  description: string
+  expect_status: number
+  token_field: string
+  token_id_field?: string
+}
+
+/** Блок отзыва выпущенного токена (S-V27 п.2). */
+export interface AuthMethodRevoke {
+  url: string
+  method: string
+  headers: Record<string, string>
+  body?: unknown
+}
+
+/**
+ * Разобранный способ подключения (S-V24 п.1–3, п.6).
+ *
+ * Признаки недоступности здесь **не вычисляются**: строки таблицы S-V28 п.1 считает один общий
+ * модуль `corp/status.ts` (S-V28 п.3), а разбор лишь называет факты, на которые та таблица смотрит.
+ */
+export interface ParsedAuthMethod {
+  id: string
+  title: string
+  type: AuthMethodType
+  /** Строка «а» таблицы S-V28 п.1: `available: false` в карточке каталога. */
+  catalogAvailable: boolean
+  /** Строка «б»: `available` присутствует и **не** булево — деградация в сторону запрета. */
+  availableInvalid: boolean
+  /** Текст причины из каталога; показывается дословно (S-I6). */
+  unavailable_reason?: string
+  /** Строка «г»: значение хотя бы одного заголовка способа начинается с `env:` (S-V24 п.6). */
+  envHeader: boolean
+  field?: AuthMethodFieldSpec
+  verify?: AuthMethodVerify
+  exchange?: AuthMethodExchange
+  revoke?: AuthMethodRevoke
+}
+
+/**
+ * Блок `upstream` карточки (S-V24 п.4): адрес MCP-сервера целевой системы и шаблоны заголовков.
+ *
+ * `envHeader` — тот же признак строки «г», что у способа: заголовок со значением `env:VAR`
+ * приложению подставить нечем, и способ объявляется недоступным, а не подставляется литералом.
+ */
+export interface ParsedUpstream {
+  url: string
+  credential_headers: Record<string, string>
+  static_headers?: Record<string, string>
+  envHeader: boolean
+}
+
+/** Абсолютный адрес со схемой `http`/`https` — единственная пригодная форма адреса (S-V24 п.2, п.4). */
+export function isAbsoluteHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value === "") return false
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
+/** Значение заголовка, которое приложению подставить нечем (S-V24 п.6): переменных сборки у него нет. */
+export function isEnvReference(value: string): boolean {
+  return value.startsWith("env:")
+}
+
+/**
+ * Набор заголовков «имя → значение». Значения не-строк отбрасываются поэлементно (S-V14 п.3);
+ * значение, не являющееся объектом, — как отсутствующее.
+ */
+function headerMap(value: unknown): Record<string, string> | undefined {
+  const raw = record(value)
+  if (!raw) return undefined
+  const headers: Record<string, string> = {}
+  for (const [name, entry] of Object.entries(raw)) if (typeof entry === "string" && name !== "") headers[name] = entry
+  return headers
+}
+
+function hasEnvHeader(...maps: (Record<string, string> | undefined)[]): boolean {
+  return maps.some((map) => map !== undefined && Object.values(map).some(isEnvReference))
+}
+
+/** Ожидаемые коды ответа: число, массив чисел либо ничего («любой 2xx»). */
+function expectStatuses(value: unknown): number[] {
+  if (typeof value === "number") return [value]
+  if (Array.isArray(value)) return value.filter((entry): entry is number => typeof entry === "number")
+  return []
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+/** Разбор блока `field` (S-V24 п.2): без непустой подписи форму нечем подписать — способ отбрасывается. */
+function parseField(value: unknown): AuthMethodFieldSpec | undefined {
+  const raw = record(value)
+  if (!raw) return undefined
+  const label = coreString(raw["label"])
+  if (label === undefined) return undefined
+  const secret = typeof raw["secret"] === "boolean" ? raw["secret"] : true
+  const hint = optionalString(raw["hint"])
+  const docsUrl = optionalString(raw["docs_url"])
+  const placeholder = optionalString(raw["placeholder"])
+  const minLength = positiveNumber(raw["min_length"])
+  const maxLength = positiveNumber(raw["max_length"])
+  return {
+    label,
+    secret,
+    ...(hint === undefined ? {} : { hint }),
+    ...(docsUrl === undefined ? {} : { docs_url: docsUrl }),
+    ...(placeholder === undefined ? {} : { placeholder }),
+    ...(minLength === undefined ? {} : { min_length: minLength }),
+    ...(maxLength === undefined ? {} : { max_length: maxLength }),
+  }
+}
+
+/** Разбор блока `verify` (S-V24 п.2): без пригодного адреса проверять токен нечем. */
+function parseVerify(value: unknown): AuthMethodVerify | undefined {
+  const raw = record(value)
+  if (!raw) return undefined
+  if (!isAbsoluteHttpUrl(raw["url"])) return undefined
+  const accountField = coreString(raw["account_field"])
+  return {
+    url: raw["url"],
+    method: coreString(raw["method"]) ?? "GET",
+    headers: headerMap(raw["headers"]) ?? {},
+    expect_status: expectStatuses(raw["expect_status"]),
+    ...(accountField === undefined ? {} : { account_field: accountField }),
+    require_account: raw["require_account"] === true,
+  }
+}
+
+/** Разбор блока `revoke` (S-V27 п.2): без пригодного адреса отзыва у способа нет. */
+function parseRevoke(value: unknown): AuthMethodRevoke | undefined {
+  const raw = record(value)
+  if (!raw) return undefined
+  if (!isAbsoluteHttpUrl(raw["url"])) return undefined
+  return {
+    url: raw["url"],
+    method: coreString(raw["method"]) ?? "POST",
+    headers: headerMap(raw["headers"]) ?? {},
+    ...(raw["body"] === undefined ? {} : { body: raw["body"] }),
+  }
+}
+
+/** Разбор блока `exchange` (S-V25 п.5): без адреса и имени поля с токеном обмену неоткуда взяться. */
+function parseExchange(value: unknown): AuthMethodExchange | undefined {
+  const raw = record(value)
+  if (!raw) return undefined
+  if (!isAbsoluteHttpUrl(raw["url"])) return undefined
+  const tokenField = coreString(raw["token_field"])
+  if (tokenField === undefined) return undefined
+  const tokenIdField = coreString(raw["token_id_field"])
+  return {
+    url: raw["url"],
+    method: coreString(raw["method"]) ?? "POST",
+    headers: headerMap(raw["headers"]) ?? {},
+    ...(raw["body"] === undefined ? {} : { body: raw["body"] }),
+    description: coreString(raw["description"]) ?? "OpenCode",
+    expect_status: positiveNumber(raw["expect_status"]) ?? 200,
+    token_field: tokenField,
+    ...(tokenIdField === undefined ? {} : { token_id_field: tokenIdField }),
+  }
+}
+
+/**
+ * Разбор одного способа подключения (S-V24 п.1–3).
+ *
+ * `undefined` — ядро способа не разобрано: способ отбрасывается **поодиночке**, остальные элементы
+ * массива принимаются, а карточка не отбрасывается никогда.
+ */
+export function parseAuthMethod(value: unknown): ParsedAuthMethod | undefined {
+  const raw = record(value)
+  if (!raw) return undefined
+  const id = coreString(raw["id"])
+  if (id === undefined) return undefined
+  const title = optionalString(raw["title"])
+  if (title === undefined) return undefined
+  const type = decode(AuthMethodType, raw["type"])
+  if (type === undefined) return undefined
+
+  const field = parseField(raw["field"])
+  const verify = parseVerify(raw["verify"])
+  // S-V24 п.2: у `user_token` подпись поля и адрес проверки — часть ядра способа.
+  if (type === "user_token" && (field === undefined || verify === undefined)) return undefined
+
+  const exchange = parseExchange(raw["exchange"])
+  // S-V24 п.2: блок отзыва ищется в двух местах и в этом порядке — `exchange.revoke`, затем
+  // `<способ>.revoke`. Первое найденное используется, второе не читается: в действующем каталоге
+  // Hub блок лежит внутри `exchange`, а §3.2 перечисляет его на уровне способа.
+  const exchangeRecord = record(raw["exchange"])
+  const revoke = parseRevoke(exchangeRecord?.["revoke"]) ?? parseRevoke(raw["revoke"])
+
+  // S-V24 п.3: `available`, не являющееся булевым, трактуется как `false` — деградация
+  // неразобранного признака идёт **в сторону запрета** (единственное отступление от S-V14 п.3).
+  const availablePresent = raw["available"] !== undefined
+  const availableInvalid = availablePresent && typeof raw["available"] !== "boolean"
+  const catalogAvailable = availableInvalid ? false : raw["available"] !== false
+  const reason = optionalString(raw["unavailable_reason"])
+
+  return {
+    id,
+    title,
+    type,
+    catalogAvailable,
+    availableInvalid,
+    ...(reason === undefined ? {} : { unavailable_reason: reason }),
+    envHeader: hasEnvHeader(verify?.headers, exchange?.headers, revoke?.headers),
+    ...(field === undefined ? {} : { field }),
+    ...(verify === undefined ? {} : { verify }),
+    ...(exchange === undefined ? {} : { exchange }),
+    ...(revoke === undefined ? {} : { revoke }),
+  }
+}
+
+/**
+ * Разбор массива способов (S-V24 п.1). Значение, не являющееся массивом, трактуется как
+ * отсутствующее (S-V14 п.3); неразобранный элемент выбрасывается поодиночке.
+ */
+export function parseAuthMethods(value: unknown): ParsedAuthMethod[] {
+  if (!Array.isArray(value)) return []
+  const methods: ParsedAuthMethod[] = []
+  for (const entry of value) {
+    const method = parseAuthMethod(entry)
+    if (method) methods.push(method)
+  }
+  return methods
+}
+
+/**
+ * Разбор блока `upstream` (S-V24 п.4).
+ *
+ * `undefined` — прямым режимом этот коннектор не подключается; карточка при этом **не**
+ * отбрасывается и прочие её способы не ломаются.
+ */
+export function parseUpstream(value: unknown): ParsedUpstream | undefined {
+  const raw = record(value)
+  if (!raw) return undefined
+  if (!isAbsoluteHttpUrl(raw["url"])) return undefined
+  const credential = headerMap(raw["credential_headers"])
+  if (!credential || Object.keys(credential).length === 0) return undefined
+  const staticHeaders = headerMap(raw["static_headers"])
+  return {
+    url: raw["url"],
+    credential_headers: credential,
+    ...(staticHeaders === undefined ? {} : { static_headers: staticHeaders }),
+    envHeader: hasEnvHeader(credential, staticHeaders),
+  }
+}
+
+/** Подстановка `{{access_token}}` и прочих значений в шаблон заголовка или тела (S-V25 п.2, п.5). */
+export function substitute(template: string, values: Record<string, string>): string {
+  return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (match, name: string) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? values[name]! : match,
+  )
+}
+
+/** Тот же шаблонизатор для набора заголовков: имена не трогаются, подставляются только значения. */
+export function substituteHeaders(
+  headers: Record<string, string>,
+  values: Record<string, string>,
+): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const [name, value] of Object.entries(headers)) result[name] = substitute(value, values)
+  return result
+}
+
 export type ServerResult = { ok: true; server: CatalogServer } | { ok: false; alias?: string; reason: string }
 
 /**
  * Разбор одной карточки каталога (S-V14 п.2–4).
  *
  * Ядро — `alias`, `title`, `mode`, `mcp_url`; список закрыт и расширению без отдельного решения
- * спецификации не подлежит. Всё остальное деградирует. Неизвестные поля карточки (`auth_methods`
- * и любые будущие) игнорируются и причиной отказа не являются.
+ * спецификации не подлежит. Всё остальное деградирует. Неизвестные поля карточки игнорируются и
+ * причиной отказа не являются. Ревизией 1.13 перечень ядра **не расширен** (S-V24 п.1): карточка
+ * без `auth_methods` и без `upstream` принимается ровно как прежде, а неразобранный способ
+ * выбрасывается поодиночке.
  */
 export function parseCatalogServer(value: unknown): ServerResult {
   const raw = record(value)
@@ -416,6 +773,10 @@ export function parseCatalogServer(value: unknown): ServerResult {
       ...(raw["permission_model"] === undefined ? {} : { permission_model: raw["permission_model"] }),
       // То же требование ревизия 1.10 распространяет на словарь разрешений (S-V20, S-V3).
       ...(raw["permission_groups"] === undefined ? {} : { permission_groups: raw["permission_groups"] }),
+      // Ревизия 1.13 — то же дословное хранение для способов подключения и блока `upstream`
+      // (S-V24 п.5, S-V3): разбираются они отдельно, а в кэш и наружу уходит исходное значение.
+      ...(raw["auth_methods"] === undefined ? {} : { auth_methods: raw["auth_methods"] }),
+      ...(raw["upstream"] === undefined ? {} : { upstream: raw["upstream"] }),
       ...(connection === undefined ? {} : { connection }),
     },
   }
@@ -579,6 +940,48 @@ export type CardAction = Schema.Schema.Type<typeof CardAction>
  */
 export const CardState = Schema.Literals(["never", "failed", "lost", "disconnected", "connected"])
 export type CardState = Schema.Schema.Type<typeof CardState>
+
+/**
+ * Способ подключения карточки (S-V7, ревизия 1.13) — закрытый набор из четырёх значений.
+ *
+ * `"native"` из набора **не удалён** микроревизией 1.13.1 (S-V28 п.6): пока действует запрет,
+ * сервер этого значения не отдаёт, но контракт его знает, а обе оболочки сохраняют его ветвь.
+ */
+export const ConnectMode = Schema.Literals(["direct", "native", "facade", "none"])
+export type ConnectMode = Schema.Schema.Type<typeof ConnectMode>
+
+/**
+ * Причина отсутствия действия «Подключить» **на уровне карточки** (S-V28 п.2, микроревизия 1.13.1).
+ *
+ * Поле непусто только при `connect_mode: "none"`. `no_method` — тотализирующее умолчание: на данных
+ * действующего контракта (`mode ∈ {native, facade}`) оно недостижимо и объявлено, чтобы разбор
+ * оставался тотальным.
+ */
+export const ConnectModeUnavailableCode = Schema.Literals(["oauth_disabled", "facade_needs_hub", "no_method"])
+export type ConnectModeUnavailableCode = Schema.Schema.Type<typeof ConnectModeUnavailableCode>
+
+/** Исход проверки токена (S-V25 п.3) — закрытый набор из пяти значений. */
+export const VerifyResult = Schema.Literals([
+  "verified",
+  "account_missing",
+  "token_rejected",
+  "verify_failed",
+  "upstream_unreachable",
+])
+export type VerifyResult = Schema.Schema.Type<typeof VerifyResult>
+
+/** Исход обмена токена (S-V25 п.5) — закрытый набор из четырёх значений. */
+export const ExchangeResult = Schema.Literals([
+  "exchanged",
+  "exchange_denied",
+  "exchange_failed",
+  "exchange_unreachable",
+])
+export type ExchangeResult = Schema.Schema.Type<typeof ExchangeResult>
+
+/** Исход отзыва выпущенного токена (S-V27 п.2) — закрытый набор из четырёх значений. */
+export const RevokeResult = Schema.Literals(["skipped", "revoked", "not_revoked", "unreachable"])
+export type RevokeResult = Schema.Schema.Type<typeof RevokeResult>
 
 // --- Ответы корп-роутов (S-A1, S-V1) ---
 
@@ -778,6 +1181,26 @@ export const CatalogCard = Schema.Struct({
    * него не выставляется.
    */
   permissions_need_hub: Schema.optional(Schema.Boolean),
+  /**
+   * Способ подключения карточки (S-V7, ревизия 1.13): по нему оболочка решает, показывать ли форму
+   * ввода токена, вести ли в браузер или назвать причину. Вычисляет его общий модуль
+   * `corp/status.ts`; ни Desktop, ни TUI второй копии условия не заводят (S-V28 п.3).
+   */
+  connect_mode: Schema.optional(ConnectMode),
+  /**
+   * Причина отсутствия действия «Подключить» на уровне карточки (S-V28 п.2, микроревизия 1.13.1).
+   * Непусто **только** при `connect_mode: "none"`; по этому полю — а не по одному лишь
+   * `connect_mode` — оболочка разводит неактивное действие (`oauth_disabled`) и прежнее поведение
+   * ревизии 1.11 (`facade_needs_hub`).
+   */
+  connect_mode_unavailable_code: Schema.optional(ConnectModeUnavailableCode),
+  /** Разобранные способы подключения с признаком доступности (S-V24 п.7). */
+  auth_methods: Schema.optional(Schema.mutable(Schema.Array(AuthMethodView))),
+  /**
+   * Есть ли для этого alias сохранённые учётные данные (S-V26 п.6). Это **всё**, что о хранилище
+   * видно снаружи: ни значения токена, ни его длины, ни производных наружу не уходит.
+   */
+  has_credentials: Schema.optional(Schema.Boolean),
   error: Schema.optional(Schema.String),
   /** Класс ошибки состояний 2 и 3 таблицы S-V16 (S-V19): по нему карточка выбирает объяснение. */
   error_class: Schema.optional(ConnectErrorClass),
@@ -821,9 +1244,35 @@ export const ConnectorResult = Schema.Struct({
    * `error` (код S-A5) он не заменяет — тот отвечает на другой вопрос.
    */
   error_class: Schema.optional(ConnectErrorClass),
+  /**
+   * Исход отзыва выпущенного токена при отключении прямо подключённой карточки (S-V27 п.2).
+   * `skipped` («звать было некого») и `unreachable` («позвали, не ответил») — разные события.
+   */
+  revoke: Schema.optional(RevokeResult),
   hub_error: Schema.optional(Code),
 }).annotate({ identifier: "CorpConnectorResult" })
 export type ConnectorResult = Schema.Schema.Type<typeof ConnectorResult>
+
+/**
+ * Ответ прямого подключения токеном (S-V1 ревизии 1.13, S-V25).
+ *
+ * **Значение токена не возвращается ни в одном ответе, включая успешный** (S-V26 п.6): наружу о
+ * хранилище видно ровно `credentials_saved` и, если целевая система его назвала, `account`.
+ */
+export const ConnectTokenResult = Schema.Struct({
+  alias: Schema.String,
+  status: CardStatus,
+  /** `id` способа, которым выполнялось подключение (S-V25 п.1, строка 2). */
+  auth_method: Schema.String,
+  verify_result: VerifyResult,
+  /** Код ответа целевой системы, когда он был; при `upstream_unreachable` поля нет. */
+  verify_status: Schema.optional(Schema.Number),
+  account: Schema.optional(Schema.String),
+  /** `null` — блока `exchange` у способа нет: отсутствие обмена не исход и не предупреждение. */
+  exchange_result: Schema.NullOr(ExchangeResult),
+  credentials_saved: Schema.Boolean,
+}).annotate({ identifier: "CorpConnectTokenResult" })
+export type ConnectTokenResult = Schema.Schema.Type<typeof ConnectTokenResult>
 
 /**
  * Ответ «Убрать из списка» (S-V17, S-V1).
@@ -835,6 +1284,8 @@ export const ForgetResult = Schema.Struct({
   alias: Schema.String,
   status: CardStatus,
   removed: Schema.Boolean,
+  /** Исход отзыва выпущенного токена (S-V27 п.2, п.4): те же четыре значения, что у «Отключить». */
+  revoke: Schema.optional(RevokeResult),
   hub_error: Schema.optional(Code),
 }).annotate({ identifier: "CorpForgetResult" })
 export type ForgetResult = Schema.Schema.Type<typeof ForgetResult>

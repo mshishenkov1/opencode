@@ -1,5 +1,5 @@
 import * as CorpErrors from "./errors"
-import type * as CorpSchema from "./schema"
+import * as CorpSchema from "./schema"
 
 /**
  * Вычисление статуса карточки витрины (S-V6, S-Q9).
@@ -29,6 +29,16 @@ export interface Input {
   everConnectedLocally?: boolean
   /** Каталог отдан из протухшего кэша (S-V3). */
   stale: boolean
+  /**
+   * Карточка подключена **прямым** способом (S-V29 п.4): для alias есть применимая запись
+   * хранилища (S-V26 п.3) и `mcp.<alias>.url` равен `upstream.url`.
+   *
+   * Тогда поле `connection` карточки каталога на её состояние не влияет **вовсе**: запись
+   * подключения на стороне Hub описывает другое подключение того же пользователя, а не это.
+   * Признак «подключение состоялось» (S-V15) ставится по локальному наблюдению `connected` —
+   * ветка (б) правила для прямо подключённой карточки не применяется.
+   */
+  directConnected?: boolean
   /**
    * Задан ли адрес Hub в этой сборке (S-C10 п.7, S-V16, D-43).
    *
@@ -111,7 +121,9 @@ function facadeNeedsHub(input: Input) {
 
 export function compute(input: Input): Card {
   const deprecated = input.server?.status === "deprecated"
-  const connection = input.server?.connection?.status
+  // S-V29 п.4: у прямо подключённой карточки запись подключения Hub не читается вовсе — ни как
+  // доказательство признака S-V15, ни как повод объявить состояние «Соединение потеряно».
+  const connection = input.directConnected === true ? undefined : input.server?.connection?.status
 
   // S-V15 п.1: признак истинен по локальной истории (а) либо по записи подключения Hub (б).
   // Запись `mcp.<alias>` в конфиге признаком не является — она появляется и у неудачной попытки.
@@ -268,4 +280,181 @@ export const DEFAULT_PRESET = "readonly"
  */
 export function oauthScope(server: Pick<CorpSchema.CatalogServer, "alias" | "mode">, preset: string) {
   return server.mode === "facade" ? `${server.alias}:${preset}` : undefined
+}
+
+// --- S-V28: программный запрет OAuth-путей подключения (ревизия 1.13, микроревизия 1.13.1) ---
+
+/**
+ * Действует ли запрет OAuth-путей подключения (S-V28 п.7, D-62).
+ *
+ * **Одна** чистая функция без аргументов, и её спрашивают ровно две точки: строка «в» таблицы
+ * S-V28 п.1 (способ `type:"oauth2"`) и строка «б» таблицы S-V28 п.2 (режим `mode:"native"`).
+ * Второго условия, второго флага и второй переменной сборки нет: когда OAuth-приложения целевых
+ * систем будут выданы, запрет снимается изменением **этой** функции и ничем больше — ни экраны,
+ * ни роуты, ни словари, ни контракт каталога править не требуется.
+ *
+ * Оба запрета снимаются вместе, а не по отдельности: у них одна причина («OAuth-приложения не
+ * выданы») и одно событие снятия. Раздельные переключатели создали бы состояния, за которыми не
+ * стоит ни одного факта, а частичное снятие молча вернуло бы браузерный путь, который заказчик
+ * закрыл. Если события когда-нибудь разойдутся, предикат расщепляется на два **в этой же**
+ * функции — обе точки вызова уже готовы принять разные ответы (заранее закладывать это правило
+ * запрещает: неиспользуемая гибкость здесь дороже однострочной правки потом).
+ */
+export function oauthDisabled(): boolean {
+  return true
+}
+
+/**
+ * Снятие запрета в вызове (S-V28 п.7, AC-314, AC-342): **одно** значение на обе таблицы.
+ *
+ * Умолчание — ответ предиката; явное значение передают тесты снятия запрета, и оно обязано
+ * доходить до обеих точек, иначе «снятие одним переключением» проверить было бы нечем.
+ */
+export interface OauthBanOptions {
+  oauthDisabled?: boolean
+}
+
+function banActive(options: OauthBanOptions | undefined): boolean {
+  return options?.oauthDisabled ?? oauthDisabled()
+}
+
+/** Доступность способа подключения (S-V28 п.1): признак и его причина. */
+export interface MethodAvailability {
+  available: boolean
+  /** `null` у доступного способа; иначе — первая подошедшая строка таблицы S-V28 п.1. */
+  unavailableCode: CorpSchema.AuthMethodUnavailableCode | null
+}
+
+/**
+ * Доступность одного способа (S-V28 п.1). Порядок строк таблицы — порядок проверок, и при
+ * нескольких выполненных условиях берётся **первая** строка:
+ * а) `available: false` в карточке каталога → `catalog_unavailable`;
+ * б) `available` присутствует и не булево → `catalog_unavailable` (деградация в сторону запрета);
+ * в) `type: "oauth2"` — **безусловно, независимо от `available`** → `oauth_disabled`;
+ * г) значение любого заголовка способа или блока `upstream` начинается с `env:` → `env_header`.
+ *
+ * Строка «в» **спрашивает предикат** (п.7), а не повторяет условие у себя: второго места, где
+ * записано «OAuth выключен», в коде нет.
+ */
+export function methodAvailability(
+  method: CorpSchema.ParsedAuthMethod,
+  input: { upstreamEnvHeader?: boolean } & OauthBanOptions = {},
+): MethodAvailability {
+  if (!method.catalogAvailable) return { available: false, unavailableCode: "catalog_unavailable" }
+  if (method.availableInvalid) return { available: false, unavailableCode: "catalog_unavailable" }
+  if (method.type === "oauth2" && banActive(input)) return { available: false, unavailableCode: "oauth_disabled" }
+  if (method.envHeader || input.upstreamEnvHeader === true)
+    return { available: false, unavailableCode: "env_header" }
+  return { available: true, unavailableCode: null }
+}
+
+/** Данные карточки, по которым считается способ подключения (S-V7, S-V28 п.2). */
+export interface ConnectInput {
+  /** Карточка каталога; `undefined` — alias в каталоге отсутствует (правило 1 S-V6). */
+  server?: CorpSchema.CatalogServer
+  /** Задан ли адрес Hub в этой сборке (S-C10 п.7): от него зависит строка 3 таблицы S-V7. */
+  hubConfigured?: boolean
+}
+
+/** Разобранные способы карточки вместе с их доступностью (S-V24 п.7, S-V28 п.1). */
+export function authMethods(
+  input: ConnectInput & OauthBanOptions,
+): { method: CorpSchema.ParsedAuthMethod; availability: MethodAvailability }[] {
+  const upstream = CorpSchema.parseUpstream(input.server?.upstream)
+  return CorpSchema.parseAuthMethods(input.server?.auth_methods).map((method) => ({
+    method,
+    availability: methodAvailability(method, {
+      ...(upstream?.envHeader === true ? { upstreamEnvHeader: true } : {}),
+      ...(input.oauthDisabled === undefined ? {} : { oauthDisabled: input.oauthDisabled }),
+    }),
+  }))
+}
+
+/**
+ * Способ подключения карточки (S-V7, таблица ревизии 1.13). Порядок строк — порядок проверок:
+ * 1) разобран `upstream` **и** есть хотя бы один доступный способ `user_token` → `"direct"`;
+ * 2) иначе `mode: "native"` **и** запрет OAuth снят → `"native"`;
+ * 3) иначе `mode: "facade"` и адрес Hub задан → `"facade"`;
+ * 4) иначе → `"none"`.
+ *
+ * Прямой режим сильнее фасада: при обоих применимых вариантах побеждает строка 1 — сборка
+ * переходного периода обязана вести себя как сборка целевого состояния.
+ */
+export function connectMode(input: ConnectInput & OauthBanOptions): CorpSchema.ConnectMode {
+  const server = input.server
+  if (!server) return "none"
+  const upstream = CorpSchema.parseUpstream(server.upstream)
+  const direct =
+    upstream !== undefined &&
+    authMethods(input).some((entry) => entry.method.type === "user_token" && entry.availability.available)
+  if (direct) return "direct"
+  // Строка 2 спрашивает тот же предикат, что строка «в» таблицы S-V28 п.1 (п.7): при действующем
+  // запрете строка не срабатывает и выбор идёт дальше — до строки 4.
+  if (server.mode === "native") return banActive(input) ? "none" : "native"
+  if (server.mode === "facade" && input.hubConfigured !== false) return "facade"
+  return "none"
+}
+
+/**
+ * Причина отсутствия действия «Подключить» на уровне карточки (S-V28 п.2). Порядок строк «а»–«г»
+ * обязателен, и берётся первая подошедшая:
+ * а) `connect_mode` вычислился не в `"none"` → `null`: действие «Подключить» работает;
+ * б) `mode: "native"` **и** запрет действует → `"oauth_disabled"`;
+ * в) `mode: "facade"` и адрес Hub не задан → `"facade_needs_hub"` (прежнее поведение ревизии 1.11);
+ * г) иначе → `"no_method"`.
+ *
+ * Отдельного кода причины для `native` не заводится (D-62): пользователю строка «б» говорит ровно
+ * то же, что строка «в» таблицы S-V28 п.1, и снимается тем же одним предикатом. Различие
+ * «способ» / «карточка» несёт **имя поля**, а не второе значение.
+ */
+export function connectModeUnavailableCode(
+  input: ConnectInput & OauthBanOptions,
+): CorpSchema.ConnectModeUnavailableCode | null {
+  if (connectMode(input) !== "none") return null
+  const server = input.server
+  if (server?.mode === "native" && banActive(input)) return "oauth_disabled"
+  if (server?.mode === "facade" && input.hubConfigured === false) return "facade_needs_hub"
+  return "no_method"
+}
+
+/**
+ * Способы карточки в наблюдаемой форме (S-V24 п.7): то и только то, что уходит в ответ
+ * `GET /corp/catalog`.
+ *
+ * Блоки `verify`, `exchange`, `revoke` и заголовки `upstream` сюда **не попадают**: их исполняет
+ * серверная часть, и оболочке они не нужны. Способ `oauth2` присутствует со своими `id`, `title` и
+ * `type` и при этом недоступен: «не разобран» и «недоступен» — разные состояния, и реализация,
+ * выбрасывающая такие способы при разборе, правило нарушает (S-V28 п.6).
+ *
+ * `unavailable_reason` показывается **только** там, где его называет каталог (строка «а» таблицы
+ * S-V28 п.1): у прочих строк текст берётся из словаря, а не из данных.
+ */
+export function authMethodViews(input: ConnectInput & OauthBanOptions): CorpSchema.AuthMethodView[] {
+  return authMethods(input).map(({ method, availability }) => {
+    const fromCatalog =
+      availability.unavailableCode === "catalog_unavailable" && !method.availableInvalid
+        ? method.unavailable_reason
+        : undefined
+    return {
+      id: method.id,
+      title: method.title,
+      type: method.type,
+      available: availability.available,
+      unavailable_code: availability.unavailableCode,
+      ...(fromCatalog === undefined || fromCatalog === "" ? {} : { unavailable_reason: fromCatalog }),
+      ...(method.field === undefined
+        ? {}
+        : {
+            field: {
+              label: method.field.label,
+              secret: method.field.secret,
+              ...(method.field.hint === undefined ? {} : { hint: method.field.hint }),
+              ...(method.field.docs_url === undefined ? {} : { docs_url: method.field.docs_url }),
+              ...(method.field.placeholder === undefined ? {} : { placeholder: method.field.placeholder }),
+              ...(method.field.min_length === undefined ? {} : { min_length: method.field.min_length }),
+              ...(method.field.max_length === undefined ? {} : { max_length: method.field.max_length }),
+            },
+          }),
+    }
+  })
 }

@@ -50,10 +50,67 @@ export class CorpBadRequestError extends Schema.ErrorClass<CorpBadRequestError>(
       "permission_groups_unavailable",
       "facade_needs_hub",
       "permissions_need_hub",
+      // S-V29 п.1: один alias — одно подключение. Подключить фасадным способом alias, у которого
+      // есть действующие прямые учётные данные, нельзя, пока они не удалены отключением: смена
+      // способа означает смену того, кто хранит учётные данные, и молчаливой она не бывает.
+      "direct_connected",
     ]),
   },
   { httpApiStatus: 400 },
 ) {}
+
+/**
+ * Ошибка запроса прямого подключения (S-V25 п.1, строки 2 и 5).
+ *
+ * Строки 2 и 5 таблицы дают один и тот же код и различаются только моментом срабатывания — это не
+ * два разных исхода, и различать их пользователю не требуется. `message` называет, что именно не
+ * годится в запросе; текста целевой системы в нём нет.
+ */
+export class CorpInvalidRequestError extends Schema.ErrorClass<CorpInvalidRequestError>("CorpInvalidRequestError")(
+  { error: Schema.Literal("invalid_request"), message: Schema.String },
+  { httpApiStatus: 400 },
+) {}
+
+/** Alias отсутствует в действующем каталоге (S-V25 п.1, строка 1). */
+export class CorpNotFoundError extends Schema.ErrorClass<CorpNotFoundError>("CorpNotFoundError")(
+  { error: Schema.Literal("not_found") },
+  { httpApiStatus: 404 },
+) {}
+
+/**
+ * Способ подключения недоступен (S-V28 п.5): тот же код и то же имя ошибки, что у Hub (I-3 R-U7), —
+ * совпадение намеренное: механизм один, меняется только место, где он живёт.
+ *
+ * Отказ выдаётся **до единого исходящего запроса** и до любой записи: ни `mcp.<alias>` в конфиге,
+ * ни записи в хранилище, ни открытого браузера. Запрос, посланный мимо интерфейса (curl, скрипт,
+ * старая сборка оболочки), получает тот же ответ, что и кнопка.
+ */
+export class CorpAuthMethodUnavailableError extends Schema.ErrorClass<CorpAuthMethodUnavailableError>(
+  "CorpAuthMethodUnavailableError",
+)(
+  {
+    error: Schema.Literal("auth_method_unavailable"),
+    unavailable_code: Schema.Literals(["catalog_unavailable", "oauth_disabled", "env_header"]),
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {}
+
+/** У карточки не разобран блок `upstream` — прямым режимом она не подключается (S-V25 п.1, строка 4). */
+export class CorpDirectUnavailableError extends Schema.ErrorClass<CorpDirectUnavailableError>(
+  "CorpDirectUnavailableError",
+)({ error: Schema.Literal("direct_unavailable"), message: Schema.String }, { httpApiStatus: 409 }) {}
+
+/**
+ * Сохранить учётные данные не удалось (S-V26 п.5, первый случай).
+ *
+ * Отказ записи **фатален**, в отличие от кэша каталога и признака подключений: карточка,
+ * объявленная подключённой без сохранённого токена, подключиться уже не сможет и будет врать
+ * пользователю при каждом запуске.
+ */
+export class CorpStorageUnavailableError extends Schema.ErrorClass<CorpStorageUnavailableError>(
+  "CorpStorageUnavailableError",
+)({ error: Schema.Literal("storage_unavailable"), message: Schema.String }, { httpApiStatus: 500 }) {}
 
 export const TeamPayload = Schema.Struct({ team_id: Schema.String })
 export const ConnectPayload = Schema.Struct({ preset: Schema.optional(Schema.String) })
@@ -72,6 +129,15 @@ export const PermissionsPayload = Schema.Struct({
   groups: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
   modes: Schema.optional(Schema.Record(Schema.String, CorpSchema.PermissionMode)),
 })
+
+/**
+ * Тело прямого подключения (S-V25): `{method?: string, token: string}`.
+ *
+ * Схема намеренно **не** проверяет состав: все пять предпроверок выполняет обработчик и в
+ * обязательном порядке (S-V25 п.1). Иначе тело, не являющееся объектом, отвергал бы декодер своей
+ * ошибкой другой формы, а критерий требует ровно `400 {error:"invalid_request", message}`.
+ */
+export const ConnectTokenPayload = Schema.Unknown
 
 export const CatalogQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
@@ -97,6 +163,10 @@ export const CorpPaths = {
   // удаляет `mcp.<alias>` из конфига, чего «Отключить» не делает.
   forget: "/corp/connectors/:alias",
   permissions: "/corp/connectors/:alias/permissions",
+  // corp: прямое подключение токеном (S-V25). Отдельный путь рядом с `connect`, а не второе тело
+  // того же роута: у действий разный состав шагов и разные исходы, и сливать их значило бы
+  // прятать в одном ответе два закрытых набора.
+  connectToken: "/corp/connectors/:alias/connect-token",
 } as const
 
 export const CorpApi = HttpApi.make("corp")
@@ -205,13 +275,36 @@ export const CorpApi = HttpApi.make("corp")
           payload: ConnectPayload,
           success: described(CorpSchema.ConnectorResult, "Коннектор подключён"),
           // S-C10 п.8: у карточки `facade` в сборке без Hub действие отвергается с названной причиной.
-          error: [CorpDisabledError, CorpBadRequestError],
+          // S-V28 п.5 (микроревизия 1.13.1): у закрытой `native`-карточки — `409` до единого
+          // исходящего запроса и до создания ключа `mcp.<alias>`.
+          error: [CorpDisabledError, CorpBadRequestError, CorpAuthMethodUnavailableError],
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "corp.connect",
             summary: "Connect connector",
             description:
               "Пишет mcp.<alias> в глобальный конфиг и запускает штатный MCP-OAuth. В сборке без Hub карточка mode:facade отвергается (facade_needs_hub) и запись не создаётся.",
+          }),
+        ),
+        HttpApiEndpoint.post("connectToken", CorpPaths.connectToken, {
+          params: { alias: Schema.String },
+          query: WorkspaceRoutingQuery,
+          payload: ConnectTokenPayload,
+          success: described(CorpSchema.ConnectTokenResult, "Прямое подключение выполнено"),
+          error: [
+            CorpDisabledError,
+            CorpInvalidRequestError,
+            CorpNotFoundError,
+            CorpAuthMethodUnavailableError,
+            CorpDirectUnavailableError,
+            CorpStorageUnavailableError,
+          ],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "corp.connectorConnectToken",
+            summary: "Connect connector with a token",
+            description:
+              "Проверяет введённый токен в целевой системе, при объявленном блоке обмена выпускает постоянный токен, сохраняет учётные данные в защищённом хранилище приложения и поднимает соединение с MCP-сервером напрямую. Ни Hub, ни браузера в пути нет; значение токена не возвращается ни в одном ответе.",
           }),
         ),
         HttpApiEndpoint.post("disconnect", CorpPaths.disconnect, {

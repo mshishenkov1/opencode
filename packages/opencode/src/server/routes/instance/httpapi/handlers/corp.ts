@@ -6,6 +6,8 @@ import * as CorpCatalogCache from "@/corp/catalog-cache"
 import * as CorpConfig from "@/corp/config"
 import * as CorpConnections from "@/corp/connections"
 import * as CorpConnectors from "@/corp/connectors"
+import * as CorpCredentials from "@/corp/credentials"
+import * as CorpDirect from "@/corp/direct"
 import * as CorpDiagnostics from "@/corp/diagnostics"
 import * as CorpErrors from "@/corp/errors"
 import * as CorpHub from "@/corp/hub"
@@ -24,7 +26,16 @@ import { HttpApiBuilder } from "effect/unstable/httpapi"
 import open from "open"
 import path from "path"
 import { InstanceHttpApi } from "../api"
-import { CorpBadRequestError, CorpDisabledError, CorpHubError } from "../groups/corp"
+import {
+  CorpAuthMethodUnavailableError,
+  CorpBadRequestError,
+  CorpDirectUnavailableError,
+  CorpDisabledError,
+  CorpHubError,
+  CorpInvalidRequestError,
+  CorpNotFoundError,
+  CorpStorageUnavailableError,
+} from "../groups/corp"
 
 /**
  * Обработчики корп-роутов (S-A1…S-A5, S-V1…S-V10).
@@ -60,6 +71,20 @@ const GLOBAL_CONFIG_FILES = ["config.json", "opencode.json", "opencode.jsonc"] a
 function isGlobalConfigFile(file: string) {
   const resolved = path.resolve(file)
   return GLOBAL_CONFIG_FILES.some((name) => resolved === path.resolve(Global.Path.config, name))
+}
+
+/**
+ * Адрес без строки запроса — то, что попадает в лог при отказе целевой системы (S-V26 п.6).
+ * Ни тела ответа, ни значения токена, ни параметров запроса в логе не бывает.
+ */
+function urlWithoutQuery(url: string | undefined): string | undefined {
+  if (url === undefined) return undefined
+  try {
+    const parsed = new URL(url)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return undefined
+  }
 }
 
 /** Свежесть внутрипроцессного memo каталога (S-V3). */
@@ -474,8 +499,36 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return {
         statuses,
         configured: new Set(Object.keys(config.mcp ?? {})),
+        // S-V29 п.4: адрес записи `mcp.<alias>` — половина признака «подключено прямым способом»;
+        // вторая половина — применимая запись хранилища (S-V26 п.3).
+        mcpUrls: Object.fromEntries(
+          Object.entries(config.mcp ?? {}).map(([alias, entry]) => [
+            alias,
+            entry && typeof entry === "object" && "url" in entry && typeof entry.url === "string"
+              ? entry.url
+              : undefined,
+          ]),
+        ) as Record<string, string | undefined>,
         permission: config.permission,
       }
+    })
+
+    /**
+     * Учётные данные прямого режима (S-V26).
+     *
+     * Читаются один раз на построение витрины; нечитаемый или повреждённый файл трактуется как
+     * «учётных данных нет» — витрина открывается, карточки показываются, а затронутые переходят в
+     * «нужно ввести токен заново» (S-V26 п.5, второй случай). Файл при этом **не** удаляется:
+     * его перезаписывает следующее успешное сохранение. Ни значение токена, ни его производные в
+     * предупреждение не попадают — только имя файла (S-V26 п.6).
+     */
+    const readCredentials = Effect.fnUntraced(function* () {
+      const result = yield* Effect.promise(() => CorpCredentials.read())
+      if (result.corrupted)
+        yield* Effect.logWarning("corp credentials: файл учётных данных нечитаем, считается отсутствующим", {
+          file: CorpCredentials.file(),
+        })
+      return result
     })
 
     /**
@@ -515,7 +568,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
      * Hub-зависимого вида. `addr.identity` именует файл признака подключений (S-V15 п.2).
      */
     const toCards = Effect.fnUntraced(function* (addr: Addresses, servers: CorpSchema.CatalogServer[], stale: boolean) {
-      const { statuses, configured, permission } = yield* localState()
+      const { statuses, configured, mcpUrls, permission } = yield* localState()
       const known = new Set(servers.map((server) => server.alias))
       // S-V20: группы, выброшенные разбором словаря, — та же новость, что отброшенные карточки,
       // и доезжает до пользователя тем же полем `dropped` (`corp.connectors.partial`).
@@ -535,6 +588,10 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       for (const alias of configured)
         if (!known.has(alias) && statuses[alias]?.status === "connected") observations.push(alias)
       const connections = yield* rememberConnections(yield* readConnections(addr.identity), observations)
+      // S-V26 п.5, второй случай: битое или нечитаемое хранилище трактуется как «учётных данных
+      // нет» — витрина открывается, карточки показываются, затронутые переходят в «нужно ввести
+      // токен заново». Файл при этом **не** удаляется; предупреждение уходит в лог.
+      const credentials = yield* readCredentials()
 
       const cards: CorpSchema.CatalogCard[] = servers.map((server) => {
         const local = statuses[server.alias]
@@ -543,9 +600,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         if (groups && groups.dropped > 0)
           for (let index = 0; index < groups.dropped; index++)
             dropped.push({ alias: server.alias, reason: "permission_groups.group" })
+        const stored = credentials.store[server.alias]
+        const upstreamOf = CorpSchema.parseUpstream(server.upstream)
+        const directConnected =
+          CorpCredentials.applicable(stored, upstreamOf?.url) && mcpUrls[server.alias] === upstreamOf?.url
         const card = CorpStatus.compute({
           alias: server.alias,
           server,
+          ...(directConnected ? { directConnected: true } : {}),
           configured: configured.has(server.alias),
           ...(local === undefined ? {} : { local: local.status }),
           ...(local && "error" in local ? { localError: local.error } : {}),
@@ -557,6 +619,13 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         // заблокирован с названной причиной. Вид `permission_groups` целиком локален, а непонятый
         // вид блокируется прежней причиной («модель прав не поддерживается»), и подменять её нельзя.
         const permissionsNeedHub = addr.hub === undefined && groups === undefined && permissions !== undefined
+        // S-V7, S-V24 п.7, S-V28 п.2–3: способ подключения, причину его отсутствия и доступность
+        // каждого способа считает один общий модуль. Ни Desktop, ни TUI второй копии проверки не
+        // заводят — расхождение оболочек по вопросу «можно ли этим подключиться» исключено по
+        // построению, а не соглашением.
+        const connect = { server, hubConfigured: addr.hub !== undefined }
+        const connectMode = CorpStatus.connectMode(connect)
+        const connectModeCode = CorpStatus.connectModeUnavailableCode(connect)
         return {
           alias: server.alias,
           title: server.title,
@@ -585,6 +654,15 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           ...(server.connection?.preset === undefined ? {} : { preset: server.connection.preset }),
           ...(card.connectNeedsHub === true ? { connect_needs_hub: true } : {}),
           ...(permissionsNeedHub ? { permissions_need_hub: true } : {}),
+          connect_mode: connectMode,
+          // Поле непусто **только** при `connect_mode: "none"` (S-V28 п.2): по нему оболочка
+          // разводит неактивное действие (`oauth_disabled`) и прежнее поведение ревизии 1.11
+          // (`facade_needs_hub`), а не по одному лишь `connect_mode`.
+          ...(connectModeCode === null ? {} : { connect_mode_unavailable_code: connectModeCode }),
+          auth_methods: CorpStatus.authMethodViews(connect),
+          // S-V26 п.6: наружу о хранилище видно ровно это — булев признак и, если целевая система
+          // его назвала, `account`. Ни значения токена, ни его длины, ни производных.
+          has_credentials: CorpCredentials.applicable(stored, upstreamOf?.url),
           status: card.status,
           actions: card.actions,
           state: card.state,
@@ -827,8 +905,13 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       source?: { server: CorpSchema.CatalogServer | undefined; stale: boolean },
     ) {
       const { server, stale } = source ?? (yield* serverFor(addr, alias))
-      const { statuses, configured } = yield* localState()
+      const { statuses, configured, mcpUrls } = yield* localState()
       const local = statuses[alias]
+      // S-V29 п.4: то же правило, что на витрине, — состояние карточки после действия обязано
+      // совпадать с тем, что покажет следующее открытие витрины.
+      const upstreamOf = server === undefined ? undefined : CorpSchema.parseUpstream(server.upstream)
+      const stored = (yield* readCredentials()).store[alias]
+      const directConnected = CorpCredentials.applicable(stored, upstreamOf?.url) && mcpUrls[alias] === upstreamOf?.url
       // S-V15: наблюдение фиксируется и после отдельного действия — состояние карточки в ответе
       // действия обязано совпадать с тем, что покажет следующее открытие витрины.
       const observed = CorpConnections.observed({
@@ -839,6 +922,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return CorpStatus.compute({
         alias,
         ...(server === undefined ? {} : { server }),
+        ...(directConnected ? { directConnected: true } : {}),
         configured: configured.has(alias),
         ...(local === undefined ? {} : { local: local.status }),
         ...(local && "error" in local ? { localError: local.error } : {}),
@@ -849,6 +933,171 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
     })
 
     // --- Действия витрины (S-V7…S-V9) ---
+
+    // --- Прямое подключение токеном (S-V25, ревизия 1.13) ---
+
+    /**
+     * Прямое подключение: предпроверки без сети → проверка → обмен → сохранение → соединение
+     * (S-V25). Ни Hub, ни браузера в пути нет: за всё действие приложение обращается ровно по двум
+     * адресам — `verify.url` (и, если объявлен, `exchange.url`) и `upstream.url`.
+     *
+     * Порядок предпроверок обязателен и именно такой: способ опознаётся, проверяется его
+     * доступность и применимость прямого режима, и **только потом** — само значение токена. Иначе
+     * закрытый способ отвечал бы «токен слишком короткий», то есть подсказывал бы форму токена,
+     * которым всё равно нельзя подключиться, и запрет читался бы как ошибка ввода.
+     */
+    const connectToken = Effect.fn("CorpHttpApi.connectToken")(function* (ctx: {
+      params: { alias: string }
+      payload: unknown
+    }) {
+      const addr = yield* requireCatalog()
+      const alias = ctx.params.alias
+      const invalid = (message: string) => new CorpInvalidRequestError({ error: "invalid_request", message })
+
+      // Предпроверка 1: alias отсутствует в действующем каталоге.
+      const { server } = yield* serverFor(addr, alias)
+      if (!server) return yield* new CorpNotFoundError({ error: "not_found" })
+
+      // Предпроверка 2: опознание способа. Тело не объект, `token` не строка, способ не назван при
+      // нескольких применимых или назван неизвестный — всё это «непонятно, что делать», и
+      // различать эти случаи пользователю не требуется.
+      const body =
+        typeof ctx.payload === "object" && ctx.payload !== null && !Array.isArray(ctx.payload)
+          ? (ctx.payload as Record<string, unknown>)
+          : undefined
+      if (!body) return yield* invalid("request body must be an object")
+      const token = body["token"]
+      if (typeof token !== "string") return yield* invalid("token must be a string")
+      const methodId = body["method"]
+      if (methodId !== undefined && typeof methodId !== "string") return yield* invalid("method must be a string")
+
+      const methods = CorpStatus.authMethods({ server, hubConfigured: addr.hub !== undefined })
+      let chosen: (typeof methods)[number] | undefined
+      if (methodId === undefined) {
+        const applicable = methods.filter((entry) => entry.method.type === "user_token")
+        if (applicable.length !== 1)
+          return yield* invalid(
+            applicable.length === 0 ? "connector has no token method" : "method is required: several token methods",
+          )
+        chosen = applicable[0]
+      } else {
+        chosen = methods.find((entry) => entry.method.id === methodId)
+        if (!chosen) return yield* invalid(`unknown auth method: ${methodId}`)
+      }
+
+      // Предпроверка 3: способ недоступен (S-V28 п.5). Отказ выдаётся **до** проверки типа способа
+      // и до единого исходящего запроса: закрытый `oauth2` обязан отвечать `409` с названной
+      // причиной, а не `400` о форме тела (AC-311).
+      if (!chosen.availability.available)
+        return yield* new CorpAuthMethodUnavailableError({
+          error: "auth_method_unavailable",
+          unavailable_code: chosen.availability.unavailableCode ?? "catalog_unavailable",
+          message: `auth method "${chosen.method.id}" is not available`,
+        })
+      if (chosen.method.type !== "user_token") return yield* invalid(`auth method "${chosen.method.id}" takes no token`)
+
+      // Предпроверка 4: у карточки не разобран `upstream` — прямым режимом она не подключается.
+      const upstream = CorpSchema.parseUpstream(server.upstream)
+      if (!upstream)
+        return yield* new CorpDirectUnavailableError({
+          error: "direct_unavailable",
+          message: `connector "${alias}" has no upstream block`,
+        })
+
+      // Предпроверка 5: значение токена. Прочих проверок значения нет: годность токена решает
+      // целевая система, а не догадка о его виде.
+      const field = chosen.method.field
+      if (token === "") return yield* invalid("token must not be empty")
+      if (field?.min_length !== undefined && token.length < field.min_length)
+        return yield* invalid(`token must be at least ${field.min_length} characters`)
+      if (field?.max_length !== undefined && token.length > field.max_length)
+        return yield* invalid(`token must be at most ${field.max_length} characters`)
+
+      // Проверка — ровно один запрос (S-V25 п.2). Значение токена в лог не пишется никогда.
+      const verified = yield* Effect.promise(() => CorpDirect.verify(chosen!.method, token))
+      if (verified.result !== "verified") {
+        // S-V26 п.6: в лог идут alias, адрес без строки запроса и код ответа; тела ответа целевой
+        // системы в логе нет.
+        yield* Effect.logWarning("corp connect-token: проверка токена не удалась", {
+          alias,
+          url: urlWithoutQuery(chosen.method.verify?.url),
+          result: verified.result,
+          ...(verified.status === undefined ? {} : { status: verified.status }),
+        })
+        // При любом исходе, кроме `verified`, роут **ничего не пишет**: ни `mcp.<alias>` в конфиг,
+        // ни записи в хранилище, ни признака «подключение состоялось».
+        return {
+          alias,
+          status: yield* cardFor(addr, alias),
+          auth_method: chosen.method.id,
+          verify_result: verified.result,
+          ...(verified.status === undefined ? {} : { verify_status: verified.status }),
+          exchange_result: null,
+          credentials_saved: false,
+        }
+      }
+
+      // Обмен — не более одного запроса, и он не отменяет подключение (S-V25 п.5). Способ без
+      // блока `exchange` даёт `null`: отсутствие обмена — не исход и не предупреждение.
+      const exchanged =
+        chosen.method.exchange === undefined
+          ? undefined
+          : yield* Effect.promise(() => CorpDirect.exchange(chosen!.method, token))
+      const issued = exchanged?.result === "exchanged"
+
+      // (а) Учётные данные — в хранилище. Отказ записи прекращает действие (S-V26 п.5).
+      const record: CorpCredentials.Record_ = {
+        upstream_url: upstream.url,
+        method_id: chosen.method.id,
+        token: issued ? exchanged!.token! : token,
+        ...(issued && exchanged!.token_id !== undefined ? { token_id: exchanged!.token_id } : {}),
+        issued,
+        ...(verified.account === undefined ? {} : { account: verified.account }),
+        saved_at: new Date().toISOString(),
+        credential_headers: upstream.credential_headers,
+        ...(upstream.static_headers === undefined ? {} : { static_headers: upstream.static_headers }),
+      }
+      const saved = yield* Effect.promise(() => CorpCredentials.save(alias, record))
+      if (!saved.ok)
+        return yield* new CorpStorageUnavailableError({
+          error: "storage_unavailable",
+          message: `could not save credentials: ${saved.error}`,
+        })
+      // Отказ `chmod` — не отказ хранения (S-V26 п.5, третий случай): запись состоялась, а
+      // предупреждение с именем файла уходит в лог.
+      if (saved.chmodFailed)
+        yield* Effect.logWarning("corp credentials: права файла хранилища не выставлены", {
+          file: CorpCredentials.file(),
+        })
+      // S-V26 п.6: в лог идёт **имя** учётного заголовка и не идёт его значение.
+      yield* Effect.logInfo("corp connect-token: учётные заголовки сохранены", {
+        alias,
+        headers: Object.keys(upstream.credential_headers),
+        issued,
+      })
+
+      // (б) Патч конфига — **без** ключа `oauth` (D-57) и **без** ключа `headers` (D-60, S-V26 п.2).
+      // Адрес берётся из `upstream.url`, а не из `mcp_url`: у `facade`-карточки `mcp_url` указывает
+      // на прокси Hub, и подставить его сюда значило бы вернуть Hub в путь, из которого его убрали.
+      const patch = CorpConnectors.directConnectPatch(alias, upstream.url)
+      const entry = patch.mcp[alias]!
+      yield* configSvc.updateGlobal(patch)
+      // (в) Соединение MCP. Учётные заголовки подставляются при создании транспорта (S-V26 п.4).
+      yield* mcpSvc.add(alias, entry).pipe(Effect.catch(() => Effect.void))
+      yield* dropMemo(addr)
+
+      return {
+        alias,
+        status: yield* cardFor(addr, alias),
+        auth_method: chosen.method.id,
+        verify_result: verified.result,
+        ...(verified.status === undefined ? {} : { verify_status: verified.status }),
+        ...(verified.account === undefined ? {} : { account: verified.account }),
+        exchange_result: exchanged?.result ?? null,
+        credentials_saved: true,
+      }
+    })
+
 
     const connect = Effect.fn("CorpHttpApi.connect")(function* (ctx: {
       params: { alias: string }
@@ -865,6 +1114,26 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           // S-V19: карточки нет — значит нет ни `mcp_url`, ни режима, подключать этим способом нечем.
           error_class: CorpErrors.connectErrorClass({ code: "not_found" }),
         }
+
+      // S-V28 п.5 (микроревизия 1.13.1): у закрытой `native`-карточки действие отвергается **до**
+      // записи `mcp.<alias>` и до единого исходящего запроса — ни discovery, ни DCR, ни
+      // `authorize`, ни `token`, ни открытия браузера. Запрос, посланный мимо интерфейса, получает
+      // тот же отказ, что и кнопка: запрет программный, а не косметический.
+      const connectInput = { server, hubConfigured: addr.hub !== undefined }
+      if (CorpStatus.connectModeUnavailableCode(connectInput) === "oauth_disabled")
+        return yield* new CorpAuthMethodUnavailableError({
+          error: "auth_method_unavailable",
+          unavailable_code: "oauth_disabled",
+          message: `connector "${alias}" cannot be connected: OAuth is disabled in this build`,
+        })
+
+      // S-V29 п.1: один alias — одно подключение. Пока у alias есть действующие прямые учётные
+      // данные, подключить его фасадным способом нельзя: смена способа означает смену того, кто
+      // хранит учётные данные, и молча приложение её не делает.
+      const upstreamUrl = CorpSchema.parseUpstream(server.upstream)?.url
+      const stored = (yield* readCredentials()).store[alias]
+      if (CorpCredentials.applicable(stored, upstreamUrl))
+        return yield* new CorpBadRequestError({ error: "direct_connected" })
 
       // S-V7, S-C10 п.8: `native` подключается штатным MCP OAuth клиента и Hub в этом не участвует
       // никогда. `facade` подключается способом `user_token` через Hub-фасад — без адреса Hub этот
@@ -900,9 +1169,45 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return { alias, status: yield* cardFor(addr, alias) }
     })
 
+    /**
+     * Отзыв выпущенного токена и удаление записи хранилища (S-V27 п.2, п.3).
+     *
+     * Отзыв выполняется **перед** локальными шагами и только если он возможен: у способа объявлен
+     * блок `revoke` **и** токен выпущен приложением (`issued: true`). Чужой токен приложение не
+     * отзывает — он принадлежит учётной записи пользователя и мог быть выпущен для других задач;
+     * приложение его только **забывает**.
+     *
+     * Запись хранилища удаляется **всегда** — независимо от исхода отзыва, включая `not_revoked` и
+     * `unreachable` (тот же принцип, что D-49: удаление у себя — обязательство, отзыв — best
+     * effort). Удаляется ровно запись этого alias.
+     *
+     * Карточка берётся **из кэша** каталога: обращаться к Hub этому действию запрещено (S-V27 п.1),
+     * а блок отзыва взять всё равно откуда-то надо.
+     */
+    const revokeCredentials = Effect.fnUntraced(function* (addr: Addresses, alias: string) {
+      const record = (yield* readCredentials()).store[alias]
+      if (!record) return { revoke: "skipped" as CorpSchema.RevokeResult, direct: false }
+      const cached = yield* cachedServerFor(addr, alias)
+      const method = CorpSchema.parseAuthMethods(cached.server?.auth_methods).find(
+        (entry) => entry.id === record.method_id,
+      )
+      const outcome = yield* Effect.promise(() => CorpDirect.revoke(method, record))
+      if (outcome.result === "not_revoked" || outcome.result === "unreachable")
+        // Неуспех отзыва — предупреждение, а не ошибка: локальная часть выполнена в любом случае.
+        yield* Effect.logWarning("corp disconnect: отозвать выпущенный токен не удалось", {
+          alias,
+          result: outcome.result,
+          ...(outcome.status === undefined ? {} : { status: outcome.status }),
+        })
+      yield* Effect.promise(() => CorpCredentials.remove(alias))
+      return { revoke: outcome.result, direct: true }
+    })
+
     const disconnect = Effect.fn("CorpHttpApi.disconnect")(function* (ctx: { params: { alias: string } }) {
       const addr = yield* requireCatalog()
       const alias = ctx.params.alias
+      // S-V27 п.1: у прямо подключённой карточки перед локальными шагами выполняется отзыв.
+      const revoked = yield* revokeCredentials(addr, alias)
       yield* mcpSvc.removeAuth(alias)
       yield* mcpSvc.disconnect(alias).pipe(Effect.catch(() => Effect.void))
       yield* configSvc.updateGlobal(CorpConnectors.disconnectPatch(alias))
@@ -912,7 +1217,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       let hubError: CorpErrors.Code | undefined
       // S-C10 п.7: при незаданном адресе Hub шаг **пропускается**, а не считается отказом Hub —
       // ни предупреждения, ни поля `hub_error`. «Нечего звать» и «позвали, не ответил» — разное.
-      if (key && addr.hub !== undefined) {
+      // S-V27 п.1: у прямо подключённой карточки этого шага **нет вовсе** при любом адресе Hub —
+      // подключение живёт целиком у пользователя, и Hub о нём ничего не знает.
+      if (key && addr.hub !== undefined && !revoked.direct) {
         const hub = CorpHub.make({ hubUrl: addr.hub, key })
         const removed = yield* Effect.promise(() => hub.removeConnection(alias))
         // S-V8: отказ Hub не откатывает локальные шаги, но показывается предупреждением.
@@ -921,6 +1228,10 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return {
         alias,
         status: "not_connected" as const,
+        // Поле `revoke` — свойство **прямого** подключения (S-V27 п.1): у карточки, у которой
+        // учётных данных не было вовсе, отзывать нечего и говорить не о чем, поэтому поля нет.
+        // Прежние ответы «Отключить» ревизией 1.13 не переформулированы (AC-62, AC-175).
+        ...(revoked.direct ? { revoke: revoked.revoke } : {}),
         ...(hubError === undefined ? {} : { hub_error: hubError }),
       }
     })
@@ -936,6 +1247,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
     const forget = Effect.fn("CorpHttpApi.forget")(function* (ctx: { params: { alias: string } }) {
       const addr = yield* requireCatalog()
       const alias = ctx.params.alias
+      // S-V27 п.4: «Убрать из списка» делает то же, что «Отключить», и дополнительно удаляет ключ
+      // `mcp.<alias>` и запись признака подключений. Отзыв идёт теми же четырьмя исходами.
+      const revoked = yield* revokeCredentials(addr, alias)
       // Шаг 1: те же локальные шаги, что у S-V8.
       yield* mcpSvc.removeAuth(alias)
       yield* mcpSvc.disconnect(alias).pipe(Effect.catch(() => Effect.void))
@@ -952,7 +1266,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // недоступности Hub в сборке, где Hub не настроен, — ложная тревога.
       const key = yield* corpKey()
       let hubError: CorpErrors.Code | undefined
-      if (key && addr.hub !== undefined) {
+      // S-V27 п.1: у прямо подключённой карточки шага обращения к Hub нет вовсе (п.4 отсылает к
+      // тем же правилам): подключение живёт целиком у пользователя.
+      if (key && addr.hub !== undefined && !revoked.direct) {
         const hub = CorpHub.make({ hubUrl: addr.hub, key })
         const removed = yield* Effect.promise(() => hub.removeConnection(alias))
         if (!removed.ok) hubError = removed.code
@@ -961,6 +1277,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         alias,
         status: "not_connected" as const,
         removed: true,
+        ...(revoked.direct ? { revoke: revoked.revoke } : {}),
         ...(hubError === undefined ? {} : { hub_error: hubError }),
       }
     })
@@ -1066,7 +1383,16 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       }
       yield* dropMemo(addr)
 
-      if (reauth) {
+      // S-V28 п.5, третья строка (микроревизия 1.13.1): у карточки, чей
+      // `connect_mode_unavailable_code` равен `oauth_disabled`, шаг 2 правила S-V7 **не
+      // запускается** — браузер не открывается и ни одного исходящего запроса по OAuth-адресам
+      // MCP-сервера нет. Ответ при этом прежний и несёт `reauth_required: true`: причину экран
+      // берёт из `connect_mode_unavailable_code` карточки, которая у него уже есть. Запись прав в
+      // Hub выполнена выше — закрыт **браузерный шаг**, а не выбор пресета.
+      const oauthClosed =
+        CorpStatus.connectModeUnavailableCode({ ...(server === undefined ? {} : { server }), hubConfigured: true }) ===
+        "oauth_disabled"
+      if (reauth && !oauthClosed) {
         yield* mcpSvc.authenticate(alias).pipe(Effect.catch(() => Effect.void))
       }
       return {
@@ -1087,6 +1413,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       .handle("providerEnable", providerEnable)
       .handle("catalog", catalog)
       .handle("connect", connect)
+      .handle("connectToken", connectToken)
       .handle("disconnect", disconnect)
       .handle("forget", forget)
       .handle("permissions", permissions)

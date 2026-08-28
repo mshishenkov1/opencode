@@ -33,6 +33,22 @@ export function connectPatch(server: CorpSchema.CatalogServer, preset: string = 
 }
 
 /**
+ * Патч прямого подключения (S-V25 п.6б, ревизия 1.13).
+ *
+ * `{type, url, enabled}` — и больше ничего: **без** ключа `oauth` (в прямом режиме scope не
+ * участвует, D-57) и **без** ключа `headers` (D-60, S-V26 п.2). Ключ `headers` этот патч не создаёт
+ * и не изменяет: если он у пользователя был, он остаётся как был и участвует в слиянии заголовков
+ * (S-V26 п.4); если не было — его не появляется. Токен в конфиг не попадает ни при каких
+ * обстоятельствах.
+ *
+ * Адрес — `upstream.url`, а **не** `mcp_url`: у `facade`-карточки `mcp_url` указывает на прокси
+ * Hub, и подставить его сюда значило бы вернуть Hub в путь, из которого его убрал заказчик.
+ */
+export function directConnectPatch(alias: string, upstreamUrl: string): ConnectPatch {
+  return { mcp: { [alias]: { type: "remote", url: upstreamUrl, enabled: true } } }
+}
+
+/**
  * Патч для «Отключить» (S-V8, шаг 3): запись `mcp.<alias>` из конфига не удаляется, только гасится,
  * чтобы повторное подключение оставалось в один клик.
  */

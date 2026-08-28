@@ -1426,6 +1426,16 @@
               }
             }
           },
+          "409": {
+            "description": "CorpAuthMethodUnavailableError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpAuthMethodUnavailableError"
+                }
+              }
+            }
+          },
           "501": {
             "description": "CorpDisabledError",
             "content": {
@@ -1458,6 +1468,129 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.connect({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/corp/connectors/{alias}/connect-token": {
+      "post": {
+        "tags": ["corp"],
+        "operationId": "corp.connectorConnectToken",
+        "parameters": [
+          {
+            "name": "alias",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Прямое подключение выполнено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpConnectTokenResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "CorpInvalidRequestError | InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/CorpInvalidRequestError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InvalidRequestError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CorpNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpNotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CorpAuthMethodUnavailableError | CorpDirectUnavailableError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/CorpAuthMethodUnavailableError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CorpDirectUnavailableError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "CorpStorageUnavailableError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpStorageUnavailableError"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "CorpDisabledError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpDisabledError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Проверяет введённый токен в целевой системе, при объявленном блоке обмена выпускает постоянный токен, сохраняет учётные данные в защищённом хранилище приложения и поднимает соединение с MCP-сервером напрямую. Ни Hub, ни браузера в пути нет; значение токена не возвращается ни в одном ответе.",
+        "summary": "Connect connector with a token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.corp.connectorConnectToken({\n  ...\n})"
           }
         ]
       }
@@ -22549,6 +22682,104 @@
           "$ref": "#/components/schemas/CorpPermissionStateMode"
         }
       },
+      "CorpAuthMethodField": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "boolean"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "docs_url": {
+            "type": "string"
+          },
+          "placeholder": {
+            "type": "string"
+          },
+          "min_length": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["NaN"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["-Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["NaN"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["-Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          }
+        },
+        "required": ["label"],
+        "additionalProperties": false
+      },
+      "CorpAuthMethodView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["oauth2", "user_token"]
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "unavailable_code": {
+            "type": "string",
+            "enum": ["catalog_unavailable", "oauth_disabled", "env_header"]
+          },
+          "unavailable_reason": {
+            "type": "string"
+          },
+          "field": {
+            "$ref": "#/components/schemas/CorpAuthMethodField"
+          }
+        },
+        "required": ["id", "title", "type", "available", "unavailable_code"],
+        "additionalProperties": false
+      },
       "CorpCatalogCard": {
         "type": "object",
         "properties": {
@@ -22631,6 +22862,23 @@
             "type": "boolean"
           },
           "permissions_need_hub": {
+            "type": "boolean"
+          },
+          "connect_mode": {
+            "type": "string",
+            "enum": ["direct", "native", "facade", "none"]
+          },
+          "connect_mode_unavailable_code": {
+            "type": "string",
+            "enum": ["oauth_disabled", "facade_needs_hub", "no_method"]
+          },
+          "auth_methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorpAuthMethodView"
+            }
+          },
+          "has_credentials": {
             "type": "boolean"
           },
           "error": {
@@ -22760,6 +23008,10 @@
             "type": "string",
             "enum": ["token_rejected", "method_unavailable", "hub_unreachable", "unknown"]
           },
+          "revoke": {
+            "type": "string",
+            "enum": ["skipped", "revoked", "not_revoked", "unreachable"]
+          },
           "hub_error": {
             "type": "string",
             "enum": [
@@ -22792,11 +23044,137 @@
               "missing_body",
               "permission_groups_unavailable",
               "facade_needs_hub",
-              "permissions_need_hub"
+              "permissions_need_hub",
+              "direct_connected"
             ]
           }
         },
         "required": ["error"],
+        "additionalProperties": false
+      },
+      "CorpAuthMethodUnavailableError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["auth_method_unavailable"]
+          },
+          "unavailable_code": {
+            "type": "string",
+            "enum": ["catalog_unavailable", "oauth_disabled", "env_header"]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": ["error", "unavailable_code", "message"],
+        "additionalProperties": false
+      },
+      "CorpConnectTokenResult": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["connected", "needs_auth", "not_connected", "unavailable"]
+          },
+          "auth_method": {
+            "type": "string"
+          },
+          "verify_result": {
+            "type": "string",
+            "enum": ["verified", "account_missing", "token_rejected", "verify_failed", "upstream_unreachable"]
+          },
+          "verify_status": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["NaN"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["-Infinity"]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "account": {
+            "type": "string"
+          },
+          "exchange_result": {
+            "type": "string",
+            "enum": ["exchanged", "exchange_denied", "exchange_failed", "exchange_unreachable"]
+          },
+          "credentials_saved": {
+            "type": "boolean"
+          }
+        },
+        "required": ["alias", "status", "auth_method", "verify_result", "exchange_result", "credentials_saved"],
+        "additionalProperties": false
+      },
+      "CorpInvalidRequestError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["invalid_request"]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": ["error", "message"],
+        "additionalProperties": false
+      },
+      "CorpNotFoundError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["not_found"]
+          }
+        },
+        "required": ["error"],
+        "additionalProperties": false
+      },
+      "CorpDirectUnavailableError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["direct_unavailable"]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": ["error", "message"],
+        "additionalProperties": false
+      },
+      "CorpStorageUnavailableError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["storage_unavailable"]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": ["error", "message"],
         "additionalProperties": false
       },
       "CorpForgetResult": {
@@ -22811,6 +23189,10 @@
           },
           "removed": {
             "type": "boolean"
+          },
+          "revoke": {
+            "type": "string",
+            "enum": ["skipped", "revoked", "not_revoked", "unreachable"]
           },
           "hub_error": {
             "type": "string",

@@ -1050,6 +1050,48 @@ export const dict = {
   "corp.connectors.facadeNeedsHub": "Подключение этого коннектора в этой сборке не настроено",
   "corp.connectors.permissionsNeedHub": "Управление правами этого коннектора в этой сборке не настроено",
 
+  // corp: прямое подключение токеном (ревизия 1.13; S-V25, S-V26, S-V27, S-V28, S-D13, S-I1)
+  // Причины недоступности способа — три РАЗНЫХ ключа, потому что причины разные и советы разные
+  // (S-V28 п.1): «так решил каталог», «этот способ пока выключен в приложении», «этот способ
+  // требует значения, которого у приложения нет». Слова «Hub» ни в одном из них нет и быть не
+  // может: все они достижимы в сборке без Hub (D-43).
+  "corp.connectors.methodUnavailable.catalog": "Этот способ подключения сейчас недоступен",
+  "corp.connectors.methodUnavailable.oauthDisabled":
+    "Подключение через OAuth пока недоступно: приложение авторизации ещё не выдано",
+  "corp.connectors.methodUnavailable.envHeader": "Этот способ подключения требует значения, которого нет у приложения",
+
+  // Форма подключения (S-D13). Подписи поля, подсказка и unavailable_reason приходят из каталога и
+  // в словари не добавляются (S-I6).
+  "corp.connect.title": "Подключение",
+  "corp.connect.chooseMethod": "Способ подключения",
+  "corp.connect.docs": "Где взять токен",
+  "corp.connect.submit": "Подключить",
+  "corp.connect.replace": "Заменить токен",
+  "corp.connect.tooShort": "Токен короче {{n}} символов",
+  "corp.connect.tooLong": "Токен длиннее {{n}} символов",
+  "corp.connect.noMethod": "Подключить этот коннектор в этой сборке нечем",
+  "corp.connect.credentialsMissing": "Нужно ввести токен заново",
+  "corp.connect.storageUnavailable": "Сохранить токен не удалось",
+
+  // Закрытые наборы исходов получают ПО КЛЮЧУ НА ИСХОД, и общего ключа «не получилось» среди них
+  // нет (S-V25): пять исходов проверки, четыре обмена, три отзыва. Исход отзыва `skipped` не
+  // показывает ничего, поэтому ключа под него не заводится (S-V27 п.2).
+  "corp.connect.verify.verified": "Токен принят",
+  "corp.connect.verify.verifiedAs": "Подключено как {{account}}",
+  "corp.connect.verify.accountMissing": "Система приняла запрос, но не назвала пользователя — токен не подтверждён",
+  "corp.connect.verify.tokenRejected": "Целевая система не приняла токен",
+  "corp.connect.verify.verifyFailed": "Проверка не удалась: система ответила кодом {{status}}",
+  "corp.connect.verify.unreachable": "Связаться с системой не удалось",
+  "corp.connect.exchange.exchanged": "Выпущен постоянный токен",
+  "corp.connect.exchange.denied": "Выпустить постоянный токен не разрешено — подключение работает на введённом токене",
+  "corp.connect.exchange.failed": "Выпустить постоянный токен не удалось — подключение работает на введённом токене",
+  "corp.connect.exchange.unreachable":
+    "Связаться с системой для выпуска постоянного токена не удалось — подключение работает на введённом токене",
+  "corp.connect.revoke.revoked": "Выпущенный токен отозван",
+  "corp.connect.revoke.notRevoked":
+    "Отозвать выпущенный токен не удалось: система ответила кодом {{status}}. Он может продолжать работать",
+  "corp.connect.revoke.unreachable": "Связаться с системой для отзыва токена не удалось",
+
   // corp: страница коннектора (S-D11, S-I1)
   "corp.connector.back": "Назад",
   "corp.connector.owner": "Владелец",

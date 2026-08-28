@@ -35,6 +35,8 @@ import { InstanceState } from "@/effect/instance-state"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { McpCatalog } from "./catalog"
+// corp: единственный шов подстановки учётных заголовков прямого режима (S-V26 п.4, D-60, S-B6).
+import * as CorpCredentials from "@/corp/credentials"
 
 const DEFAULT_TIMEOUT = 30_000
 const CLIENT_OPTIONS = {
@@ -253,19 +255,30 @@ export const layer = Layer.effect(
         )
       }
 
+      // corp (S-V26 п.4, D-60): учётные заголовки прямого подключения подставляются **здесь**, в
+      // момент создания транспорта, а не в конфиге. Записать токен в `mcp.<alias>.headers` было бы
+      // худшим из вариантов: конфиг читается, копируется, показывается в диагностике и
+      // выкладывается в переписку. Порядок слияния — `upstream.static_headers` → `headers` конфига
+      // → учётные заголовки с подставленным токеном; при совпадении имён побеждает учётный.
+      // Без сохранённой записи для этого alias возвращаются заголовки конфига как есть, поэтому
+      // прочие удалённые серверы пользователя ведут себя ровно как в upstream.
+      const requestHeaders = yield* Effect.promise(() =>
+        CorpCredentials.requestHeaders(key, mcp.url, mcp.headers),
+      ).pipe(Effect.catchCause(() => Effect.succeed(mcp.headers)))
+
       const transports: Array<{ name: string; transport: TransportWithAuth }> = [
         {
           name: "StreamableHTTP",
           transport: new StreamableHTTPClientTransport(url, {
             authProvider,
-            requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            requestInit: requestHeaders ? { headers: requestHeaders } : undefined,
           }),
         },
         {
           name: "SSE",
           transport: new SSEClientTransport(url, {
             authProvider,
-            requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            requestInit: requestHeaders ? { headers: requestHeaders } : undefined,
           }),
         },
       ]

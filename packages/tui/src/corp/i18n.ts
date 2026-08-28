@@ -103,6 +103,39 @@ const ru = {
   "connectors.facadeNeedsHub": "Подключение этого коннектора в этой сборке не настроено",
   "connectors.permissionsNeedHub": "Управление правами этого коннектора в этой сборке не настроено",
 
+  // Прямое подключение токеном (ревизия 1.13; S-T12, S-V25, S-V27, S-V28). Тексты те же, что в
+  // словарях Desktop (S-I4, S-T10): наборы исходов в TUI не схлопываются в «получилось / не
+  // получилось», а причины недоступности остаются тремя разными текстами.
+  "connectors.methodUnavailable.catalog": "Этот способ подключения сейчас недоступен",
+  "connectors.methodUnavailable.oauthDisabled":
+    "Подключение через OAuth пока недоступно: приложение авторизации ещё не выдано",
+  "connectors.methodUnavailable.envHeader": "Этот способ подключения требует значения, которого нет у приложения",
+  "connect.title": "Подключение",
+  "connect.chooseMethod": "Способ подключения",
+  "connect.docs": "Где взять токен",
+  "connect.submit": "Подключить",
+  "connect.replace": "Заменить токен",
+  "connect.tooShort": "Токен короче {{n}} символов",
+  "connect.tooLong": "Токен длиннее {{n}} символов",
+  "connect.noMethod": "Подключить этот коннектор в этой сборке нечем",
+  "connect.credentialsMissing": "Нужно ввести токен заново",
+  "connect.storageUnavailable": "Сохранить токен не удалось",
+  "connect.verify.verified": "Токен принят",
+  "connect.verify.verifiedAs": "Подключено как {{account}}",
+  "connect.verify.accountMissing": "Система приняла запрос, но не назвала пользователя — токен не подтверждён",
+  "connect.verify.tokenRejected": "Целевая система не приняла токен",
+  "connect.verify.verifyFailed": "Проверка не удалась: система ответила кодом {{status}}",
+  "connect.verify.unreachable": "Связаться с системой не удалось",
+  "connect.exchange.exchanged": "Выпущен постоянный токен",
+  "connect.exchange.denied": "Выпустить постоянный токен не разрешено — подключение работает на введённом токене",
+  "connect.exchange.failed": "Выпустить постоянный токен не удалось — подключение работает на введённом токене",
+  "connect.exchange.unreachable":
+    "Связаться с системой для выпуска постоянного токена не удалось — подключение работает на введённом токене",
+  "connect.revoke.revoked": "Выпущенный токен отозван",
+  "connect.revoke.notRevoked":
+    "Отозвать выпущенный токен не удалось: система ответила кодом {{status}}. Он может продолжать работать",
+  "connect.revoke.unreachable": "Связаться с системой для отзыва токена не удалось",
+
   // Страница коннектора (S-D11, S-T10).
   "connector.back": "Назад",
   "connector.owner": "Владелец",
@@ -238,6 +271,38 @@ const en: Record<Key, string> = {
   "connectors.catalogUnavailable": "Catalog unavailable: the connector list could not be fetched",
   "connectors.facadeNeedsHub": "Connecting this connector is not configured in this build",
   "connectors.permissionsNeedHub": "Managing permissions for this connector is not configured in this build",
+
+  // Прямое подключение токеном (ревизия 1.13; S-T12): те же ключи, что в ru (S-I4).
+  "connectors.methodUnavailable.catalog": "This connection method is currently unavailable",
+  "connectors.methodUnavailable.oauthDisabled":
+    "Connecting via OAuth is not available yet: the authorization application has not been issued",
+  "connectors.methodUnavailable.envHeader": "This connection method requires a value the app does not have",
+  "connect.title": "Connection",
+  "connect.chooseMethod": "Connection method",
+  "connect.docs": "Where to get the token",
+  "connect.submit": "Connect",
+  "connect.replace": "Replace token",
+  "connect.tooShort": "The token is shorter than {{n}} characters",
+  "connect.tooLong": "The token is longer than {{n}} characters",
+  "connect.noMethod": "There is no way to connect this connector in this build",
+  "connect.credentialsMissing": "The token has to be entered again",
+  "connect.storageUnavailable": "The token could not be saved",
+  "connect.verify.verified": "The token was accepted",
+  "connect.verify.verifiedAs": "Connected as {{account}}",
+  "connect.verify.accountMissing": "The system accepted the request but named no user — the token is not confirmed",
+  "connect.verify.tokenRejected": "The target system rejected the token",
+  "connect.verify.verifyFailed": "The check failed: the system answered with code {{status}}",
+  "connect.verify.unreachable": "The system could not be reached",
+  "connect.exchange.exchanged": "A permanent token was issued",
+  "connect.exchange.denied":
+    "Issuing a permanent token is not allowed — the connection works on the token you entered",
+  "connect.exchange.failed": "A permanent token could not be issued — the connection works on the token you entered",
+  "connect.exchange.unreachable":
+    "The system could not be reached to issue a permanent token — the connection works on the token you entered",
+  "connect.revoke.revoked": "The issued token was revoked",
+  "connect.revoke.notRevoked":
+    "The issued token could not be revoked: the system answered with code {{status}}. It may keep working",
+  "connect.revoke.unreachable": "The system could not be reached to revoke the token",
 
   "connector.back": "Back",
   "connector.owner": "Owner",

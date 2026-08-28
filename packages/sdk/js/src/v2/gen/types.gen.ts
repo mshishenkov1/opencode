@@ -2332,6 +2332,26 @@ export type CorpPermissionState = {
   [key: string]: CorpPermissionStateMode
 }
 
+export type CorpAuthMethodField = {
+  label: string
+  secret?: boolean
+  hint?: string
+  docs_url?: string
+  placeholder?: string
+  min_length?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  max_length?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type CorpAuthMethodView = {
+  id: string
+  title: string
+  type: "oauth2" | "user_token"
+  available: boolean
+  unavailable_code: "catalog_unavailable" | "oauth_disabled" | "env_header"
+  unavailable_reason?: string
+  field?: CorpAuthMethodField
+}
+
 export type CorpCatalogCard = {
   alias: string
   title: string
@@ -2357,6 +2377,10 @@ export type CorpCatalogCard = {
   configured: boolean
   connect_needs_hub?: boolean
   permissions_need_hub?: boolean
+  connect_mode?: "direct" | "native" | "facade" | "none"
+  connect_mode_unavailable_code?: "oauth_disabled" | "facade_needs_hub" | "no_method"
+  auth_methods?: Array<CorpAuthMethodView>
+  has_credentials?: boolean
   error?: string
   error_class?: "token_rejected" | "method_unavailable" | "hub_unreachable" | "unknown"
   hub_url?: string
@@ -2396,6 +2420,7 @@ export type CorpConnectorResult = {
   status: "connected" | "needs_auth" | "not_connected" | "unavailable"
   error?: string
   error_class?: "token_rejected" | "method_unavailable" | "hub_unreachable" | "unknown"
+  revoke?: "skipped" | "revoked" | "not_revoked" | "unreachable"
   hub_error?:
     | "corp_disabled"
     | "hub_unavailable"
@@ -2419,12 +2444,50 @@ export type CorpBadRequestError = {
     | "permission_groups_unavailable"
     | "facade_needs_hub"
     | "permissions_need_hub"
+    | "direct_connected"
+}
+
+export type CorpAuthMethodUnavailableError = {
+  error: "auth_method_unavailable"
+  unavailable_code: "catalog_unavailable" | "oauth_disabled" | "env_header"
+  message: string
+}
+
+export type CorpConnectTokenResult = {
+  alias: string
+  status: "connected" | "needs_auth" | "not_connected" | "unavailable"
+  auth_method: string
+  verify_result: "verified" | "account_missing" | "token_rejected" | "verify_failed" | "upstream_unreachable"
+  verify_status?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  account?: string
+  exchange_result: "exchanged" | "exchange_denied" | "exchange_failed" | "exchange_unreachable"
+  credentials_saved: boolean
+}
+
+export type CorpInvalidRequestError = {
+  error: "invalid_request"
+  message: string
+}
+
+export type CorpNotFoundError = {
+  error: "not_found"
+}
+
+export type CorpDirectUnavailableError = {
+  error: "direct_unavailable"
+  message: string
+}
+
+export type CorpStorageUnavailableError = {
+  error: "storage_unavailable"
+  message: string
 }
 
 export type CorpForgetResult = {
   alias: string
   status: "connected" | "needs_auth" | "not_connected" | "unavailable"
   removed: boolean
+  revoke?: "skipped" | "revoked" | "not_revoked" | "unreachable"
   hub_error?:
     | "corp_disabled"
     | "hub_unavailable"
@@ -6157,6 +6220,10 @@ export type CorpConnectErrors = {
    */
   400: CorpBadRequestError | InvalidRequestError
   /**
+   * CorpAuthMethodUnavailableError
+   */
+  409: CorpAuthMethodUnavailableError
+  /**
    * CorpDisabledError
    */
   501: CorpDisabledError
@@ -6172,6 +6239,53 @@ export type CorpConnectResponses = {
 }
 
 export type CorpConnectResponse = CorpConnectResponses[keyof CorpConnectResponses]
+
+export type CorpConnectorConnectTokenData = {
+  body?: unknown
+  path: {
+    alias: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/corp/connectors/{alias}/connect-token"
+}
+
+export type CorpConnectorConnectTokenErrors = {
+  /**
+   * CorpInvalidRequestError | InvalidRequestError
+   */
+  400: CorpInvalidRequestError | InvalidRequestError
+  /**
+   * CorpNotFoundError
+   */
+  404: CorpNotFoundError
+  /**
+   * CorpAuthMethodUnavailableError | CorpDirectUnavailableError
+   */
+  409: CorpAuthMethodUnavailableError | CorpDirectUnavailableError
+  /**
+   * CorpStorageUnavailableError
+   */
+  500: CorpStorageUnavailableError
+  /**
+   * CorpDisabledError
+   */
+  501: CorpDisabledError
+}
+
+export type CorpConnectorConnectTokenError = CorpConnectorConnectTokenErrors[keyof CorpConnectorConnectTokenErrors]
+
+export type CorpConnectorConnectTokenResponses = {
+  /**
+   * Прямое подключение выполнено
+   */
+  200: CorpConnectTokenResult
+}
+
+export type CorpConnectorConnectTokenResponse =
+  CorpConnectorConnectTokenResponses[keyof CorpConnectorConnectTokenResponses]
 
 export type CorpDisconnectData = {
   body?: never

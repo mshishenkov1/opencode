@@ -27,6 +27,8 @@ import type {
   CorpCatalogErrors,
   CorpCatalogResponses,
   CorpConnectErrors,
+  CorpConnectorConnectTokenErrors,
+  CorpConnectorConnectTokenResponses,
   CorpConnectResponses,
   CorpDisconnectErrors,
   CorpDisconnectResponses,
@@ -1797,6 +1799,49 @@ export class Corp extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<CorpConnectResponses, CorpConnectErrors, ThrowOnError>({
       url: "/corp/connectors/{alias}/connect",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Connect connector with a token
+   *
+   * Проверяет введённый токен в целевой системе, при объявленном блоке обмена выпускает постоянный токен, сохраняет учётные данные в защищённом хранилище приложения и поднимает соединение с MCP-сервером напрямую. Ни Hub, ни браузера в пути нет; значение токена не возвращается ни в одном ответе.
+   */
+  public connectorConnectToken<ThrowOnError extends boolean = false>(
+    parameters: {
+      alias: string
+      directory?: string
+      workspace?: string
+      body?: unknown
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "alias" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "body", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      CorpConnectorConnectTokenResponses,
+      CorpConnectorConnectTokenErrors,
+      ThrowOnError
+    >({
+      url: "/corp/connectors/{alias}/connect-token",
       ...options,
       ...params,
       headers: {

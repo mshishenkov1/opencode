@@ -1153,6 +1153,45 @@ export const dict = {
   "corp.connectors.facadeNeedsHub": "Connecting this connector is not configured in this build",
   "corp.connectors.permissionsNeedHub": "Managing permissions for this connector is not configured in this build",
 
+  // corp: прямое подключение токеном (ревизия 1.13; S-V25, S-V26, S-V27, S-V28, S-D13, S-I1)
+  // Те же ключи, что в ru.ts (паритет словарей S-I3); ни в одном тексте нет слова «Hub» (D-43).
+  "corp.connectors.methodUnavailable.catalog": "This connection method is currently unavailable",
+  "corp.connectors.methodUnavailable.oauthDisabled":
+    "Connecting via OAuth is not available yet: the authorization application has not been issued",
+  "corp.connectors.methodUnavailable.envHeader": "This connection method requires a value the app does not have",
+
+  // Форма подключения (S-D13).
+  "corp.connect.title": "Connection",
+  "corp.connect.chooseMethod": "Connection method",
+  "corp.connect.docs": "Where to get the token",
+  "corp.connect.submit": "Connect",
+  "corp.connect.replace": "Replace token",
+  "corp.connect.tooShort": "The token is shorter than {{n}} characters",
+  "corp.connect.tooLong": "The token is longer than {{n}} characters",
+  "corp.connect.noMethod": "There is no way to connect this connector in this build",
+  "corp.connect.credentialsMissing": "The token has to be entered again",
+  "corp.connect.storageUnavailable": "The token could not be saved",
+
+  // По ключу на исход каждого закрытого набора (S-V25, S-V27); исход skipped не показывает ничего.
+  "corp.connect.verify.verified": "The token was accepted",
+  "corp.connect.verify.verifiedAs": "Connected as {{account}}",
+  "corp.connect.verify.accountMissing":
+    "The system accepted the request but named no user — the token is not confirmed",
+  "corp.connect.verify.tokenRejected": "The target system rejected the token",
+  "corp.connect.verify.verifyFailed": "The check failed: the system answered with code {{status}}",
+  "corp.connect.verify.unreachable": "The system could not be reached",
+  "corp.connect.exchange.exchanged": "A permanent token was issued",
+  "corp.connect.exchange.denied":
+    "Issuing a permanent token is not allowed — the connection works on the token you entered",
+  "corp.connect.exchange.failed":
+    "A permanent token could not be issued — the connection works on the token you entered",
+  "corp.connect.exchange.unreachable":
+    "The system could not be reached to issue a permanent token — the connection works on the token you entered",
+  "corp.connect.revoke.revoked": "The issued token was revoked",
+  "corp.connect.revoke.notRevoked":
+    "The issued token could not be revoked: the system answered with code {{status}}. It may keep working",
+  "corp.connect.revoke.unreachable": "The system could not be reached to revoke the token",
+
   // corp: страница коннектора (S-D11, S-I1)
   "corp.connector.back": "Back",
   "corp.connector.owner": "Owner",

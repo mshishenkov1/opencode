@@ -5,9 +5,12 @@ import { Auth } from "@/auth"
 import { Config } from "@/config/config"
 import { Env } from "@/env"
 import { MCP } from "@/mcp"
+import { Provider } from "@/provider/provider"
 import { Session } from "@/session/session"
 import { InstanceStore } from "@/project/instance-store"
+import { ConfigApi } from "@/server/routes/instance/httpapi/groups/config"
 import { CorpApi, CorpPaths } from "@/server/routes/instance/httpapi/groups/corp"
+import { configHandlers } from "@/server/routes/instance/httpapi/handlers/config"
 import { corpHandlers } from "@/server/routes/instance/httpapi/handlers/corp"
 import { Authorization } from "@/server/routes/instance/httpapi/middleware/authorization"
 import { instanceContextLayer } from "@/server/routes/instance/httpapi/middleware/instance-context"
@@ -157,7 +160,22 @@ const mcpLayer = Layer.mock(MCP.Service)({
     }),
 })
 
-const TestHttpApi = HttpApi.make("opencode-instance").addHttpApi(CorpApi).middleware(SchemaErrorMiddleware)
+// S-Q14: `GET /config` — surface AC-326 requires checked for leak alongside the corp routes; the
+// group needs `Provider.Service`, unused by any corp/leak scenario, so it is mocked bare-bones.
+const providerLayer = Layer.mock(Provider.Service)({
+  list: () => Effect.succeed({}),
+  getProvider: () => Effect.die(new Error("providerLayer: getProvider not mocked")),
+  getModel: () => Effect.die(new Error("providerLayer: getModel not mocked")),
+  getLanguage: () => Effect.die(new Error("providerLayer: getLanguage not mocked")),
+  closest: () => Effect.succeed(undefined),
+  getSmallModel: () => Effect.succeed(undefined),
+  defaultModel: () => Effect.die(new Error("providerLayer: defaultModel not mocked")),
+})
+
+const TestHttpApi = HttpApi.make("opencode-instance")
+  .addHttpApi(CorpApi)
+  .addHttpApi(ConfigApi)
+  .middleware(SchemaErrorMiddleware)
 
 const infra = CrossSpawnSpawner.defaultLayer.pipe(Layer.provideMerge(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
 
@@ -201,6 +219,7 @@ const captureLogger = Logger.make<unknown, void>((options) => {
 const served = HttpRouter.serve(
   HttpApiBuilder.layer(TestHttpApi).pipe(
     Layer.provide(corpHandlers),
+    Layer.provide(configHandlers),
     Layer.provide([passthroughAuthorization, workspaceRoutingLayer, schemaErrorLayer]),
     Layer.provide(Layer.mock(Session.Service)({})),
     Layer.provide(instanceContextLayer),
@@ -208,6 +227,7 @@ const served = HttpRouter.serve(
     Layer.provide(mcpLayer),
     Layer.provide(authLayer),
     Layer.provide(configLayer),
+    Layer.provide(providerLayer),
     Layer.provide(Logger.layer([captureLogger])),
   ),
   { disableListenLog: true, disableLogger: true },
@@ -342,6 +362,8 @@ export const connectTokenRoute = (alias: string) => CorpPaths.connectToken.repla
 export const disconnectRoute = (alias: string) => CorpPaths.disconnect.replace(":alias", alias)
 export const permissionsRoute = (alias: string) => CorpPaths.permissions.replace(":alias", alias)
 export const forgetRoute = (alias: string) => CorpPaths.forget.replace(":alias", alias)
+/** `GET /config` (S-Q14, AC-326) — surface checked for the leak marker alongside corp routes. */
+export const configRoute = "/config"
 
 export const body = <A>(response: { json: Effect.Effect<unknown, any, any> }) => response.json as Effect.Effect<A, any, any>
 

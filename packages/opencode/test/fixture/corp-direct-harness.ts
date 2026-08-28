@@ -8,9 +8,9 @@ import { MCP } from "@/mcp"
 import { Provider } from "@/provider/provider"
 import { Session } from "@/session/session"
 import { InstanceStore } from "@/project/instance-store"
+import { InstanceHttpApi } from "@/server/routes/instance/httpapi/api"
 import { ConfigApi } from "@/server/routes/instance/httpapi/groups/config"
 import { CorpApi, CorpPaths } from "@/server/routes/instance/httpapi/groups/corp"
-import { configHandlers } from "@/server/routes/instance/httpapi/handlers/config"
 import { corpHandlers } from "@/server/routes/instance/httpapi/handlers/corp"
 import { Authorization } from "@/server/routes/instance/httpapi/middleware/authorization"
 import { instanceContextLayer } from "@/server/routes/instance/httpapi/middleware/instance-context"
@@ -171,6 +171,44 @@ const providerLayer = Layer.mock(Provider.Service)({
   getSmallModel: () => Effect.succeed(undefined),
   defaultModel: () => Effect.die(new Error("providerLayer: defaultModel not mocked")),
 })
+
+/**
+ * `GET /config` (S-Q14, AC-326) реализован здесь заново, а не взят из настоящего
+ * `configHandlers` (`handlers/config.ts`): его обработчик `update` вызывает
+ * `markInstanceForDisposal(yield* InstanceState.context)`, и это — единственное отличие от
+ * `corpHandlers`, ни один обработчик которого через `HttpEffect.appendPreResponseHandler` не
+ * проходит, — ломает вывод типов `HttpApiBuilder.group`: требование `Session.Service`, которое
+ * `WorkspaceRoutingMiddleware` объявляет как `requires` (и которое у `corpHandlers` благополучно
+ * сворачивается охватывающим `Layer.provide(Layer.mock(Session.Service)({}))`), у `configHandlers`
+ * остаётся заочно не свёрнутым (`tsgo`: `Layer<…, Service>` не приводится к `Layer<…, never>`).
+ * Ни утечка, ни `PATCH /config` этим тестам не нужны — нужен только `GET /config` рядом с
+ * корп-роутами, поэтому здесь минимальная реализация той же группы `"config"` `InstanceHttpApi`,
+ * без обращения к `InstanceState.context`/`markInstanceForDisposal`.
+ */
+const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (handlers) =>
+  Effect.gen(function* () {
+    const configSvc = yield* Config.Service
+    const providerSvc = yield* Provider.Service
+    // Приём — как в `handlers/config.ts`: обработчик объявляется ИМЕНОВАННОЙ константой, а не
+    // инлайном внутри `.handle(...)`, иначе контекстная типизация схемы `payload` (`readonly`
+    // поля) не совпадает с мутабельным `Info`, которым живёт `Config.Service.update`.
+    const get = Effect.fn("TestConfigHttpApi.get")(function* () {
+      return yield* configSvc.get()
+    })
+    const update = Effect.fn("TestConfigHttpApi.update")(function* (ctx) {
+      yield* configSvc.update(ctx.payload)
+      return ctx.payload
+    })
+    const providers = Effect.fn("TestConfigHttpApi.providers")(function* () {
+      const providers = yield* providerSvc.list()
+      return {
+        providers: Object.values(providers).map(Provider.toPublicInfo),
+        default: Provider.defaultModelIDs(providers),
+      }
+    })
+    return handlers.handle("get", get).handle("update", update).handle("providers", providers)
+  }),
+)
 
 const TestHttpApi = HttpApi.make("opencode-instance")
   .addHttpApi(CorpApi)

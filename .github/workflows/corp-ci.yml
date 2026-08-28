@@ -66,6 +66,11 @@ jobs:
         run: bun run --cwd packages/app test
 
       - name: Браузер для тестов раскладки
+        # Из корня репозитория `bun x playwright` разрешается в ДРУГУЮ версию, чем в пакете
+        # (измерено: 1.62.1 из корня против 1.59.1 из packages/app), и установился бы браузер
+        # чужой ревизии — прогон упал бы на чистом раннере. Ставим из того же каталога,
+        # из которого запускаются тесты.
+        working-directory: packages/app
         run: bun x playwright install --with-deps chromium
 
       - name: Тесты раскладки корп-окон (packages/app)

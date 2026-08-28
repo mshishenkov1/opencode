@@ -179,6 +179,6 @@ describe("корп-роут прав — прежняя ветка {preset} не
   test("AC-206: пресет по умолчанию и признак повторной авторизации остались прежними", () => {
     expect(permissions).toContain("ctx.payload.preset ?? CorpStatus.DEFAULT_PRESET")
     expect(permissions).toContain("CorpConnectors.needsReauth(previous, preset, updated.data.status)")
-    expect(permissions).toContain("CorpConnectors.permissionsPatch(server, preset)")
+    expect(permissions).toContain("CorpConnectors.permissionsPatch(server, preset, { directConnected, current: entry })")
   })
 })

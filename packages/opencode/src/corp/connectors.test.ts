@@ -98,13 +98,46 @@ describe("corp/connectors — «Убрать из списка» (AC-175)", () =
 
 describe("corp/connectors — «Права» (AC-64, AC-65)", () => {
   test("AC-64: facade — патч обновляет только oauth.scope", () => {
-    expect(CorpConnectors.permissionsPatch(facade, "readwrite") as unknown).toEqual({
+    expect(
+      CorpConnectors.permissionsPatch(facade, "readwrite", { directConnected: false, current: undefined }) as unknown,
+    ).toEqual({
       mcp: { gitlab: { oauth: { scope: "gitlab:readwrite" } } },
     } as unknown)
   })
 
   test("AC-65: native — локального патча нет", () => {
-    expect(CorpConnectors.permissionsPatch(native, "readwrite")).toBeUndefined()
+    expect(
+      CorpConnectors.permissionsPatch(native, "readwrite", { directConnected: false, current: undefined }),
+    ).toBeUndefined()
+  })
+
+  /**
+   * BLK-3 (errata 1.13.5): отказ патча — два НЕЗАВИСИМЫХ условия (S-V9), ни одно не покрывает
+   * другое. Здесь — первое: способ подключения назван вызывающим напрямую (`directConnected:true`).
+   * Карточка при этом обычная `facade`, а `current` не несёт признака разоружения — патч обязан
+   * отказать РОВНО по признаку способа.
+   */
+  test("AC-351: directConnected:true — патч отказывает даже если запись не разоружена", () => {
+    expect(
+      CorpConnectors.permissionsPatch(facade, "readwrite", {
+        directConnected: true,
+        current: { type: "remote", url: facade.mcp_url, enabled: true },
+      }),
+    ).toBeUndefined()
+  })
+
+  /**
+   * BLK-3 (errata 1.13.5): второе условие — `current.oauth === false` переживает удаление учётных
+   * данных («Отключить»), поэтому патч обязан отказать и когда `directConnected:false` (способ уже
+   * не опознаётся), опираясь только на форму самой записи (D-63, `oauthDisarmed`).
+   */
+  test("AC-351: current.oauth === false — патч отказывает и без directConnected", () => {
+    expect(
+      CorpConnectors.permissionsPatch(facade, "readwrite", {
+        directConnected: false,
+        current: { type: "remote", url: facade.mcp_url, enabled: false, oauth: false },
+      }),
+    ).toBeUndefined()
   })
 
   test("AC-64: смена пресета требует повторной авторизации", () => {
@@ -384,7 +417,9 @@ describe("corp/connectors — scope facade-карточки с моделью to
       },
     })
     expect(CorpConnectors.connectPatch(liveTag, "readwrite").mcp["tag"]!.oauth).toEqual({ scope: "tag:readwrite" })
-    expect(CorpConnectors.permissionsPatch(liveTag, "readwrite") as unknown).toEqual({
+    expect(
+      CorpConnectors.permissionsPatch(liveTag, "readwrite", { directConnected: false, current: undefined }) as unknown,
+    ).toEqual({
       mcp: { tag: { oauth: { scope: "tag:readwrite" } } },
     } as unknown)
   })
@@ -396,7 +431,9 @@ describe("corp/connectors — scope facade-карточки с моделью to
 
     expect(CorpSchema.parsePermissionModel(server.permission_model)?.kind).toBe("tool_filter")
     expect(CorpConnectors.connectPatch(server).mcp["tag"]!.oauth).toBeUndefined()
-    expect(CorpConnectors.permissionsPatch(server, "readwrite")).toBeUndefined()
+    expect(
+      CorpConnectors.permissionsPatch(server, "readwrite", { directConnected: false, current: undefined }),
+    ).toBeUndefined()
   })
 })
 

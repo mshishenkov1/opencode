@@ -1387,8 +1387,30 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const previous = server?.connection?.preset
       const reauth = CorpConnectors.needsReauth(previous, preset, updated.data.status)
 
+      // BLK-3 (ревью `review-i4-rev113-3`), признак **способа** подключения. Спрашивается наличие
+      // учётных данных, а не режим карточки: у `facade`-карточки с разобранным `upstream` и
+      // способом `user_token` строка 1 таблицы S-V7 даёт `connect_mode == "direct"`, поэтому
+      // предикат уровня карточки (`nativeConnectDisabled`) прямое подключение не видит по
+      // построению — он отвечает про режим, а действие относится к способу.
+      //
+      // Условие **слабее**, чем `CorpCredentials.applicable(stored, upstreamUrl)` соседнего роута
+      // `connect`, и это намеренно: там признак решает «занят ли alias», здесь — «можно ли трогать
+      // ключ `oauth` и открывать браузер», и по S-V28 п.10б неизвестное деградирует в сторону
+      // запрета. Каталог сменил адрес сервера — запись перестала быть применимой, но
+      // `mcp.<alias>.url` по-прежнему указывает на целевую систему, и перевооружать её нельзя тем
+      // более.
+      const stored = (yield* readCredentials()).store[alias]
+      const directConnected = stored !== undefined
+
       if (server) {
-        const patch = CorpConnectors.permissionsPatch(server, preset)
+        // Патч правит **существующую** запись, поэтому ему передаётся и способ подключения, и сама
+        // запись: нечитаемый файл хранилища по S-V26 п.5 считается «данных нет», а разоружение
+        // D-63 живёт в записи и переживает удаление учётных данных при «Отключить».
+        const config = yield* configSvc.get()
+        const patch = CorpConnectors.permissionsPatch(server, preset, {
+          directConnected,
+          current: config.mcp?.[alias],
+        })
         if (patch) yield* configSvc.updateGlobal(patch)
       }
       yield* dropMemo(addr)
@@ -1414,7 +1436,15 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // событие), Hub отвечает `needs_reauth` — и запрещённый браузерный шаг S-V7 запускается на
       // карточке, о режиме которой не известно ничего. Цена названа S-V28 п.9: повторная
       // авторизация из экрана прав для такого alias не работает — как и для закрытой карточки.
-      const oauthClosed = server === undefined || CorpStatus.nativeConnectDisabled({ server, hubConfigured: true })
+      //
+      // **Прямое подключение — третья сторона того же охранника** (BLK-3). У прямого способа
+      // браузерного шага нет по определению (S-V25 п.8): учётные данные пользователь ввёл сам,
+      // OAuth в этом способе не участвует, а `mcp.<alias>.url` указывает на целевую систему — то
+      // есть запуск шага 2 здесь и есть та самая цепочка `native`, которую запрет закрывает.
+      // Признак спрашивается у **способа** подключения (учётные данные), а не у режима карточки:
+      // режим у такой карточки `facade`, и предикат про режим честно отвечает «не запрещено».
+      const oauthClosed =
+        directConnected || server === undefined || CorpStatus.nativeConnectDisabled({ server, hubConfigured: true })
       if (reauth && !oauthClosed) {
         yield* mcpSvc.authenticate(alias).pipe(Effect.catch(() => Effect.void))
       }

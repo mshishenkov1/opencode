@@ -91,10 +91,62 @@ export function forgetPatch(alias: string): ConfigV1.Info {
 }
 
 /**
+ * Что известно о **действующем подключении** alias в момент правки его записи (BLK-3, ревизия
+ * 1.13.5). Оба поля обязательны и оба берутся у вызывающего: `permissionsPatch` — единственный
+ * патч, который запись `mcp.<alias>` не создаёт, а **изменяет**, и обязанность S-V28 п.10
+ * («создающие **или изменяющие** запись») держится здесь типом, а не текстом.
+ */
+export interface PermissionsConnection {
+  /**
+   * Подключён ли alias **прямым** способом. Признак — не режим карточки, а наличие учётных данных
+   * (`has_credentials`, S-V26 п.3): у `facade`-карточки с разобранным `upstream` и способом
+   * `user_token` строка 1 таблицы S-V7 даёт `connect_mode == "direct"`, то есть по режиму прямое
+   * подключение не опознаётся вовсе. Ровно этим предикат `nativeConnectDisabled` мимо BLK-3 и
+   * промахивался: он честно отвечает про **режим**, а действие относится к **способу**.
+   */
+  directConnected: boolean
+  /**
+   * Действующая запись `mcp.<alias>` (эффективный конфиг) либо `undefined`, если её нет. Нужна
+   * потому, что разоружение D-63 переживает свой признак: `disconnect` удаляет учётные данные, но
+   * оставляет в конфиге `{…, url: <адрес целевой системы>, oauth: false}`, а нечитаемый файл
+   * хранилища по S-V26 п.5 трактуется как «данных нет». В обоих случаях `directConnected` уже
+   * `false`, а запись всё ещё указывает на целевую систему и всё ещё разоружена.
+   *
+   * Тип берётся у самого конфига (`ConfigV1.Info["mcp"]`), а не у `ConfigMCPV1.Info`: значение
+   * записи — union из трёх форм, третья (`{enabled}`) и есть то, что оставляет после себя
+   * `disconnectPatch`.
+   */
+  current: NonNullable<ConfigV1.Info["mcp"]>[string] | undefined
+}
+
+/**
  * Патч для «Права» (S-V9): при `mode:"facade"` обновляется `mcp.<alias>.oauth.scope`.
  * Для `mode:"native"` локальный scope не меняется — возвращается `undefined`.
+ *
+ * **Ключ `oauth` не перевооружается никогда** (BLK-3, ревью `review-i4-rev113-3`). До ревизии
+ * 1.13.5 этот патч переписывал `mcp.<alias>.oauth` с `false` на `{scope}` у любого alias с
+ * `facade`-карточкой — то есть снимал разоружение D-63 у alias, подключённого **прямым** способом,
+ * чей `url` указывает на **целевую систему**, а не на прокси Hub. Дальше оживало всё, что этим
+ * одним значением закрыто: `MCP.startAuth` (`mcp/index.ts:764`) переставал бросать, и вместе с ним
+ * возвращались upstream-роут `POST /mcp/:alias/auth/authenticate`, CLI `opencode mcp auth` и
+ * подсказка оболочки при `needs_auth`; отказ целевой системы `401` снова уводил транспорт в
+ * OAuth-поток вместо `token_rejected` (S-V25 п.7).
+ *
+ * Отказ — **два** независимых условия, и ни одно не покрывает другое:
+ * 1) `directConnected` — способ подключения назван вызывающим по учётным данным;
+ * 2) `current.oauth === false` — свойство самой записи, которое переживает и удаление учётных
+ *    данных (`disconnect`), и нечитаемый файл хранилища (S-V26 п.5). Разоружённую запись этот
+ *    патч не трогает, кем бы она ни была разоружена.
+ *
+ * Права в Hub при этом сохраняются как прежде: закрыт локальный ключ `oauth`, а не выбор пресета
+ * (та же граница, что у охранника браузерного шага в роуте, S-V28 п.5).
  */
-export function permissionsPatch(server: CorpSchema.CatalogServer, preset: string) {
+export function permissionsPatch(server: CorpSchema.CatalogServer, preset: string, connection: PermissionsConnection) {
+  if (connection.directConnected) return undefined
+  // `"oauth" in current` — проверка формы, а не дискриминанта `type`: запись в файле пользователя
+  // могла быть дописана руками и без `type`, а нас интересует ровно один ключ.
+  if (connection.current !== undefined && "oauth" in connection.current && connection.current.oauth === false)
+    return undefined
   const scope = oauthScope(server, preset)
   if (scope === undefined) return undefined
   return { mcp: { [server.alias]: { oauth: { scope } } } } as unknown as ConfigV1.Info

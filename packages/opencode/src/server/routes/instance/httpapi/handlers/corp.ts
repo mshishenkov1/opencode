@@ -1076,7 +1076,10 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         issued,
       })
 
-      // (б) Патч конфига — **без** ключа `oauth` (D-57) и **без** ключа `headers` (D-60, S-V26 п.2).
+      // (б) Патч конфига — с `oauth: false` (MAJ-C: у записи без этого ключа MCP-OAuth остаётся
+      // вооружённым, и цепочка `native` достижима по upstream-роуту `POST /mcp/:alias/auth/
+      // authenticate`; блока `oauth` со `scope` в прямом режиме по-прежнему нет, D-57) и **без**
+      // ключа `headers` (D-60, S-V26 п.2).
       // Адрес берётся из `upstream.url`, а не из `mcp_url`: у `facade`-карточки `mcp_url` указывает
       // на прокси Hub, и подставить его сюда значило бы вернуть Hub в путь, из которого его убрали.
       const patch = CorpConnectors.directConnectPatch(alias, upstream.url)

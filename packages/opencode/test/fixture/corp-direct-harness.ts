@@ -11,6 +11,7 @@ import { InstanceStore } from "@/project/instance-store"
 import { InstanceHttpApi } from "@/server/routes/instance/httpapi/api"
 import { ConfigApi } from "@/server/routes/instance/httpapi/groups/config"
 import { CorpApi, CorpPaths } from "@/server/routes/instance/httpapi/groups/corp"
+import { configGet } from "@/server/routes/instance/httpapi/handlers/config"
 import { corpHandlers } from "@/server/routes/instance/httpapi/handlers/corp"
 import { Authorization } from "@/server/routes/instance/httpapi/middleware/authorization"
 import { instanceContextLayer } from "@/server/routes/instance/httpapi/middleware/instance-context"
@@ -173,17 +174,34 @@ const providerLayer = Layer.mock(Provider.Service)({
 })
 
 /**
- * `GET /config` (S-Q14, AC-326) реализован здесь заново, а не взят из настоящего
- * `configHandlers` (`handlers/config.ts`): его обработчик `update` вызывает
- * `markInstanceForDisposal(yield* InstanceState.context)`, и это — единственное отличие от
- * `corpHandlers`, ни один обработчик которого через `HttpEffect.appendPreResponseHandler` не
- * проходит, — ломает вывод типов `HttpApiBuilder.group`: требование `Session.Service`, которое
- * `WorkspaceRoutingMiddleware` объявляет как `requires` (и которое у `corpHandlers` благополучно
- * сворачивается охватывающим `Layer.provide(Layer.mock(Session.Service)({}))`), у `configHandlers`
- * остаётся заочно не свёрнутым (`tsgo`: `Layer<…, Service>` не приводится к `Layer<…, never>`).
- * Ни утечка, ни `PATCH /config` этим тестам не нужны — нужен только `GET /config` рядом с
- * корп-роутами, поэтому здесь минимальная реализация той же группы `"config"` `InstanceHttpApi`,
- * без обращения к `InstanceState.context`/`markInstanceForDisposal`.
+ * `GET /config` (S-Q14, AC-326) вызывает продуктовый `configGet` (`handlers/config.ts`, MIN-A) —
+ * с ревизии 1.13.5 это экспортируемый именованный эффект, отделённый от `configHandlers` ровно
+ * затем, чтобы харнесс мог позвать его без остального: сборка `handlers/config.ts` целиком
+ * по-прежнему ломает вывод типов `HttpApiBuilder.group` тем же образом, что и раньше — обработчик
+ * `update` вызывает `markInstanceForDisposal(yield* InstanceState.context)`, и это — единственное
+ * отличие от `corpHandlers`, ни один обработчик которого через `HttpEffect.appendPreResponseHandler`
+ * не проходит, — требование `Session.Service`, которое `WorkspaceRoutingMiddleware` объявляет как
+ * `requires` (и которое у `corpHandlers` благополучно сворачивается охватывающим
+ * `Layer.provide(Layer.mock(Session.Service)({}))`), у `configHandlers` остаётся заочно не
+ * свёрнутым. Ни утечка, ни `PATCH /config` этим тестам не нужны — нужен только `GET /config` рядом
+ * с корп-роутами, поэтому здесь минимальная группа `"config"` `InstanceHttpApi`, где `get` зовёт
+ * продуктовую функцию, а `update`/`providers` остаются локальными заглушками без обращения к
+ * `InstanceState.context`/`markInstanceForDisposal`.
+ *
+ * `get` не передаёт `configGet` в `.handle(...)` напрямую: сама функция заново запрашивает
+ * `Config.Service` (`yield* Config.Service` внутри её тела, а не готовое значение из замыкания), и
+ * это неразвёрнутое требование не сворачивается той же самой известной особенностью вывода типов,
+ * что и `Session.Service` у полного `configHandlers` (см. выше) — тот же симптом, только у другого
+ * тега, и всплывает он не в момент `.handle()`, а много ниже по цепочке `served`, на самом
+ * `HttpApiBuilder.layer(TestHttpApi)`. Локальная обёртка вызывает **ровно** `configGet()` и тут же
+ * подставляет ему уже добытый `configSvc` через `Effect.provideService` — это не переопределение
+ * поведения (тело `configGet` выполняется целиком, как есть), а лишь способ отдать типам то же
+ * самое значение, что и так лежит в замыкании. Утечка, внесённая в продуктовое тело `configGet`,
+ * этим не маскируется: харнесс исполняет продуктовую функцию, а не свою копию.
+ *
+ * До этой правки `get` был локальной копией тела продукта, и сьют `credentials-leak.test.ts`
+ * проверял утечку в копии, а не в продукте (сторож MIN-A на срез-сравнение исходников снят вместе
+ * с этой правкой за ненадобностью — копий больше нет, сравнивать нечего).
  */
 const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (handlers) =>
   Effect.gen(function* () {
@@ -192,9 +210,6 @@ const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (handlers
     // Приём — как в `handlers/config.ts`: обработчик объявляется ИМЕНОВАННОЙ константой, а не
     // инлайном внутри `.handle(...)`, иначе контекстная типизация схемы `payload` (`readonly`
     // поля) не совпадает с мутабельным `Info`, которым живёт `Config.Service.update`.
-    const get = Effect.fn("TestConfigHttpApi.get")(function* () {
-      return yield* configSvc.get()
-    })
     const update = Effect.fn("TestConfigHttpApi.update")(function* (ctx) {
       yield* configSvc.update(ctx.payload)
       return ctx.payload
@@ -205,6 +220,9 @@ const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (handlers
         providers: Object.values(providers).map(Provider.toPublicInfo),
         default: Provider.defaultModelIDs(providers),
       }
+    })
+    const get = Effect.fn("TestConfigHttpApi.get")(function* () {
+      return yield* configGet().pipe(Effect.provideService(Config.Service, configSvc))
     })
     return handlers.handle("get", get).handle("update", update).handle("providers", providers)
   }),

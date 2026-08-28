@@ -751,15 +751,26 @@ describe("opencode corp logout — неудача локального удал�
   test("AC-285: auth-store не пишется — код выхода 1, причина названа, выход не объявлен успешным", async () => {
     const server = keyHub(() => json({ revoked: true }))
     const home = await makeHome()
-    await writeKey(home)
-    // `auth.json` становится доступным только на чтение: запись в него (прямой `writeFileString`,
-    // не rename-подмена) падает с ошибкой ОС (EACCES), при этом чтение при старте команды проходит
-    // штатно — ключ виден, отказывает именно попытка удаления, а не чтение записи (иначе сработала
-    // бы идемпотентная ветка «ключа не было», а не эта).
+    // `auth.json` подменён каталогом: `writeFileString` (прямая запись, не rename-подмена) обязан
+    // упасть с `EISDIR` — это отказ самого системного вызова «открыть каталог на запись», а не
+    // проверка прав доступа, поэтому воспроизводится одинаково что от обычного пользователя, что от
+    // root (в отличие от `chmod`+`EACCES`, который root игнорирует).
+    //
+    // Раз `auth.json` больше не файл, чтение ключа на старте команды подставляется через
+    // `OPENCODE_AUTH_CONTENT` — тот же канал, которым `control-plane/workspace.ts` передаёт auth в
+    // изолированные воркспейсы в обход диска (см. `packages/opencode/src/auth/index.ts`). Чтение
+    // ключа проходит штатно — ключ виден, отказывает именно попытка удаления (она безусловно пишет
+    // в реальный `auth.json` на диске), а не чтение записи (иначе сработала бы идемпотентная ветка
+    // «ключа не было», а не эта).
     const authFile = path.join(home, "data", "opencode", "auth.json")
-    await fs.chmod(authFile, 0o400)
+    await fs.mkdir(authFile, { recursive: true })
+    const authContent = JSON.stringify({
+      magnit_prod: { type: "api", key: KEY, metadata: { hub: "https://hub.test", key_kind: "persistent" } },
+    })
     try {
-      const result = await run(home, ["corp", "logout", "--hub", server.url])
+      const result = await run(home, ["corp", "logout", "--hub", server.url], {
+        env: { OPENCODE_AUTH_CONTENT: authContent },
+      })
       expect(result.code).toBe(1)
       // Серверная часть печатается по своему фактическому исходу — успех отзыва не подменяет провал
       // локальной части.
@@ -767,7 +778,7 @@ describe("opencode corp logout — неудача локального удал�
       expect(result.out).not.toContain(LOGOUT_LINES.removed)
       expect(result.out.toLowerCase()).not.toContain("выход выполнен")
     } finally {
-      await fs.chmod(authFile, 0o600)
+      await fs.rm(authFile, { recursive: true, force: true })
     }
   })
 

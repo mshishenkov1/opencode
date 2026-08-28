@@ -393,6 +393,7 @@ describe("connect-token — обмен: не более одного запро�
           type: "remote",
           url: `${target.url}/mcp`,
           enabled: true,
+          oauth: false,
         })
       }
       const unreachableResponse = yield* Harness.post(Harness.connectTokenRoute("direct-exchange-unreachable"), {
@@ -431,7 +432,7 @@ describe("connect-token — обмен: не более одного запро�
   )
 })
 
-describe("connect-token — сохранение и соединение (S-V25 п.6, S-V29; AC-320)", () => {
+describe("connect-token — сохранение и соединение (S-V25 п.6, S-V29; AC-320, AC-350 прогон 1)", () => {
   Harness.it.live("AC-320: mcp.<alias>.url == upstream.url, а не facade mcp_url; без oauth и без headers", () =>
     Effect.gen(function* () {
       const alias = "direct-connect-shape"
@@ -449,9 +450,16 @@ describe("connect-token — сохранение и соединение (S-V25 
       const response = yield* Harness.post(Harness.connectTokenRoute(alias), { method: "personal_token", token: "abcdef" })
       expect(response.status).toBe(200)
       const config = yield* Effect.promise(() => Harness.globalConfig())
-      expect(config.mcp[alias]).toEqual({ type: "remote", url: `${target.url}/mcp`, enabled: true })
+      expect(config.mcp[alias]).toEqual({ type: "remote", url: `${target.url}/mcp`, enabled: true, oauth: false })
       expect(config.mcp[alias].url).not.toBe(`${target.url}/mcp-proxy/${alias}`)
-      expect("oauth" in config.mcp[alias]).toBe(false)
+      // errata 1.13.4 (D-63): ключ oauth ОБЯЗАН присутствовать и быть РОВНО false — не отсутствовать
+      // и не быть объектом. Отсутствие ключа оставляет MCP-OAuth вооружённым.
+      // Эта же проверка — AC-350, прогон (1) («прочитан глобальный конфиг»): mcp.<alias>.oauth
+      // равен РОВНО false у alias, подключённого прямым способом. Прогоны (2) и (3) того же
+      // критерия — реальный upstream-роут `MCP.startAuth` и классификация 401 — этот харнесс не
+      // может проверить (MCP замокан на границе сервиса, см. шапку файла): они в
+      // `test/mcp/direct-oauth-disarm.test.ts`, на настоящем `MCP.Service`.
+      expect(config.mcp[alias].oauth).toBe(false)
       expect("headers" in config.mcp[alias]).toBe(false)
       expect(Harness.state.calls).toContain(`add:${alias}`)
     }),
@@ -602,7 +610,7 @@ describe("connect-token — границы с прежними способам�
         expect(blockedBody.error).toBe("direct_connected")
         // Попытка отвергнута без правки конфига: запись подключения осталась прямой.
         const configAfterBlock = yield* Effect.promise(() => Harness.globalConfig())
-        expect(configAfterBlock.mcp[alias]).toEqual({ type: "remote", url: `${target.url}/mcp`, enabled: true })
+        expect(configAfterBlock.mcp[alias]).toEqual({ type: "remote", url: `${target.url}/mcp`, enabled: true, oauth: false })
 
         // Каталог сменил upstream.url — сохранённая запись хранилища больше не применима к этому
         // alias, и попытка facade-подключения перестаёт видеть direct_connected (S-V26 п.3, S-V29).
@@ -652,7 +660,7 @@ describe("connect-token — границы с прежними способам�
         expect(card.actions).toContain("disconnect")
 
         const config = yield* Effect.promise(() => Harness.globalConfig())
-        expect(config.mcp[alias]).toEqual({ type: "remote", url: `${target.url}/mcp`, enabled: true })
+        expect(config.mcp[alias]).toEqual({ type: "remote", url: `${target.url}/mcp`, enabled: true, oauth: false })
       }),
   )
 })
@@ -839,7 +847,7 @@ describe("connect-token — запрет native (S-V28, микроревизия
  * `server.mode === "native"` — у которого пути стать неверным на этой карточке нет; тесты ниже
  * проверяют это на **настоящем** HTTP-роуте, а не на чистой функции `status.ts`.
  */
-describe("connect-token — BLK-1: запрет native не обходится карточкой mode:native с разобранным upstream и доступным user_token (S-V7, S-V28 п.2, п.5)", () => {
+describe("connect-token — BLK-1: запрет native не обходится карточкой mode:native с разобранным upstream и доступным user_token (S-V7, S-V28 п.2, п.5; AC-348)", () => {
   function forbiddenNativeCard(alias: string, overrides: Record<string, unknown> = {}) {
     const target = Harness.state.target.url
     return nativeCard(alias, {
@@ -850,7 +858,7 @@ describe("connect-token — BLK-1: запрет native не обходится �
   }
 
   Harness.it.live(
-    'POST /connect на карточке native+direct — 409 oauth_disabled, а не штатный MCP OAuth, хотя connect_mode == "direct" и connect_mode_unavailable_code == null',
+    'AC-348 (1): POST /connect на карточке native+direct — 409 oauth_disabled, а не штатный MCP OAuth, хотя connect_mode == "direct" и connect_mode_unavailable_code == null',
     () =>
       Effect.gen(function* () {
         const alias = "native_direct_shape"
@@ -888,7 +896,7 @@ describe("connect-token — BLK-1: запрет native не обходится �
   )
 
   Harness.it.live(
-    "PUT /permissions на карточке native+direct с ответом Hub needs_reauth — права записаны в Hub, но повторная авторизация НЕ запущена",
+    "AC-348 (2): PUT /permissions на карточке native+direct с ответом Hub needs_reauth — права записаны в Hub, но повторная авторизация НЕ запущена",
     () =>
       Effect.gen(function* () {
         const alias = "native_direct_shape_reauth"
@@ -918,6 +926,160 @@ describe("connect-token — BLK-1: запрет native не обходится �
         expect(oauthRequests).toEqual([])
         expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
         expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+      }),
+  )
+
+  // AC-348, прогон (3) — ОБЯЗАТЕЛЬНЫЙ третий прогон критерия: запрет S-V28 закрывает только
+  // OAuth-путь (шаг 2 S-V7), а не карточку целиком. Без этого теста сторож удовлетворяла бы и
+  // реализация «на этой форме карточки отказывать всегда» — ровно то расширение дефекта, о
+  // котором предупреждает тело AC-348 (D-63 упомянут только в AC-320/AC-350; здесь — S-V28 п.10а).
+  Harness.it.live(
+    "AC-348 (3): POST /connect-token на той же карточке native+direct — прямое подключение РАБОТАЕТ, форма патча как у S-V25 п.6б",
+    () =>
+      Effect.gen(function* () {
+        const alias = "native_direct_shape_token"
+        const target = Harness.state.target
+        target.routes.set("/verify", () => Harness.json({}))
+        serveCatalog([forbiddenNativeCard(alias)])
+
+        const response = yield* Harness.post(Harness.connectTokenRoute(alias), {
+          method: "personal_token",
+          token: "abcdef",
+        })
+        expect(response.status).toBe(200)
+        const result = yield* Harness.body<{ verify_result: string }>(response)
+        expect(result.verify_result).toBe("verified")
+
+        const config = yield* Effect.promise(() => Harness.globalConfig())
+        expect(config.mcp[alias]).toEqual({ type: "remote", url: `${target.url}/mcp`, enabled: true, oauth: false })
+        expect(Harness.state.calls).toContain(`add:${alias}`)
+      }),
+  )
+})
+
+/**
+ * BLK-2 (errata 1.13.4, S-V28 п.10б): предикат «режим карточки неизвестен» обязан деградировать в
+ * сторону ЗАПРЕТА, а не в сторону разрешения. До починки инъекция ИНЖ-В2 (уборка `server ===
+ * undefined ||` из охранника роута permissions) оставляла `state.calls` равным
+ * `["authenticate:<alias>"]` на alias, локально помеченном подключённым, но пропавшем из
+ * действующего каталога — ровно обход, который здесь проверяется на настоящем HTTP-роуте.
+ *
+ * Оба прогона ниже различаются ТОЛЬКО причиной, по которой режим карточки неизвестен — каталог
+ * без alias вовсе, и каталог, где alias есть, но не прошёл разбор ядра (S-V14 п.2) и осел в
+ * `dropped[]`. Оба обязаны вести себя одинаково: запись прав в Hub выполняется (деградация не
+ * молчит и не теряет действие пользователя), а браузерный шаг S-V7 — нет.
+ *
+ * Третий сценарий в этом же describe — КОНТРОЛЬНЫЙ, не входит в тело AC-349: та же карточка, но
+ * НЕ закрытая (`facade` с `needs_reauth`), обязана запускать `authenticate`. Без него сторож
+ * удовлетворяла бы и реализация «никогда не авторизовывать» — она проходит оба «неизвестных»
+ * прогона нулём вызовов `authenticate`, ничего не проверяя по существу.
+ */
+describe("connect-token — BLK-2: PUT permissions на alias с неизвестным режимом карточки деградирует к запрету (S-V28 п.10б; AC-349)", () => {
+  /** Локальная запись подключения — без неё «повторная авторизация не запущена» ничего не значит. */
+  async function seedLocalConnection(alias: string, upstreamUrl: string) {
+    await fs.writeFile(
+      path.join(Global.Path.config, "opencode.json"),
+      JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        mcp: { [alias]: { type: "remote", url: upstreamUrl, enabled: true, oauth: false } },
+      }),
+    )
+    Harness.state.statuses[alias] = { status: "connected" }
+  }
+
+  const unknownModeCases: { label: string; alias: string; catalog: (alias: string) => unknown[] }[] = [
+    {
+      label: "каталог отдаёт servers: [] — карточки в нём нет вовсе (администратор убрал)",
+      alias: "blk2-empty-catalog",
+      catalog: () => [],
+    },
+    {
+      label: "карточка в каталоге есть, но её ядро не разобрано (нет mode/mcp_url) — попала в dropped[]",
+      alias: "blk2-dropped-card",
+      catalog: (alias) => [{ alias, title: alias }],
+    },
+  ]
+
+  for (const testCase of unknownModeCases) {
+    Harness.it.live(`AC-349: ${testCase.label} — reauth ЗАПРОШЕН, но не выполнен; права в Hub записаны`, () =>
+      Effect.gen(function* () {
+        const alias = testCase.alias
+        const target = Harness.state.target
+        const upstreamUrl = `${target.url}/mcp`
+        yield* Effect.promise(() => seedLocalConnection(alias, upstreamUrl))
+        target.routes.set(`/api/me/connections/${alias}/permissions`, () =>
+          Harness.json({ alias, status: "needs_reauth", preset: "readwrite" }),
+        )
+        Harness.state.key = "sk-magnit-test"
+        process.env["OPENCODE_CORP_HUB_URL"] = target.url
+        serveCatalog(testCase.catalog(alias))
+
+        // Предпосылка зафиксирована явно, как в стороже BLK-1: среди РАЗОБРАННЫХ карточек каталога
+        // alias нет — режим карточки поэтому НЕИЗВЕСТЕН (не "direct", не "native", не "none").
+        // Карточка МОЖЕТ появиться в ответе `servers` (S-V15: alias когда-то был подключён, витрина
+        // показывает его "unavailable" по локальному признаку), но полей `connect_mode` у такой
+        // синтетической записи нет — их даёт только `serverFor`, ровно то же место, что читает
+        // охранник роута. Для второго прогона предпосылка также требует, что alias осел в dropped[].
+        const precheckCatalog = yield* Harness.get(Harness.CorpPaths.catalog)
+        const precheckView = yield* Harness.body<{
+          servers: { alias: string; connect_mode?: string }[]
+          dropped?: { alias?: string; reason: string }[]
+        }>(precheckCatalog)
+        expect(precheckView.servers.find((entry) => entry.alias === alias)?.connect_mode).toBeUndefined()
+        if (testCase.label.includes("dropped"))
+          expect(precheckView.dropped?.some((entry) => entry.alias === alias)).toBe(true)
+
+        const response = yield* Harness.put(Harness.permissionsRoute(alias), { preset: "readwrite" })
+        expect(response.status).toBe(200)
+        const result = yield* Harness.body<{ reauth_required: boolean }>(response)
+        expect(result.reauth_required).toBe(true)
+
+        // Запись прав в Hub ВЫПОЛНЕНА — деградация закрывает браузерный шаг, а не запись пресета.
+        const sent = target.requests.find((request) => request.path === `/api/me/connections/${alias}/permissions`)
+        expect(sent?.method).toBe("PUT")
+
+        // Шаг 2 правила S-V7 НЕ запущен: ни одной записи authenticate:* в журнале MCP (до починки
+        // было ["authenticate:<alias>"]), ни одного исходящего запроса к MCP-серверу.
+        expect(Harness.state.calls.filter((call) => call.startsWith("authenticate:"))).toEqual([])
+        const oauthRequests = target.requests.filter(
+          (request) => request.path !== "/catalog" && request.path !== `/api/me/connections/${alias}/permissions`,
+        )
+        expect(oauthRequests).toEqual([])
+        expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
+
+        const config = yield* Effect.promise(() => Harness.globalConfig())
+        expect(config.mcp[alias]).toEqual({ type: "remote", url: upstreamUrl, enabled: true, oauth: false })
+      }),
+    )
+  }
+
+  Harness.it.live(
+    "контроль: тот же запрос на карточке, которая ЕСТЬ и НЕ закрыта (facade с needs_reauth), ЗАПУСКАЕТ authenticate",
+    () =>
+      Effect.gen(function* () {
+        const alias = "blk2-open-card"
+        const target = Harness.state.target
+        target.routes.set(`/api/me/connections/${alias}/permissions`, () =>
+          Harness.json({ alias, status: "needs_reauth", preset: "readwrite" }),
+        )
+        Harness.state.key = "sk-magnit-test"
+        process.env["OPENCODE_CORP_HUB_URL"] = target.url
+        // Чистая facade-карточка (без upstream и способа user_token) — connect_mode вычисляется в
+        // "facade", а не в "direct"; nativeConnectDisabled ложна на любой не-native карточке, так
+        // что этот запрос обязан остаться ОТКРЫТЫМ — предикат бьёт только по mode:"native".
+        serveCatalog([nativeCard(alias, { mode: "facade", auth_methods: [oauthMethod()], upstream: undefined })])
+
+        // «Подключить» сперва — как в обычном пользовательском пути (AC-64 orchestration.test.ts):
+        // без базовой записи mcp.<alias> патч прав (oauth.scope) писать было бы не на что.
+        const connected = yield* Harness.post(Harness.connectRoute(alias), {})
+        expect(connected.status).toBe(200)
+        Harness.state.calls = []
+
+        const response = yield* Harness.put(Harness.permissionsRoute(alias), { preset: "readwrite" })
+        expect(response.status).toBe(200)
+        const result = yield* Harness.body<{ reauth_required: boolean }>(response)
+        expect(result.reauth_required).toBe(true)
+        expect(Harness.state.calls).toContain(`authenticate:${alias}`)
       }),
   )
 })

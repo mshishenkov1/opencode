@@ -81,6 +81,87 @@ describe("витрина — заголовок: «Войти»/«Выйти» �
   })
 })
 
+/**
+ * G-1 (review-i4-rev112-2): АС-287 в разметке (описанный тестом выше) не проверяет, ОТКУДА берётся
+ * признак «Войти»/«Выйти» — он переживает и возврат дефекта F-1 (признак снова считается по
+ * `hub_error` каталога), и схлопывание третьего значения признака. Errata dd09ac9cb6 завела ради
+ * этого четыре прогона AC-287 и S-Q9 п.(р) («признак берётся из `authenticated` и ни из чего
+ * другого») — здесь оба исполнены на выражениях `authenticated`/`signedIn`/`signedOut`, взятых
+ * ИЗ ИСХОДНИКА витрины, а не пересказанных в тесте (тот же приём, что `onSuccessBody` выше и
+ * `viewFunction` в connectors-view.test.ts).
+ */
+describe("AC-287, S-Q9 п.(р): признак «Войти»/«Выйти» берётся из authenticated, а не из hub_error каталога", () => {
+  /**
+   * Выражение внутри `createMemo(...)`, ограниченное балансом круглых скобок от `(` сразу после
+   * marker — символ в символ то, что стоит в источнике сейчас. Если признак поменяют (например,
+   * вернут чтение `catalog.data?.hub_error`), извлечётся уже другое выражение, и тест исполнит
+   * именно его.
+   */
+  function memoBody(marker: string) {
+    const at = source.indexOf(marker)
+    expect(at, `не найдено ${marker}`).toBeGreaterThan(-1)
+    const open = at + marker.length - 1
+    expect(source[open], `${marker} не оканчивается «(»`).toBe("(")
+    let depth = 0
+    for (let index = open; index < source.length; index++) {
+      if (source[index] === "(") depth += 1
+      else if (source[index] === ")") {
+        depth -= 1
+        if (depth === 0) return source.slice(open + 1, index)
+      }
+    }
+    throw new Error(`скобка после ${marker} не закрыта`)
+  }
+
+  /**
+   * `authenticated`/`signedIn`/`signedOut` исполняются как настоящие функции на подставных
+   * `status`/`catalog`. `catalog` передаётся НАРЯДУ со `status`, хотя правильное выражение его не
+   * читает вовсе, — чтобы и текущий код, и инъекция И-4 (возврат к `catalog.data?.hub_error`)
+   * исполнялись без ReferenceError, а не падали на извлечении раньше, чем на проверке значения.
+   */
+  function computeButtons(statusData: Record<string, unknown> | undefined, catalogData: Record<string, unknown> | undefined) {
+    const fn = new Function(
+      "status",
+      "catalog",
+      `
+      const authenticated = ${memoBody("const authenticated = createMemo(")}
+      const signedIn = ${memoBody("const signedIn = createMemo(")}
+      const signedOut = ${memoBody("const signedOut = createMemo(")}
+      return { authenticated: authenticated(), signedIn: signedIn(), signedOut: signedOut() }
+      `,
+    ) as (status: unknown, catalog: unknown) => { authenticated: unknown; signedIn: boolean; signedOut: boolean }
+    return fn({ data: statusData }, { data: catalogData })
+  }
+
+  /** Какая из двух кнопок окажется в ряду — по факту `signedIn`/`signedOut`, а не по разметке. */
+  function visibleButton(
+    statusData: Record<string, unknown> | undefined,
+    catalogData: Record<string, unknown> | undefined = {},
+  ) {
+    const { signedIn, signedOut } = computeButtons(statusData, catalogData)
+    expect(signedIn && signedOut, "«Войти» и «Выйти» одновременно").toBeFalsy()
+    if (signedIn) return "logout"
+    if (signedOut) return "login"
+    return "none"
+  }
+
+  test("AC-287, прогон 1: authenticated:true → «Выйти», «Войти» нет", () => {
+    expect(visibleButton({ enabled: true, authenticated: true }, {})).toBe("logout")
+  })
+
+  test("AC-287, прогон 2: authenticated:false при hub_error каталога ПУСТОМ (статический каталог либо недоступный Hub) → «Войти» — признак берётся из authenticated и ни из чего другого", () => {
+    expect(visibleButton({ enabled: true, authenticated: false }, {})).toBe("login")
+  })
+
+  test('AC-287, прогон 3: authenticated:true при hub_error каталога "unauthorized" → «Выйти», а не «Войти»', () => {
+    expect(visibleButton({ enabled: true, authenticated: true }, { hub_error: "unauthorized" })).toBe("logout")
+  })
+
+  test("AC-287, прогон 4: статус ещё не получен (третье значение признака) → ни одной из двух кнопок", () => {
+    expect(visibleButton(undefined, {})).toBe("none")
+  })
+})
+
 describe("витрина — подтверждение выхода (S-A16; AC-288)", () => {
   const dialogBlock = source.slice(source.indexOf("const DialogCorpLogout:"), source.indexOf("const DialogProviderEnable:"))
 

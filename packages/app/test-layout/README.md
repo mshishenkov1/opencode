@@ -18,8 +18,13 @@ CSS-переменных в happy-dom, который раскладку не с
 
 ## Как гонять локально
 
+Из каталога `packages/app` — глобальный `--cwd` перед `x` bun (1.3.14) разбирает как имя скрипта
+пакета, а не как подкоманду `bun x`, и `bun --cwd packages/app x playwright …` отвечает
+`error: Script not found "x"` вместо запуска теста:
+
 ```
-bun --cwd packages/app x playwright test --config test-layout/playwright.config.ts
+cd packages/app
+bun x playwright test --config test-layout/playwright.config.ts
 ```
 
 Фикстура собирается автоматически в `test.beforeAll`; отдельного шага сборки нет.
@@ -31,7 +36,8 @@ Playwright кладутся в `fixture/dist/test-results`: `dist` уже игн
 
 **Браузер.** По умолчанию берётся chromium, установленный `playwright install chromium`. Если его
 нет, а в системе есть Google Chrome, конфигурация переключается на него каналом `chrome` — скачивать
-ничего не нужно. Канал можно задать явно: `PLAYWRIGHT_CHANNEL=chrome bun --cwd packages/app x playwright test --config test-layout/playwright.config.ts`.
+ничего не нужно. Канал можно задать явно (тоже из каталога `packages/app`):
+`PLAYWRIGHT_CHANNEL=chrome bun x playwright test --config test-layout/playwright.config.ts`.
 
 ## Как гонять в CI
 
@@ -44,7 +50,8 @@ Playwright кладутся в `fixture/dist/test-results`: `dist` уже игн
         run: bun x playwright install --with-deps chromium
 
       - name: Тесты раскладки корп-окон (packages/app)
-        run: bun --cwd packages/app x playwright test --config test-layout/playwright.config.ts
+        working-directory: packages/app
+        run: bun x playwright test --config test-layout/playwright.config.ts
 ```
 
 `--with-deps` ставит системные библиотеки, без которых headless chromium на ubuntu-раннере не

@@ -1480,3 +1480,101 @@ describe("connect-token — BLK-3: «Права»/«Отключить»/«Уб�
       }),
   )
 })
+
+/**
+ * BLK-4 (errata 1.13.6, ревью `review-i4-rev113-4`): второй сайт того же класса, что BLK-3, найден
+ * штатным порядком, БЕЗ инъекций — открыть витрину → подключиться токеном → отключиться → поменять
+ * права. Охранник `oauthClosed` в роуте `permissions` читал не `liveConfig()` (единый источник,
+ * которым сейчас правит и патч, и охранник), а **per-directory снимок** `configSvc.get()` —
+ * значение, замерзающее на первом обращении за жизнь инстанса и структурно неспособное увидеть хотя
+ * бы одну запись корп-роутов, если инстанс не диспозится (а корп-роуты его не диспозят никогда).
+ * Открытая ДО подключения витрина материализует такой снимок раньше любой записи; после «Отключить»
+ * охранник продолжал видеть запись, которой уже нет, разоружение не ловилось, `oauthDisarmed`
+ * отвечал «не закрыто», и на `needs_reauth` запускался браузерный шаг MCP-OAuth ровно на
+ * прямо подключённом (учётные данные уже удалены) alias — то же следствие, что у BLK-3, но со
+ * вторым источником дефекта. Починка (`8101226caa`) сделала источником всех пяти чтений
+ * `liveConfig()` = `configSvc.getGlobal()`.
+ *
+ * ЯКОРЬ ПРЕДПОСЫЛКИ — ЭТО НЕ ФОРМАЛЬНОСТЬ (AC-351, given). Первым действием прогона стоит
+ * `GET /config`, а не открытие витрины: тело `GET /config` — продуктовый `configGet`
+ * (`handlers/config.ts`), и это ровно `configSvc.get()`, вызванный МИМО корп-кода. На дату этой
+ * правки корп-код `configSvc.get()` не зовёт вовсе ни в одной ветке (замер грепом — сторож ниже,
+ * и прогоном): если бы предпосылкой было «витрина первым действием» (`GET /corp/catalog`), сторож
+ * проверял бы ПОБОЧНЫЙ ЭФФЕКТ СОБСТВЕННОЙ ПОЧИНКИ и был бы ложно-зелёным на новом появлении того же
+ * класса дефекта в новом месте: витрина зовёт `liveConfig()` (сейчас — `getGlobal()`), а не
+ * `configSvc.get()`, и просто открыть её не значит материализовать снимок, который правило пыталось
+ * бы поймать. Наблюдение (обязательная часть ревизии): на восстановленном дефекте (вернуть
+ * ОДНУ строку — чтение `entry` в охраннике `permissions` — на прямой вызов `configSvc.get()`) этот
+ * прогон с якорем `GET /config` краснеет; тот же прогон БЕЗ якоря (или с якорем `GET /corp/catalog`
+ * вместо него) остаётся зелёным — снимок в таком случае замерзает только внутри самого запроса
+ * `permissions`, УЖЕ ПОСЛЕ «Отключить», и охранник видит свежую запись случайно, а не потому, что
+ * источник верный.
+ */
+describe(
+  "connect-token — BLK-4 (errata 1.13.6): охранник обязан читать источник, который переживает запись, а не снимок инстанса (S-V9, S-V25, S-V28, S-V29; AC-351)",
+  () => {
+    Harness.it.live(
+      "AC-351: GET /config первым действием, витрина открыта до подключения, «Отключить» → «Права» needs_reauth — oauth остаётся РОВНО false, authenticate не вызван, браузер не открыт",
+      () =>
+        Effect.gen(function* () {
+          const alias = "blk4-anchor-showcase"
+          const target = Harness.state.target
+          target.routes.set("/verify", () => Harness.json({ account: "ivanov" }))
+          Harness.state.key = "sk-magnit-test"
+          process.env["OPENCODE_CORP_HUB_URL"] = target.url
+          serveCatalog([directCard(alias, target.url)])
+
+          // Шаг 0 — ЯКОРЬ. Материализует снимок конфига инстанса мимо корп-кода, ДО первой записи.
+          // Удалять шаг нельзя (см. комментарий над describe): без него прогон не способен упасть
+          // на дефекте, ради которого заведён.
+          const anchor = yield* Harness.get(Harness.configRoute)
+          expect(anchor.status).toBe(200)
+
+          // Шаг 1 — витрина открыта ДО подключения, штатным порядком (это и обнаружило BLK-4 без
+          // единой инъекции): при восстановленном дефекте на снимке, который заморозил шаг 0,
+          // ни этот запрос, ни последующее подключение поправить уже ничего не могут.
+          const shop = yield* Harness.get(Harness.CorpPaths.catalog)
+          expect(shop.status).toBe(200)
+
+          // Шаг 2 — подключение токеном.
+          const connected = yield* Harness.post(Harness.connectTokenRoute(alias), {
+            method: "personal_token",
+            token: "abcdef",
+          })
+          expect(connected.status).toBe(200)
+          const upstreamUrl = `${target.url}/mcp`
+          const afterConnect = yield* Effect.promise(() => Harness.globalConfig())
+          expect(afterConnect.mcp[alias]).toEqual({ type: "remote", url: upstreamUrl, enabled: true, oauth: false })
+
+          // Шаг 3 — отключение: файл остаётся разоружённым (`oauth:false`), учётные данные удалены.
+          const disconnected = yield* Harness.post(Harness.disconnectRoute(alias))
+          expect(disconnected.status).toBe(200)
+          const afterDisconnect = yield* Effect.promise(() => Harness.globalConfig())
+          expect("oauth" in afterDisconnect.mcp[alias]).toBe(true)
+          expect(afterDisconnect.mcp[alias].oauth).toBe(false)
+          expect(afterDisconnect.mcp[alias].enabled).toBe(false)
+          const storeAfterDisconnect = yield* Effect.promise(() => Harness.credentialsFileText())
+          expect(storeAfterDisconnect === undefined || !storeAfterDisconnect.includes(`"${alias}"`)).toBe(true)
+
+          // Шаг 4 — Hub отвечает needs_reauth, «Права» → readwrite.
+          const permissionsPath = `/api/me/connections/${alias}/permissions`
+          target.routes.set(permissionsPath, () => Harness.json({ alias, status: "needs_reauth", preset: "readwrite" }))
+          const permissionsResponse = yield* Harness.put(Harness.permissionsRoute(alias), { preset: "readwrite" })
+          expect(permissionsResponse.status).toBe(200)
+          const permissionsResult = yield* Harness.body<{ reauth_required: boolean }>(permissionsResponse)
+          expect(permissionsResult.reauth_required).toBe(true)
+
+          // Шаг 5 — утверждения (AC-351, then).
+          const finalConfig = yield* Effect.promise(() => Harness.globalConfig())
+          expect("oauth" in finalConfig.mcp[alias]).toBe(true)
+          expect(finalConfig.mcp[alias].oauth).toBe(false)
+          expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
+          expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
+          const oauthRequests = target.requests.filter(
+            (request) => !["/catalog", "/verify", permissionsPath].includes(request.path),
+          )
+          expect(oauthRequests).toEqual([])
+        }),
+    )
+  },
+)

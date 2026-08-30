@@ -101,6 +101,24 @@ const CATALOG_MEMO_MS = 60_000
 const memo = new Map<string, { at: number; view: CorpSchema.CatalogView }>()
 
 /**
+ * Поколение memo: счётчик сбросов (BLK-5, вторая половина).
+ *
+ * Снимок обязан быть не только сброшен действием, но и **не записан обратно** ответом, который
+ * читался ДО этого действия. Витрина считается долго (запрос в Hub — до пяти секунд по
+ * `CorpHub.REQUEST_TIMEOUT_MS`), а действие над карточкой доходит за миллисекунды.
+ *
+ * Наблюдение зондом (Hub задержан на первом `GET /api/catalog`, действие выполнено внутри
+ * задержки): витрина, начатая до `PUT /corp/connectors/:alias/permissions {preset}`, привозит из
+ * Hub `connection.preset` ДО смены и — прежней редакцией — кладёт это в memo уже ПОСЛЕ того, как
+ * действие снимок сбросило. Следующее открытие витрины отдавало `readonly` при `readwrite` в Hub;
+ * с проверкой поколения — `readwrite`. Сброс, сделанный действием, иначе просто терялся.
+ *
+ * Поколение снимается в начале обработчика и сверяется перед записью; разошлось — результат
+ * отдаётся клиенту (он свежее кэша), но в memo не кладётся.
+ */
+let memoEpoch = 0
+
+/**
  * Действующие корпоративные адреса (S-C5, S-C10 п.1–3).
  *
  * Их два и они независимы: `hub` — вход по SSO, фасад и записи подключений; `catalog` — статический
@@ -278,6 +296,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
      */
     const dropMemo = Effect.fnUntraced(function* () {
       memo.clear()
+      memoEpoch += 1
     })
 
     /** Источники каталога в порядке проб (S-C10 п.3): статический адрес, затем Hub. */
@@ -900,6 +919,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const addr = yield* requireCatalog()
       const refresh = ctx.query.refresh === "true"
       const now = Date.now()
+      // Поколение снимается ДО первого обращения к источнику: всё, что случится с конфигом, ключом
+      // и локальными статусами после этой строки, обязано отменить запись результата в memo.
+      const epoch = memoEpoch
       const key = yield* memoKey(addr)
       const cachedView = memo.get(key)
       if (!refresh && cachedView && now - cachedView.at < CATALOG_MEMO_MS) return cachedView.view
@@ -949,7 +971,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       }
       // Memo хранит только ответ живого источника: деградация на кэш должна перепроверяться каждым
       // открытием витрины, иначе источник, вернувшийся в строй, ждал бы окна свежести.
-      if (loaded.source !== "cache") {
+      // …и только если за время сборки не случилось действия, меняющего показанное (см. `memoEpoch`):
+      // иначе в снимок легло бы состояние ДО действия, и сброс, сделанный этим действием, пропал бы.
+      if (loaded.source !== "cache" && memoEpoch === epoch) {
         // Записи других инстансов старше окна свежести больше не нужны — memo не растёт бесконечно.
         for (const [entry, value] of memo) if (now - value.at >= CATALOG_MEMO_MS) memo.delete(entry)
         memo.set(key, { at: now, view })

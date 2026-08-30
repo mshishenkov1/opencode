@@ -1931,6 +1931,9 @@ export class Corp extends HeyApiClient {
       modes?: {
         [key: string]: CorpPermissionMode
       }
+      tools?: {
+        [key: string]: CorpPermissionMode
+      }
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1945,6 +1948,7 @@ export class Corp extends HeyApiClient {
             { in: "body", key: "preset" },
             { in: "body", key: "groups" },
             { in: "body", key: "modes" },
+            { in: "body", key: "tools" },
           ],
         },
       ],

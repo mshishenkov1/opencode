@@ -2342,6 +2342,10 @@ export type CorpPermissionState = {
   [key: string]: CorpPermissionStateMode
 }
 
+export type CorpPermissionToolState = {
+  [key: string]: CorpPermissionMode
+}
+
 export type CorpAuthMethodField = {
   label: string
   secret?: boolean
@@ -2375,6 +2379,7 @@ export type CorpCatalogCard = {
   permission_model?: CorpPermissionModel
   permission_groups?: CorpPermissionGroups
   permission_state?: CorpPermissionState
+  permission_tool_state?: CorpPermissionToolState
   type?: string
   icon?: string
   connection_status?: "not_connected" | "connected" | "needs_reauth"
@@ -2521,6 +2526,7 @@ export type CorpPermissionsResult = {
   preset?: string
   reauth_required: boolean
   permission_state?: CorpPermissionState
+  permission_tool_state?: CorpPermissionToolState
   hub_error?:
     | "corp_disabled"
     | "hub_unavailable"
@@ -6371,6 +6377,9 @@ export type CorpPermissionsData = {
     preset?: string
     groups?: Array<string>
     modes?: {
+      [key: string]: CorpPermissionMode
+    }
+    tools?: {
       [key: string]: CorpPermissionMode
     }
   }

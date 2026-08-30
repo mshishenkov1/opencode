@@ -761,6 +761,13 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
             : {
                 permission_groups: groups.groups,
                 permission_state: CorpConnectors.permissionState(server.alias, groups.groups, permission),
+                // Ревизия 1.14: экран разрешений рисует строку на инструмент, и режим каждой строки
+                // считает тот же сервер тем же правилом — клиент его не выводит из режима группы.
+                permission_tool_state: CorpConnectors.permissionToolState(
+                  server.alias,
+                  groups.groups,
+                  permission,
+                ),
               }),
           ...(server.connection === undefined ? {} : { connection_status: server.connection.status }),
           ...(server.connection?.preset === undefined ? {} : { preset: server.connection.preset }),
@@ -1420,6 +1427,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       addr: Addresses,
       alias: string,
       modes: Record<string, CorpSchema.PermissionMode>,
+      tools: Record<string, CorpSchema.PermissionMode> | undefined,
     ) {
       // Словарь берётся из кэша каталога, а не из Hub: «запрос к Hub не выполняется вовсе» (S-V1)
       // относится и к чтению — экран разрешений открывается с витрины, которая кэш только что
@@ -1436,6 +1444,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const patch = CorpConnectors.permissionGroupsPatch(alias, {
         groups: parsed.groups,
         modes,
+        ...(tools === undefined ? {} : { tools }),
         existing: Object.keys(globalConfig.permission ?? {}),
       })
       yield* configSvc.updateGlobal(patch.clear)
@@ -1454,29 +1463,39 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         status: yield* cardFor(addr, alias, source),
         reauth_required: false,
         permission_state: CorpConnectors.permissionState(alias, parsed.groups, config.permission),
+        permission_tool_state: CorpConnectors.permissionToolState(alias, parsed.groups, config.permission),
       }
     })
 
     const permissions = Effect.fn("CorpHttpApi.permissions")(function* (ctx: {
       params: { alias: string }
-      payload: { preset?: string; groups?: string[]; modes?: Record<string, CorpSchema.PermissionMode> }
+      payload: {
+        preset?: string
+        groups?: string[]
+        modes?: Record<string, CorpSchema.PermissionMode>
+        tools?: Record<string, CorpSchema.PermissionMode>
+      }
     }) {
       const addr = yield* requireCatalog()
       const alias = ctx.params.alias
       // S-V1: два вида тела взаимоисключающи. Оба сразу — ошибка запроса, и ничего не записывается:
       // молча предпочесть один вид значило бы применить не то, о чём просил клиент.
-      if (ctx.payload.preset !== undefined && ctx.payload.modes !== undefined)
+      // `tools` — не третий вид тела, а спутник `modes`, поэтому с `preset` он несовместим тем же
+      // правилом: «режимы инструментов плюс пресет Hub» — тело, о смысле которого нельзя догадаться.
+      if (ctx.payload.preset !== undefined && (ctx.payload.modes !== undefined || ctx.payload.tools !== undefined))
         return yield* new CorpBadRequestError({ error: "conflicting_body" })
       // Ни того, ни другого: прежде такое тело отвергала схема (`preset` был обязателен), и оно
       // обязано отвергаться и теперь — молчаливый `readonly` по умолчанию снял бы права, о которых
-      // никто не просил.
+      // никто не просил. Одни лишь `tools` — тоже «нет тела»: без `modes` неизвестен режим
+      // wildcard, а запись блока детерминирована и обязана записать его явно (S-V21).
       if (ctx.payload.preset === undefined && ctx.payload.modes === undefined)
         return yield* new CorpBadRequestError({ error: "missing_body" })
 
       // Ветка `modes` уходит до чтения каталога из Hub: в ней Hub не участвует ни на шаг (D-35).
       // Она же — единственная, работающая в сборке без Hub (S-C10 п.7): вид `permission_groups`
       // целиком локален и от источника каталога не зависит.
-      if (ctx.payload.modes !== undefined) return yield* applyPermissionGroups(addr, alias, ctx.payload.modes)
+      if (ctx.payload.modes !== undefined)
+        return yield* applyPermissionGroups(addr, alias, ctx.payload.modes, ctx.payload.tools)
 
       // Тело `{preset}` подтверждается в Hub (S-V9): без его адреса роут отвечает отказом с
       // названной причиной и **ничего не записывает** ни в конфиг, ни в Hub (S-C10 п.7).

@@ -1830,6 +1830,12 @@
                     "additionalProperties": {
                       "$ref": "#/components/schemas/CorpPermissionMode"
                     }
+                  },
+                  "tools": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "$ref": "#/components/schemas/CorpPermissionMode"
+                    }
                   }
                 },
                 "additionalProperties": false
@@ -22705,6 +22711,12 @@
           "$ref": "#/components/schemas/CorpPermissionStateMode"
         }
       },
+      "CorpPermissionToolState": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/CorpPermissionMode"
+        }
+      },
       "CorpAuthMethodField": {
         "type": "object",
         "properties": {
@@ -22843,6 +22855,9 @@
           },
           "permission_state": {
             "$ref": "#/components/schemas/CorpPermissionState"
+          },
+          "permission_tool_state": {
+            "$ref": "#/components/schemas/CorpPermissionToolState"
           },
           "type": {
             "type": "string"
@@ -23260,6 +23275,9 @@
           },
           "permission_state": {
             "$ref": "#/components/schemas/CorpPermissionState"
+          },
+          "permission_tool_state": {
+            "$ref": "#/components/schemas/CorpPermissionToolState"
           },
           "hub_error": {
             "type": "string",

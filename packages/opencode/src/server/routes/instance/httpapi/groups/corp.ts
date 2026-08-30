@@ -123,11 +123,18 @@ export const ConnectPayload = Schema.Struct({ preset: Schema.optional(Schema.Str
  * задаёт режим группы «Остальное». Схема допускает оба поля необязательными, потому что
  * взаимоисключение — правило запроса, а не формы: одновременная передача обоих отвергается
  * `CorpBadRequestError`, и это же отличает её от «поле пропущено» в диагностике клиента.
+ *
+ * **Ревизия 1.14** добавила к виду `{modes}` необязательный спутник `{tools: {<toolName>: mode}}` —
+ * режимы отдельных инструментов. Третьим видом тела он не является и в одиночку не принимается:
+ * `modes` задаёт умолчание блока (в том числе wildcard группы «Остальное»), `tools` — поимённые
+ * исключения поверх него. Тело без `modes`, но с `tools` отвергается как `missing_body`: запись
+ * блока детерминирована и обязана знать режим wildcard, а угадывать его сервер не станет.
  */
 export const PermissionsPayload = Schema.Struct({
   preset: Schema.optional(Schema.String),
   groups: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
   modes: Schema.optional(Schema.Record(Schema.String, CorpSchema.PermissionMode)),
+  tools: Schema.optional(Schema.Record(Schema.String, CorpSchema.PermissionMode)),
 })
 
 /**

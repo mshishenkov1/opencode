@@ -215,6 +215,22 @@ export const PermissionState = Schema.Record(Schema.String, PermissionStateMode)
 })
 export type PermissionState = Schema.Schema.Type<typeof PermissionState>
 
+/**
+ * Действующий режим **каждого инструмента** по действующему конфигу (S-V23, ревизия 1.14).
+ *
+ * Ключ — техническое имя инструмента, как оно записано в словаре. `mixed` здесь невозможен по
+ * построению: у одного инструмента ровно один режим, а свёртка — свойство группы, не инструмента.
+ *
+ * Считает это сервер тем же `Permission.evaluate`, что и режимы групп, и по тому же конфигу: экран
+ * разрешений с одной строкой на инструмент обязан брать действующий режим готовым, а не выводить
+ * его из режима группы — «наследуется от группы, пока не задан лично» — это результат вычисления
+ * правил конфига, а не догадка клиента.
+ */
+export const PermissionToolState = Schema.Record(Schema.String, PermissionMode).annotate({
+  identifier: "CorpPermissionToolState",
+})
+export type PermissionToolState = Schema.Schema.Type<typeof PermissionToolState>
+
 export const Connection = Schema.Struct({
   status: ConnectionStatus,
   preset: Schema.optional(Schema.String),
@@ -1259,6 +1275,11 @@ export const CatalogCard = Schema.Struct({
   permission_groups: Schema.optional(PermissionGroups),
   /** Действующий режим каждой группы по конфигу (S-V23); считает сервер, клиент его не вычисляет. */
   permission_state: Schema.optional(PermissionState),
+  /**
+   * Действующий режим каждого инструмента по конфигу (S-V23, ревизия 1.14): экран разрешений
+   * рисует строку на инструмент и берёт режим отсюда, а не выводит его из режима группы.
+   */
+  permission_tool_state: Schema.optional(PermissionToolState),
   /** Значение колонки «Тип» (S-V22) — как пришло из каталога, без перевода. */
   type: Schema.optional(Schema.String),
   /** Адрес картинки коннектора (S-V22): без него витрина рисует монограмму из букв названия. */
@@ -1411,6 +1432,8 @@ export const PermissionsResult = Schema.Struct({
   preset: Schema.optional(Schema.String),
   reauth_required: Schema.Boolean,
   permission_state: Schema.optional(PermissionState),
+  /** Режим каждого инструмента после записи (S-V23, ревизия 1.14) — тем же правилом, что на витрине. */
+  permission_tool_state: Schema.optional(PermissionToolState),
   hub_error: Schema.optional(Code),
 }).annotate({ identifier: "CorpPermissionsResult" })
 export type PermissionsResult = Schema.Schema.Type<typeof PermissionsResult>

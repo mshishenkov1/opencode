@@ -223,6 +223,16 @@ export interface PermissionGroupsDecision {
    */
   modes: Record<string, CorpSchema.PermissionMode>
   /**
+   * Режимы **отдельных инструментов** по их техническому имени (ревизия 1.14): поимённые исключения
+   * поверх режима группы. Инструмента здесь нет — он получает режим своей группы, ровно как прежде,
+   * поэтому тело без этого поля даёт побайтово тот же блок, что до ревизии.
+   *
+   * Порядок ключей исключение **не меняет**: позиция ключа по-прежнему выводится из словаря (первая
+   * группа, в которую инструмент попал), меняется только значение. Иначе порядок блока перестал бы
+   * читаться из словаря и начал бы зависеть от истории нажатий.
+   */
+  tools?: Record<string, CorpSchema.PermissionMode>
+  /**
    * Ключи раздела `permission` действующего конфига. Из них удаляются принадлежащие alias — знать,
    * что именно там лежало, иначе неоткуда: `patchJsonc` удаляет по имени ключа, а не по шаблону.
    */
@@ -264,13 +274,25 @@ export function permissionGroupsPatch(alias: string, input: PermissionGroupsDeci
   const restMode = input.modes[CorpSchema.REST_GROUP_ID] ?? input.groups.rest?.default ?? CorpSchema.REST_DEFAULT_MODE
   // Первым — wildcard: режим `rest` для всего, что не названо явно ниже (S-V21, ПРАВИЛО ПОРЯДКА).
   const write: Record<string, CorpSchema.PermissionMode> = { [permissionWildcardKey(alias)]: restMode }
+  const overrides = input.tools ?? {}
   for (const group of input.groups.groups) {
     const mode = input.modes[group.id] ?? group.default ?? CorpSchema.REST_DEFAULT_MODE
     for (const tool of group.tools) {
       const key = permissionKey(alias, tool)
       if (key in write) continue
-      write[key] = mode
+      write[key] = overrides[tool] ?? mode
     }
+  }
+  // Инструмент, названный в разделе `tools` словаря, но не попавший ни в одну группу (S-V20,
+  // «частичная порча мягче»), своего ключа до ревизии 1.14 не имел и подчинялся wildcard. Теперь у
+  // него есть строка на экране, а значит и собственный выбор, — но ключ он получает, **только**
+  // когда выбор задан поимённо: без выбора он остаётся под wildcard, как прежде.
+  for (const tool of Object.keys(input.groups.tools ?? {})) {
+    const mode = overrides[tool]
+    if (mode === undefined) continue
+    const key = permissionKey(alias, tool)
+    if (key in write) continue
+    write[key] = mode
   }
 
   return {
@@ -312,6 +334,34 @@ export function permissionState(
     state[group.id] = folded ?? "mixed"
   }
   state[CorpSchema.REST_GROUP_ID] = modeOf(permissionWildcardKey(alias))
+  return state
+}
+
+/**
+ * Действующий режим каждого инструмента (S-V23, ревизия 1.14).
+ *
+ * Тот же источник и то же правило, что у {@link permissionState}: `Permission.evaluate` по
+ * действующему конфигу, а не чтение ключа, — поэтому «инструмент наследует режим группы, пока его
+ * не задали лично» выполняется само собой: пока поимённого ключа нет, совпадение даёт правило
+ * группы, а когда его нет и там — wildcard. Клиент этого не пересчитывает и не выводит из режима
+ * группы: на экране с одной строкой на инструмент догадка была бы неотличима от факта.
+ *
+ * Состав ключей — объединение инструментов групп и раздела `tools` словаря в порядке словаря:
+ * ровно те строки, которые экран умеет показать. `mixed` здесь не бывает по построению.
+ */
+export function permissionToolState(
+  alias: string,
+  groups: CorpSchema.PermissionGroups,
+  permission: ConfigPermissionV1.Info | undefined,
+): CorpSchema.PermissionToolState {
+  const ruleset = Permission.fromConfig(permission ?? {})
+  const state: Record<string, CorpSchema.PermissionMode> = {}
+  const put = (tool: string) => {
+    if (tool in state) return
+    state[tool] = Permission.evaluate(permissionKey(alias, tool), "*", ruleset).action
+  }
+  for (const group of groups.groups) for (const tool of group.tools) put(tool)
+  for (const tool of Object.keys(groups.tools ?? {})) put(tool)
   return state
 }
 

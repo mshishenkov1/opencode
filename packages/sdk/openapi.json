@@ -22633,6 +22633,23 @@
         },
         "additionalProperties": false
       },
+      "CorpPermissionToolClass": {
+        "type": "string",
+        "enum": ["read_only", "write_delete", "interactive"]
+      },
+      "CorpPermissionToolDef": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "class": {
+            "$ref": "#/components/schemas/CorpPermissionToolClass"
+          }
+        },
+        "required": ["class"],
+        "additionalProperties": false
+      },
       "CorpPermissionGroups": {
         "type": "object",
         "properties": {
@@ -22667,6 +22684,12 @@
           },
           "rest": {
             "$ref": "#/components/schemas/CorpPermissionGroupsRest"
+          },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CorpPermissionToolDef"
+            }
           }
         },
         "required": ["groups"],

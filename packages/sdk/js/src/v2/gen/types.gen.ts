@@ -2320,10 +2320,20 @@ export type CorpPermissionGroupsRest = {
   default?: CorpPermissionMode
 }
 
+export type CorpPermissionToolClass = "read_only" | "write_delete" | "interactive"
+
+export type CorpPermissionToolDef = {
+  title?: string
+  class: CorpPermissionToolClass
+}
+
 export type CorpPermissionGroups = {
   version?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
   groups: Array<CorpPermissionGroupDef>
   rest?: CorpPermissionGroupsRest
+  tools?: {
+    [key: string]: CorpPermissionToolDef
+  }
 }
 
 export type CorpPermissionStateMode = "allow" | "ask" | "deny" | "mixed"

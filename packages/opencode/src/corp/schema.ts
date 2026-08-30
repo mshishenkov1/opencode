@@ -157,10 +157,47 @@ export const PermissionGroupsRest = Schema.Struct({
 }).annotate({ identifier: "CorpPermissionGroupsRest" })
 export type PermissionGroupsRest = Schema.Schema.Type<typeof PermissionGroupsRest>
 
+/**
+ * Класс риска инструмента (S-V20, версия словаря 2): ровно три значения.
+ *
+ * Классы отвечают не на «о чём инструмент», а на «чем рискует пользователь, разрешив его»:
+ * `read_only` — только читает, `write_delete` — меняет или удаляет данные, `interactive` — действует
+ * от имени пользователя так, что это видят другие. Значение вне перечисления равносильно
+ * отсутствующему (S-V14 п.3): непонятое слово не делает инструмент безопасным.
+ */
+export const PermissionToolClass = Schema.Literals(["read_only", "write_delete", "interactive"]).annotate({
+  identifier: "CorpPermissionToolClass",
+})
+export type PermissionToolClass = Schema.Schema.Type<typeof PermissionToolClass>
+
+/**
+ * Инструмент в разделе `tools` словаря (S-V20, версия 2).
+ *
+ * `title` — человеческое имя инструмента, **данные каталога** (S-I6, D-38): приходит по-русски и
+ * рендерится как есть. Поле необязательно: без него оболочка показывает техническое имя, а не
+ * выдуманное. `class` в разобранной форме есть **всегда** — отсутствующий и непонятый класс
+ * заполняется `interactive` (`PERMISSION_TOOL_CLASS_DEFAULT`), поэтому потребителю не приходится
+ * гадать о неизвестном.
+ */
+export const PermissionToolDef = Schema.Struct({
+  title: Schema.optional(Schema.String),
+  class: PermissionToolClass,
+}).annotate({ identifier: "CorpPermissionToolDef" })
+export type PermissionToolDef = Schema.Schema.Type<typeof PermissionToolDef>
+
 export const PermissionGroups = Schema.Struct({
   version: Schema.optional(Schema.Number),
   groups: Schema.mutable(Schema.Array(PermissionGroupDef)),
   rest: Schema.optional(PermissionGroupsRest),
+  /**
+   * Раздел `tools` версии 2 (S-V20): имя инструмента → человеческое имя и класс риска.
+   *
+   * Раздел необязателен и в словаре версии 1 его не бывает: тогда поля здесь нет, и экран прав
+   * деградирует на прежний вид по группам. Пересечение раздела с группами не проверяется: и
+   * инструмент группы, которого нет здесь, и инструмент отсюда, не попавший ни в одну группу, —
+   * частичная порча, которая по S-V14 карточку не отбрасывает.
+   */
+  tools: Schema.optional(Schema.Record(Schema.String, PermissionToolDef)),
 }).annotate({ identifier: "CorpPermissionGroups" })
 export type PermissionGroups = Schema.Schema.Type<typeof PermissionGroups>
 
@@ -280,8 +317,25 @@ export function parsePermissionModel(value: unknown): PermissionModel | undefine
   return decode(PermissionModel, value)
 }
 
-/** Версия формата `permission_groups`, которую понимает эта сборка (S-V20). */
-export const PERMISSION_GROUPS_VERSION = 1
+/**
+ * Версия формата `permission_groups`, которую понимает эта сборка (S-V20).
+ *
+ * Версия 2 добавила раздел `tools`; версия 1 продолжает разбираться ровно как прежде — словарь без
+ * раздела `tools` даёт прежний экран по группам, и это проверяется, а не подразумевается.
+ */
+export const PERMISSION_GROUPS_VERSION = 2
+
+/** Версия, начиная с которой у словаря есть раздел `tools` (S-V20). */
+export const PERMISSION_GROUPS_TOOLS_VERSION = 2
+
+/**
+ * Класс инструмента, у которого своего класса нет (S-V20, версия 2).
+ *
+ * Отсутствующий и непонятый класс — одно и то же и трактуется как `interactive`: про неизвестное
+ * нельзя говорить «ничего не меняет», иначе непонятый инструмент попал бы в самую разрешительную
+ * секцию экрана прав.
+ */
+export const PERMISSION_TOOL_CLASS_DEFAULT: PermissionToolClass = "interactive"
 
 /** Режим группы «Остальное» по умолчанию, когда блок `rest` каталогом не прислан (S-V20). */
 export const REST_DEFAULT_MODE: PermissionMode = "ask"
@@ -336,7 +390,47 @@ export function parsePermissionGroups(value: unknown): ParsedPermissionGroups | 
   // Ни одна группа не разобралась — словарь бесполезен, действует деградация на прежний экран.
   if (groups.length === 0) return undefined
 
-  return { groups: { version, groups, rest: parsePermissionGroupsRest(raw["rest"]) }, dropped }
+  // Раздел `tools` появился в версии 2; в словаре версии 1 он не читается — «версия 1 разбирается
+  // как раньше» значит именно это, а не «как раньше плюс то, чего в том формате не было».
+  const tools = version >= PERMISSION_GROUPS_TOOLS_VERSION ? parsePermissionTools(raw["tools"]) : undefined
+
+  return {
+    groups: {
+      version,
+      groups,
+      rest: parsePermissionGroupsRest(raw["rest"]),
+      ...(tools === undefined ? {} : { tools }),
+    },
+    dropped,
+  }
+}
+
+/**
+ * Разбор раздела `tools` (S-V20, версия 2).
+ *
+ * `undefined` — читать нечего: раздела нет, он не объект либо ни одна запись не разобралась. Это
+ * **не** отбрасывает ни карточку, ни словарь: экран прав тогда показывает технические имена и
+ * прежнюю разбивку по группам (S-V14 п.3).
+ *
+ * Отдельная испорченная запись выбрасывается поодиночке — тем же правилом, что испорченная группа.
+ * Запись без `title` принимается: человеческого имени у инструмента может не быть, и показать
+ * техническое честнее, чем выдумать. Запись без пригодного `class` принимается с классом
+ * `interactive`.
+ */
+function parsePermissionTools(value: unknown): Record<string, PermissionToolDef> | undefined {
+  const raw = record(value)
+  if (raw === undefined) return undefined
+  const tools: Record<string, PermissionToolDef> = {}
+  for (const [name, entry] of Object.entries(raw)) {
+    // Имя инструмента — ключ разрешения (S-V21); пустым ключом не разрешить ничего.
+    if (name.length === 0) continue
+    const def = record(entry)
+    if (def === undefined) continue
+    const title = coreString(def["title"])
+    const cls = decode(PermissionToolClass, def["class"]) ?? PERMISSION_TOOL_CLASS_DEFAULT
+    tools[name] = { class: cls, ...(title === undefined ? {} : { title }) }
+  }
+  return Object.keys(tools).length === 0 ? undefined : tools
 }
 
 /**

@@ -167,7 +167,7 @@
 [data-slot="corp-connectors-header"],
 [data-slot="corp-connectors-row"] {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 0.5fr) minmax(0, 0.55fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.72fr) minmax(0, 0.7fr);
   align-items: center;
   gap: 12px;
   /* Строка списка живёт внутри `<button>`, а у кнопки `text-align: center` из UA-стилей: без этого
@@ -193,37 +193,115 @@
 }
 
 /*
- * Колонка «Статус» (S-V18): текст состояния и цветовая точка перед ним. Точка — дубликат текста,
- * а не замена, поэтому цвет несёт только она, а сам текст оформлен контрастными классами.
+ * Значок коннектора (S-V22, ревизия 1.14): картинка каталога, а без неё — монограмма на нейтральной
+ * подложке темы. Габариты макета заказчика: 30×30 и радиус 8 в строке витрины, 54×54 и радиус 12 в
+ * шапке страницы коннектора. Подложка нейтральная намеренно: цвет бренда взять неоткуда.
+ */
+[data-slot="corp-connector-icon"] {
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--surface-weak);
+  color: var(--text-base);
+}
+
+[data-slot="corp-connector-icon"] img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+[data-slot="corp-connector-icon"][data-size="small"] {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+[data-slot="corp-connector-icon"][data-size="large"] {
+  width: 54px;
+  height: 54px;
+  border-radius: 12px;
+}
+
+[data-slot="corp-connector-monogram"] {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+[data-slot="corp-connector-icon"][data-size="large"] [data-slot="corp-connector-monogram"] {
+  font-size: 19px;
+}
+
+/*
+ * Колонка «Тип» (S-V22, решение заказчика от 30.08): значение типа и бейдж способа подключения
+ * рядом. Тип у всех коннекторов один, поэтому бейдж — единственное, что их здесь различает, и
+ * сжимается при нехватке ширины именно значение типа, а не он.
+ */
+[data-slot="corp-type-cell"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+[data-slot="corp-type-cell"] [data-slot="corp-connect-mode"] {
+  flex: none;
+}
+
+/*
+ * Колонка «Статус» (S-V18): у подключённого — галочка и подпись, у остальных состояний подпись без
+ * значка. Цвет несёт ячейка целиком, но носителем состояния не является: подпись есть всегда и
+ * читается в чёрно-белой печати и при дальтонизме.
  */
 [data-slot="corp-status-cell"] {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-}
-
-[data-slot="corp-status-dot"] {
-  flex: none;
-  line-height: 1;
-  font-size: 16px;
   color: var(--text-weak);
 }
 
-[data-slot="corp-status-dot"][data-tone="success"] {
+[data-slot="corp-status-cell"] [data-component="icon"] {
+  flex: none;
+}
+
+[data-slot="corp-status-cell"][data-tone="success"] {
   color: var(--v2-state-fg-success);
 }
 
-[data-slot="corp-status-dot"][data-tone="warning"] {
+[data-slot="corp-status-cell"][data-tone="warning"] {
   color: var(--v2-state-fg-warning);
 }
 
-[data-slot="corp-status-dot"][data-tone="danger"] {
+[data-slot="corp-status-cell"][data-tone="danger"] {
   color: var(--v2-state-fg-danger);
 }
 
-[data-slot="corp-status-dot"][data-tone="weak"] {
+[data-slot="corp-status-cell"][data-tone="weak"] {
   color: var(--text-weak);
+}
+
+/* Страница коннектора показывает то же состояние вне таблицы — тем же тоном и тем же значком. */
+[data-slot="corp-status-line"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-weak);
+}
+
+[data-slot="corp-status-line"][data-tone="success"] {
+  color: var(--v2-state-fg-success);
+}
+
+[data-slot="corp-status-line"][data-tone="warning"] {
+  color: var(--v2-state-fg-warning);
+}
+
+[data-slot="corp-status-line"][data-tone="danger"] {
+  color: var(--v2-state-fg-danger);
 }
 
 /*

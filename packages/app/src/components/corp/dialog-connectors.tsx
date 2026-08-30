@@ -4,6 +4,7 @@ import { connectorType, corpUserLabel } from "@opencode-ai/core/corp/constants"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
+import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { List } from "@opencode-ai/ui/list"
 import { Tag } from "@opencode-ai/ui/tag"
@@ -12,6 +13,7 @@ import { corpErrorKey, useCorpCatalog, useCorpInvalidate, useCorpLogout, useCorp
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
+import { ConnectorIcon } from "./connector-icon"
 import { CorpDialog } from "./dialog-shell"
 
 /**
@@ -81,9 +83,13 @@ export function statusKey(card: Pick<CorpCatalogCard, "state" | "status">) {
 }
 
 /**
- * Цвет точки в колонке «Статус» (S-V18): семантический токен темы, а не произвольный цвет.
+ * Тон состояния в колонке «Статус» (S-V18): семантический токен темы, а не произвольный цвет.
  * `success` — «Подключено»; `danger` — «Подключение не удалось» и `unavailable`; `warning` —
- * «Требуется вход», «Соединение потеряно» и «Отключено вами»; `weak` — «Не подключён».
+ * «Нужна повторная авторизация», «Соединение потеряно» и «Отключено вами»; `weak` — «Не подключено».
+ *
+ * Ревизией 1.14 цветную точку заменила галочка у подключённого (макет заказчика от 30.08): значок
+ * появился там, где состояние положительное, а тон переехал с точки на саму ячейку. Дублирование
+ * цвета текстом при этом сохранено — цвет по-прежнему не единственный носитель состояния.
  */
 export function statusTone(card: Pick<CorpCatalogCard, "state" | "status">): "success" | "warning" | "danger" | "weak" {
   if (card.state === "connected") return "success"
@@ -91,6 +97,21 @@ export function statusTone(card: Pick<CorpCatalogCard, "state" | "status">): "su
   if (card.state === "lost" || card.state === "disconnected") return "warning"
   if (card.status === "needs_auth") return "warning"
   return "weak"
+}
+
+/**
+ * Ключ бейджа способа подключения рядом с колонкой «Тип» (S-V22, решение заказчика от 30.08).
+ *
+ * Различает коннекторы **бейдж**, а не колонка типа: тип у всех один — MCP. Признак берётся из
+ * `mode` каталога, то есть из природы записи, а не из состояния связи: «Через Hub» у карточки
+ * фасада, «Напрямую» у карточки, к которой приложение ходит само, «Локальный» у записи, которой в
+ * каталоге нет вовсе (правило 1 S-V6 — alias остался в конфиге, а из каталога пропал; там `mode`
+ * не откуда взять). Поэтому недоступный Hub и оборванное подключение бейджа не меняют.
+ */
+export function connectModeKey(card: Pick<CorpCatalogCard, "mode">) {
+  if (card.mode === "facade") return "corp.connectors.viaHub"
+  if (card.mode === "native") return "corp.connectors.viaDirect"
+  return "corp.connectors.viaLocal"
 }
 
 /**
@@ -483,8 +504,13 @@ export const DialogConnectors: Component = () => {
               {/* Имя показывается **один раз** (S-D6, ревизия 1.12): подпись `alias` второй строкой
                   убрана — она повторяла то же самое техническим именем и удваивала высоту строки,
                   мешая ровно тому сканированию, ради которого список делали плоским. `alias`
-                  остаётся полем поиска (`matchesQuery`) и виден на странице коннектора (D-53). */}
-              <div class="flex items-center gap-2 min-w-0">
+                  остаётся полем поиска (`matchesQuery`) и виден на странице коннектора (D-53).
+
+                  Значок слева от имени (S-V22, ревизия 1.14): картинка каталога, а без неё —
+                  монограмма на нейтральной подложке. Он опознавательный, а не смысловой, поэтому
+                  скрыт от скринридера: имя рядом говорит ровно то же. */}
+              <div class="flex items-center gap-3 min-w-0">
+                <ConnectorIcon title={card.title} icon={card.icon} />
                 <span class="text-14-regular text-text-strong truncate">{card.title}</span>
                 {/* Бейдж «устаревший» живёт в колонке «Имя»: он про карточку, а не про
                     подключение (S-V18). */}
@@ -492,23 +518,21 @@ export const DialogConnectors: Component = () => {
                   <Tag>{language.t("corp.connectors.deprecated")}</Tag>
                 </Show>
               </div>
-              {/* S-V22: `type` → `owner` → пустая ячейка; пустая ячейка ширину колонки сохраняет. */}
-              <span class="text-12-regular text-text-weak truncate">{connectorType(card) ?? ""}</span>
-              {/* S-V18: текст состояния и цветовая точка перед ним. Точка — дубликат текста, а не
-                  замена: состояние читается и в чёрно-белой печати, и при дальтонизме. */}
-              <span data-slot="corp-status-cell">
-                <span data-slot="corp-status-dot" data-tone={statusTone(card)} aria-hidden="true">
-                  &bull;
-                </span>
-                <span
-                  class={
-                    card.state === "connected"
-                      ? "text-12-regular text-text-strong truncate"
-                      : "text-12-regular text-text-weak truncate"
-                  }
-                >
-                  {language.t(statusKey(card))}
-                </span>
+              {/* S-V22 (решение заказчика от 30.08): в колонке — тип каталога, а без него `MCP`;
+                  деградация на владельца отменена. Рядом бейдж способа подключения: тип у всех
+                  коннекторов один, и различает их именно он. */}
+              <span data-slot="corp-type-cell">
+                <span class="text-12-regular text-text-weak truncate">{connectorType(card)}</span>
+                <Tag data-slot="corp-connect-mode">{language.t(connectModeKey(card))}</Tag>
+              </span>
+              {/* S-V18: у подключённого — галочка и подпись, у остальных состояний подпись без
+                  значка. Текст в ячейке есть **всегда**: состояние читается и в чёрно-белой
+                  печати, и при дальтонизме, а галочка и цвет его дублируют, а не заменяют. */}
+              <span data-slot="corp-status-cell" data-tone={statusTone(card)}>
+                <Show when={card.state === "connected"}>
+                  <Icon name="check-small" size="small" data-slot="corp-status-check" />
+                </Show>
+                <span class="text-12-regular truncate">{language.t(statusKey(card))}</span>
               </span>
             </div>
           )}

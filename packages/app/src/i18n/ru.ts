@@ -1035,9 +1035,14 @@ export const dict = {
   "corp.connectors.disconnected": "Отключено вами",
 
   // corp: оболочка витрины-таблицы — вкладки-фильтры и заголовки колонок (S-V11, S-D6, S-I1)
+  // S-V22 (решение заказчика от 30.08): бейдж рядом с колонкой «Тип». Тип у всех коннекторов
+  // один — MCP, — и различает их именно способ подключения.
+  "corp.connectors.viaHub": "Через Hub",
+  "corp.connectors.viaDirect": "Напрямую",
+  "corp.connectors.viaLocal": "Локальный",
   "corp.connectors.tabAll": "Все",
   "corp.connectors.tabConnected": "Подключённые",
-  "corp.connectors.columnName": "Имя",
+  "corp.connectors.columnName": "Коннектор",
   "corp.connectors.columnType": "Тип",
   "corp.connectors.columnStatus": "Статус",
   "corp.connectors.resetFilter": "Показать все",
@@ -1112,10 +1117,14 @@ export const dict = {
   "corp.empty.unparsed": "Каталог не разобран: отброшены все карточки ({{dropped}})",
   "corp.empty.tabConnected": "Пока ничего не подключено",
 
-  "corp.status.connected": "подключён",
-  "corp.status.needs_auth": "требуется авторизация",
-  "corp.status.not_connected": "не подключён",
-  "corp.status.unavailable": "недоступен",
+  // S-V18: подписи одной колонки живут в одном регистре и отвечают на «что со связью», а не
+  // «какой он». До ревизии 1.14 половина набора была строчной и описывала коннектор
+  // («не подключён»), из-за чего в одной колонке рядом стояли «не подключён» и «Соединение
+  // потеряно».
+  "corp.status.connected": "Подключено",
+  "corp.status.needs_auth": "Нужна повторная авторизация",
+  "corp.status.not_connected": "Не подключено",
+  "corp.status.unavailable": "Коннектор недоступен",
 
   "corp.preset.readonly": "Только чтение",
   "corp.preset.readwrite": "Чтение и запись",

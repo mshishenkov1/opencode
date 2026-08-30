@@ -167,14 +167,52 @@ export function corpUserLabel(user: { user_id: string; email?: string | null }):
 }
 
 /**
- * Значение колонки «Тип» (S-V22): `type` → при его отсутствии или пустоте `owner` → `undefined`
- * (пустая ячейка). Правило одно на обе оболочки — как `CorpStatus.compute` (S-Q9): TUI и Desktop
- * берут значение отсюда и сами его не выводят, поэтому разойтись не могут. Отсюда — потому что
- * это единственный корп-модуль, который видят и сервер, и `packages/app`, и `packages/tui`.
+ * Значение колонки «Тип», когда каталог его не назвал (S-V22, решение заказчика от 30.08).
+ *
+ * Не переводится и в словари не попадает: `MCP` — имя протокола, а не слово языка.
  */
-export function connectorType(card: { type?: string; owner?: string }): string | undefined {
+export const CONNECTOR_TYPE_DEFAULT = "MCP"
+
+/**
+ * Значение колонки «Тип» (S-V22, решение заказчика от 30.08): `type` → при его отсутствии или
+ * пустоте `MCP`.
+ *
+ * Прежняя деградация `type` → `owner` → пустая ячейка **отменена**. Имя владельца — другой факт, и в
+ * колонке типа оно неверно: колонка отвечает на «что это за коннектор», а не «чей он». Все
+ * коннекторы каталога одной природы — MCP-серверы, — поэтому умолчание называет её прямо, а
+ * различает коннекторы бейдж способа подключения рядом. Владелец при этом никуда не делся: он
+ * показывается своей строкой на странице коннектора.
+ *
+ * Правило одно на обе оболочки — как `CorpStatus.compute` (S-Q9): TUI и Desktop берут значение
+ * отсюда и сами его не выводят, поэтому разойтись не могут.
+ */
+export function connectorType(card: { type?: string }): string {
   const type = card.type?.trim()
-  if (type) return card.type
-  const owner = card.owner?.trim()
-  return owner ? card.owner : undefined
+  return type ? type : CONNECTOR_TYPE_DEFAULT
+}
+
+/**
+ * Монограмма коннектора (S-V22, ревизия 1.14) — то, что витрина рисует вместо картинки, когда
+ * `icon` каталогом не прислан.
+ *
+ * Правило читается вслух и проверено на макете заказчика:
+ *
+ * 1. короткое слово из заглавных букв — аббревиатура, и она остаётся собой целиком («ТЭГ» → ТЭГ);
+ * 2. иначе — первые две заглавные буквы названия, откуда бы они ни были: из разных слов
+ *    («Mattermost Dev» → MD) или из середины одного («GitLab Платформа» → GL);
+ * 3. заглавных меньше двух — первая буква названия («Confluence» → C).
+ *
+ * Второе правило берёт заглавные, а не «первые буквы слов»: у «GitLab Платформа» это дало бы
+ * латиницу и кириллицу рядом («GП»), что не читается ни как слово, ни как сокращение.
+ *
+ * Пустое название монограммы не даёт: подложка тогда пустая, а не с выдуманной буквой.
+ */
+export function connectorMonogram(title: string): string {
+  const trimmed = title.trim()
+  if (trimmed.length === 0) return ""
+  const upper = (value: string) => value === value.toUpperCase() && value !== value.toLowerCase()
+  if (trimmed.length <= 3 && !/\s/.test(trimmed) && upper(trimmed)) return trimmed
+  const capitals = [...trimmed].filter(upper)
+  if (capitals.length >= 2) return capitals.slice(0, 2).join("")
+  return trimmed.slice(0, 1).toUpperCase()
 }

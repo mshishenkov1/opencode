@@ -1139,9 +1139,12 @@ export const dict = {
   "corp.connectors.disconnected": "Disconnected by you",
 
   // corp: оболочка витрины-таблицы — вкладки-фильтры и заголовки колонок (S-V11, S-D6, S-I1)
+  "corp.connectors.viaHub": "Via Hub",
+  "corp.connectors.viaDirect": "Direct",
+  "corp.connectors.viaLocal": "Local",
   "corp.connectors.tabAll": "All",
   "corp.connectors.tabConnected": "Connected",
-  "corp.connectors.columnName": "Name",
+  "corp.connectors.columnName": "Connector",
   "corp.connectors.columnType": "Type",
   "corp.connectors.columnStatus": "Status",
   "corp.connectors.resetFilter": "Show all",
@@ -1212,10 +1215,10 @@ export const dict = {
   "corp.empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
   "corp.empty.tabConnected": "Nothing connected yet",
 
-  "corp.status.connected": "connected",
-  "corp.status.needs_auth": "needs auth",
-  "corp.status.not_connected": "not connected",
-  "corp.status.unavailable": "unavailable",
+  "corp.status.connected": "Connected",
+  "corp.status.needs_auth": "Reauthorization needed",
+  "corp.status.not_connected": "Not connected",
+  "corp.status.unavailable": "Connector unavailable",
 
   "corp.preset.readonly": "Read only",
   "corp.preset.readwrite": "Read and write",

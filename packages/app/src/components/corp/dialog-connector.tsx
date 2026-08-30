@@ -7,10 +7,12 @@ import type {
   CorpPermissionModel,
   CorpPermissionState,
 } from "@opencode-ai/sdk/v2"
-import { connectorType } from "@opencode-ai/core/corp/constants"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
+import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
+import { Icon } from "@opencode-ai/ui/icon"
+import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Tag } from "@opencode-ai/ui/tag"
 import { SegmentedControlItemV2, SegmentedControlV2 } from "@opencode-ai/ui/v2/segmented-control-v2"
 import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
@@ -26,6 +28,7 @@ import {
   useCorpCatalog,
 } from "@/context/corp"
 import { useLanguage } from "@/context/language"
+import { ConnectorIcon } from "./connector-icon"
 import { statusKey, statusTone } from "./dialog-connectors"
 import { CorpDialog } from "./dialog-shell"
 
@@ -111,18 +114,54 @@ export function rowMode(state: CorpPermissionState | undefined, row: PermissionR
 }
 
 /**
- * Есть ли что показывать в ряду действий (S-C10 п.7–8).
+ * Есть ли что показывать в ряду действий шапки (S-C10 п.7–8, ревизия 1.14).
  *
- * В сборке без Hub карточка `mode:"facade"` теряет и «Подключить», и «Открыть в Hub»: набор
- * действий становится пустым, и ряд не рисуется вовсе — пустой flex-контейнер с отступами оставил
- * бы на экране полосу, за которой ничего нет. Причина недоступности при этом всё равно видна:
- * `connect_needs_hub` сам по себе делает ряд непустым.
+ * Ревизией 1.14 из ряда ушла ссылка «Открыть в Hub» — решением заказчика от 30.08: человек
+ * должен понимать, что он подключает, не выходя из окна, поэтому действие `open_hub` оболочка не
+ * рисует, даже когда сервер прислал его в наборе. Причины недоступности остались на прежних
+ * местах: `oauth_disabled` — рядом с неактивной кнопкой, `facade_needs_hub` — на месте кнопки,
+ * которой нет (S-V28 п.4), и `connect_needs_hub` по-прежнему делает ряд непустым.
+ *
+ * Пустой ряд не рисуется вовсе: пустой flex-контейнер с отступами оставил бы на экране полосу, за
+ * которой ничего нет.
  */
 export function hasActions(card: CorpCatalogCard): boolean {
   if (card.connect_needs_hub) return true
   if (card.actions.includes("connect") || card.actions.includes("reconnect")) return true
   if (card.actions.includes("disconnect")) return true
-  return card.actions.includes("open_hub") && !!card.hub_url
+  if (card.actions.includes("forget")) return true
+  return card.connect_mode === "direct"
+}
+
+/**
+ * Описание карточки абзацами (S-D11, ревизия 1.14).
+ *
+ * Разделитель абзацев в данных — пустая строка; одиночный перенос абзаца не начинает. Текст
+ * абзацев не правится: это данные каталога и рендерятся они как есть (S-I6). До ревизии 1.14
+ * описание рисовалось одним `<p>`, и два абзаца слипались в стену текста.
+ */
+export function descriptionParagraphs(description: string | undefined): string[] {
+  if (!description) return []
+  return description
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0)
+}
+
+/** Сколько плиток инструментов показывается до нажатия «Показать все» (S-D11, ревизия 1.14). */
+export const TOOLS_PREVIEW = 18
+
+/**
+ * Список инструментов коннектора для блока «Инструменты» (S-D11, S-V20 версии 2).
+ *
+ * Источник один — раздел `tools` словаря разрешений. Нет словаря или нет раздела — пустой список,
+ * и блок не рисуется: выдумывать список инструментов не из чего. Порядок — порядок каталога.
+ * Человеческое имя показывается, когда оно есть; без него — техническое, а не заглушка.
+ */
+export function connectorTools(card: CorpCatalogCard): { name: string; label: string }[] {
+  const tools = card.permission_groups?.tools
+  if (!tools) return []
+  return Object.entries(tools).map(([name, def]) => ({ name, label: def.title ?? name }))
 }
 
 /**
@@ -742,6 +781,9 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
   /** Карточка берётся из каталога по alias, а не копируется в пропсы: после действия она обновится. */
   const card = createMemo(() => catalog.data?.servers.find((entry) => entry.alias === props.alias))
 
+  /** Раскрыт ли список инструментов целиком (S-D11): выбор живёт только пока открыта страница. */
+  const [allTools, setAllTools] = createSignal(false)
+
   /**
    * Задан ли адрес Hub в этой сборке (S-C10 п.7). Тот же признак, которым сервер решает судьбу
    * `open_hub`; отсутствие поля означает «сборка с Hub» — поведение до ревизии 1.11.
@@ -760,18 +802,10 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
   }
 
   return (
+    // Заголовок окна — хлебная крошка: имя коннектора и ничего сверх него. Крупное представление
+    // (значок, техническое имя, бейдж «устаревший») живёт в шапке страницы.
     <CorpDialog
-      title={
-        <span class="flex items-center gap-2">
-          <span>{card()?.title ?? props.alias}</span>
-          {/* `alias` ушёл со строки витрины (S-D6, ревизия 1.12) и показывается здесь: он не
-              лишние данные, а данные не для сканирования таблицы (D-53). */}
-          <span class="text-12-regular text-text-weak">{props.alias}</span>
-          <Show when={card()?.deprecated}>
-            <Tag>{language.t("corp.connectors.deprecated")}</Tag>
-          </Show>
-        </span>
-      }
+      title={card()?.title ?? props.alias}
       action={
         <Button size="small" variant="ghost" onClick={() => dialog.close()}>
           {language.t("corp.connector.back")}
@@ -784,156 +818,247 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
         <Show when={card()}>
           {(entry) => (
             <>
-              {/* 2. Описание — то, чего на витрине нет (S-D6, S-D11). */}
-              <Show when={entry().description}>
-                <p class="text-14-regular text-text-base">{entry().description}</p>
-              </Show>
-
-              {/* 3. Свойства: отсутствующее поле строку не рисует, а не рисует пустую (S-D11). */}
-              <div class="flex flex-col gap-1">
-                <Show when={connectorType(entry())}>
-                  {(value) => (
-                    <div class="flex items-baseline gap-2">
-                      <span class="text-12-regular text-text-weak">{language.t("corp.connector.type")}</span>
-                      <span class="text-14-regular text-text-strong">{value()}</span>
-                    </div>
-                  )}
-                </Show>
-                <Show when={entry().owner}>
-                  {(value) => (
-                    <div class="flex items-baseline gap-2">
-                      <span class="text-12-regular text-text-weak">{language.t("corp.connector.owner")}</span>
-                      <span class="text-14-regular text-text-strong">{value()}</span>
-                    </div>
-                  )}
-                </Show>
-                <Show when={entry().docs_url}>
-                  {(value) => (
-                    <div class="flex items-baseline gap-2">
-                      <span class="text-12-regular text-text-weak">{language.t("corp.connector.docs")}</span>
-                      <a
-                        class="text-14-regular text-text-strong underline break-all"
-                        href={value()}
-                        target="_blank"
-                        rel="noreferrer"
+              {/* 1. Шапка страницы (S-D11, макет заказчика от 30.08): крупный значок, название,
+                  под ним техническое имя, справа — действие и меню из трёх точек. */}
+              <div data-slot="corp-connector-hero">
+                <ConnectorIcon title={entry().title} icon={entry().icon} size="large" />
+                <div class="flex flex-col gap-0.5 min-w-0">
+                  <span class="flex items-center gap-2 min-w-0">
+                    <span class="text-16-medium text-text-strong truncate">{entry().title}</span>
+                    <Show when={entry().deprecated}>
+                      <Tag>{language.t("corp.connectors.deprecated")}</Tag>
+                    </Show>
+                  </span>
+                  {/* `alias` ушёл со строки витрины (S-D6, ревизия 1.12) и показывается здесь: он
+                      не лишние данные, а данные не для сканирования таблицы (D-53). */}
+                  <span class="text-12-regular text-text-weak truncate">{props.alias}</span>
+                </div>
+                <span class="flex-1" />
+                {/* Предлагаемое действие показывается тем же элементом, которым выполняется
+                    (S-V19): отдельной «кнопкой-советом» страница не обзаводится. Пустого ряда
+                    действий не бывает — контейнер тогда не рисуется вовсе, а не висит пустой
+                    полосой. Ссылки «Открыть в Hub» здесь нет ни в одном состоянии (решение
+                    заказчика от 30.08): человек должен понимать, что он подключает, не выходя из
+                    окна. */}
+                <Show when={hasActions(entry())}>
+                  <div class="flex items-center gap-2" data-slot="corp-connector-actions">
+                    {/* S-V7, S-C10 п.8: подключение `facade` идёт через Hub-фасад, а Hub в этой
+                        сборке нет — действия в наборе уже нет, и причина названа НА ЕГО МЕСТЕ, в
+                        том же ряду (S-V28 п.4, AC-252). */}
+                    <Show when={entry().connect_needs_hub}>
+                      <span class="text-12-regular text-text-weak">
+                        {language.t("corp.connectors.facadeNeedsHub")}
+                      </span>
+                    </Show>
+                    {/* S-V25 п.7: в прямом режиме предлагаемое действие — «Ввести токен заново»:
+                        оно открывает ту же форму ниже, а не браузерный шаг, которого здесь не
+                        было. Роут `connect` при этом не зовётся: alias с действующими прямыми
+                        учётными данными фасадом не подключается (S-V29 п.1). */}
+                    <Show when={entry().connect_mode === "direct"}>
+                      <Button
+                        size="small"
+                        data-action="corp-connect-focus"
+                        onClick={() => document.getElementById(`corp-connect-${entry().alias}`)?.focus()}
                       >
-                        {value()}
-                      </a>
-                    </div>
-                  )}
+                        {language.t("corp.connect.replace")}
+                      </Button>
+                    </Show>
+                    <Show when={entry().actions.includes("connect") || entry().actions.includes("reconnect")}>
+                      <Show when={entry().connect_mode !== "direct"}>
+                        {/* S-V28 п.4 (микроревизия 1.13.1): у закрытой карточки действие ОТРИСОВАНО
+                            неактивным, а не спрятано — спрятанное действие неотличимо от
+                            несуществующего. Ветвление идёт по `connect_mode_unavailable_code`, а не
+                            по одному лишь `connect_mode`: у `facade_needs_hub` действует прежнее
+                            правило ревизии 1.11 (кнопки нет, причина названа в блоке состояния). */}
+                        <Button
+                          size="small"
+                          data-action="corp-connect"
+                          disabled={
+                            action.isPending ||
+                            entry().blocked ||
+                            entry().connect_mode_unavailable_code === "oauth_disabled"
+                          }
+                          onClick={() => {
+                            if (entry().connect_mode_unavailable_code === "oauth_disabled") return
+                            action.mutate({
+                              kind: "connect",
+                              alias: entry().alias,
+                              ...(entry().preset ? { preset: entry().preset } : {}),
+                            })
+                          }}
+                        >
+                          {/* S-V16: подпись действия в состоянии 3 — «Повторить»: попытка уже была,
+                              и честнее это назвать; в состояниях 1 и 2 — «Подключить». */}
+                          {language.t(
+                            entry().actions.includes("reconnect")
+                              ? "corp.connectors.retry"
+                              : "corp.connectors.connect",
+                          )}
+                        </Button>
+                      </Show>
+                    </Show>
+                    {/* Причина неактивного действия — в том же ряду, рядом с ним (S-V28 п.4).
+                        `facade_needs_hub` сюда не попадает: у него кнопки нет вовсе, а причина
+                        показана на её месте веткой выше — сливать эти две отрисовки запрещено. */}
+                    <Show when={entry().connect_mode_unavailable_code === "oauth_disabled"}>
+                      <span class="text-12-regular text-text-weak" data-slot="corp-connect-disabled-reason">
+                        {language.t("corp.connectors.methodUnavailable.oauthDisabled")}
+                      </span>
+                    </Show>
+                    {/* S-V8, S-V16: «Отключить» существует ровно в состоянии «Подключено» — набор
+                        действий считает общий модуль corp/status.ts, оболочка его не пересчитывает. */}
+                    <Show when={entry().actions.includes("disconnect")}>
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        disabled={action.isPending}
+                        onClick={() => action.mutate({ kind: "disconnect", alias: entry().alias })}
+                      >
+                        {language.t("corp.connectors.disconnect")}
+                      </Button>
+                    </Show>
+                    {/* Меню из трёх точек (макет заказчика): редкое и необратимое действие
+                        «Убрать из списка» (S-V17) живёт здесь, а не отдельной кнопкой внизу
+                        страницы. Своё подтверждение у него осталось прежним. */}
+                    <Show when={entry().actions.includes("forget")}>
+                      <DropdownMenu>
+                        <DropdownMenu.Trigger
+                          as={IconButton}
+                          icon="dot-grid"
+                          size="small"
+                          variant="ghost"
+                          data-action="corp-connector-menu"
+                          aria-label={language.t("corp.connector.menu")}
+                          title={language.t("corp.connector.menu")}
+                        />
+                        <DropdownMenu.Portal>
+                          {/* Меню портируется в `body` и там оказывается ПОД накладкой окна
+                              (`dialog-overlay`, z-index 60), потому что своя у него 50. Приём тот
+                              же, каким это решено у `select-v2`: z-index объявляется содержимому, а
+                              Kobalte зеркалит его на позиционер. */}
+                          <DropdownMenu.Content class="mt-1" data-slot="corp-connector-menu">
+                            <DropdownMenu.Item
+                              disabled={action.isPending}
+                              onSelect={() => dialog.push(() => <DialogForgetConnector card={entry()} />)}
+                            >
+                              <DropdownMenu.ItemLabel>
+                                {language.t("corp.connectors.forget")}
+                              </DropdownMenu.ItemLabel>
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu>
+                    </Show>
+                  </div>
                 </Show>
               </div>
 
-              {/* 4. Статус: здесь признак «Подключено» — бейдж, а не колонка (S-V18). Рядом
-                  объяснение ошибки подключения по её классу (S-V19). */}
+              {/* 2. Статус: подпись состояния тем же тоном и тем же значком, что в колонке витрины
+                  (S-V18), и объяснение ошибки подключения по её классу (S-V19). Причины, по которым
+                  действие недоступно, живут не здесь, а в ряду действий шапки — рядом с самим
+                  действием либо на его месте (S-V28 п.4). */}
               <div class="flex flex-col gap-2">
-                <div class="flex items-center gap-2">
+                <span data-slot="corp-status-line" data-tone={statusTone(entry())}>
                   <Show when={entry().state === "connected"}>
-                    <Tag class="corp-tag-connected">{language.t("corp.connectors.connected")}</Tag>
+                    <Icon name="check-small" size="small" />
                   </Show>
-                  <span class="text-14-regular text-text-strong">{language.t(statusKey(entry()))}</span>
-                  <span data-slot="corp-status-dot" data-tone={statusTone(entry())} aria-hidden="true">
-                    &bull;
-                  </span>
-                </div>
+                  <span class="text-14-regular">{language.t(statusKey(entry()))}</span>
+                </span>
                 <Show when={explain(entry())}>
                   {(value) => <span class="text-12-regular text-text-weak">{value()}</span>}
                 </Show>
                 <Show when={entry().blocked}>
                   <span class="text-12-regular text-text-weak">{language.t("corp.connectors.stale")}</span>
                 </Show>
-                {/* Предлагаемое действие показывается тем же элементом, которым выполняется
-                    (S-V19): отдельной «кнопкой-советом» страница не обзаводится. Пустого ряда
-                    действий не бывает: в сборке без Hub у карточки `facade` не остаётся ни одного
-                    действия, и контейнер тогда не рисуется вовсе, а не висит пустой полосой. */}
-                <Show when={hasActions(entry())}>
-                <div class="flex items-center gap-2">
-                  {/* S-V7, S-C10 п.8: подключение `facade` идёт через Hub-фасад, а Hub в этой
-                      сборке нет — действия в наборе уже нет, и на его месте названа причина. */}
-                  <Show when={entry().connect_needs_hub}>
-                    <span class="text-12-regular text-text-weak">{language.t("corp.connectors.facadeNeedsHub")}</span>
-                  </Show>
-                  {/* S-V25 п.7: в прямом режиме предлагаемое действие — «Ввести токен заново»: оно
-                      открывает ту же форму ниже, а не браузерный шаг, которого здесь не было.
-                      Роут `connect` при этом не зовётся: alias с действующими прямыми учётными
-                      данными фасадом не подключается (S-V29 п.1). */}
-                  <Show when={entry().connect_mode === "direct"}>
-                    <Button
-                      size="small"
-                      data-action="corp-connect-focus"
-                      onClick={() => document.getElementById(`corp-connect-${entry().alias}`)?.focus()}
-                    >
-                      {language.t("corp.connect.replace")}
-                    </Button>
-                  </Show>
-                  <Show when={entry().actions.includes("connect") || entry().actions.includes("reconnect")}>
-                    <Show when={entry().connect_mode !== "direct"}>
-                    {/* S-V28 п.4 (микроревизия 1.13.1): у закрытой карточки действие ОТРИСОВАНО
-                        неактивным, а не спрятано — спрятанное действие неотличимо от
-                        несуществующего. Ветвление идёт по `connect_mode_unavailable_code`, а не по
-                        одному лишь `connect_mode`: у `facade_needs_hub` действует прежнее правило
-                        ревизии 1.11 (кнопки нет, причина на её месте, ветка выше). */}
-                    <Button
-                      size="small"
-                      data-action="corp-connect"
-                      disabled={
-                        action.isPending || entry().blocked || entry().connect_mode_unavailable_code === "oauth_disabled"
-                      }
-                      onClick={() => {
-                        if (entry().connect_mode_unavailable_code === "oauth_disabled") return
-                        action.mutate({
-                          kind: "connect",
-                          alias: entry().alias,
-                          ...(entry().preset ? { preset: entry().preset } : {}),
-                        })
-                      }}
-                    >
-                      {/* S-V16: подпись действия в состоянии 3 — «Повторить»: попытка уже была, и
-                          честнее это назвать; в состояниях 1 и 2 — «Подключить». */}
-                      {language.t(
-                        entry().actions.includes("reconnect") ? "corp.connectors.retry" : "corp.connectors.connect",
-                      )}
-                    </Button>
-                    </Show>
-                  </Show>
-                  {/* Причина неактивного действия — в том же блоке, рядом с ним (S-V28 п.4).
-                      `facade_needs_hub` сюда не попадает: у него кнопки нет вовсе, а причина
-                      показана на её месте веткой выше — сливать эти две отрисовки запрещено. */}
-                  <Show when={entry().connect_mode_unavailable_code === "oauth_disabled"}>
-                    <span class="text-12-regular text-text-weak" data-slot="corp-connect-disabled-reason">
-                      {language.t("corp.connectors.methodUnavailable.oauthDisabled")}
-                    </span>
-                  </Show>
-                  {/* S-V8, S-V16: «Отключить» существует ровно в состоянии «Подключено» — набор
-                      действий считает общий модуль corp/status.ts, оболочка его не пересчитывает. */}
-                  <Show when={entry().actions.includes("disconnect")}>
-                    <Button
-                      size="small"
-                      variant="ghost"
-                      disabled={action.isPending}
-                      onClick={() => action.mutate({ kind: "disconnect", alias: entry().alias })}
-                    >
-                      {language.t("corp.connectors.disconnect")}
-                    </Button>
-                  </Show>
-                  {/* S-C10 п.7: без адреса Hub `open_hub` из набора действий уже удалён сервером;
-                      ссылка не рисуется и заблокированной не показывается — ссылка в никуда хуже
-                      её отсутствия. Условие по `hub_url` остаётся вторым рубежом (S-V10). */}
-                  <Show when={entry().actions.includes("open_hub") && entry().hub_url}>
-                    <a
-                      class="text-12-regular text-text-weak underline whitespace-nowrap"
-                      href={entry().hub_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {language.t("corp.connectors.openHub")}
-                    </a>
-                  </Show>
-                </div>
-                </Show>
               </div>
 
-              {/* 5. Блок подключения (S-D13): между «Статусом» и «Разрешениями», в окне приложения.
+              {/* 3. Описание — то, чего на витрине нет (S-D6, S-D11), и рисуется оно абзацами:
+                  разделитель абзацев в данных — пустая строка. До ревизии 1.14 описание шло одним
+                  блоком, и два абзаца слипались в стену текста. */}
+              <Show when={descriptionParagraphs(entry().description).length > 0}>
+                <div class="flex flex-col gap-3" data-slot="corp-connector-description">
+                  <For each={descriptionParagraphs(entry().description)}>
+                    {(paragraph) => <p class="text-14-regular text-text-base">{paragraph}</p>}
+                  </For>
+                </div>
+              </Show>
+
+              {/* 4. Свойства — ниже описания и мельче его (S-D11, ревизия 1.14): одной строкой,
+                  отсутствующее поле её не удлиняет. Колонка «Тип» отсюда ушла: у всех коннекторов
+                  каталога она теперь одна и та же (S-V22), и строкой свойства не является.
+                  Владелец остался: именно он отвечает на вопрос «чей это коннектор». */}
+              <Show when={entry().owner || entry().docs_url}>
+                <div class="text-12-regular text-text-weak" data-slot="corp-connector-properties">
+                  <Show when={entry().owner}>
+                    {(value) => (
+                      <span>
+                        {language.t("corp.connector.owner")} &mdash; {value()}
+                      </span>
+                    )}
+                  </Show>
+                  <Show when={entry().owner && entry().docs_url}>
+                    <span aria-hidden="true"> &middot; </span>
+                  </Show>
+                  <Show when={entry().docs_url}>
+                    {(value) => (
+                      <span>
+                        {language.t("corp.connector.docs")} &mdash;{" "}
+                        <a class="underline break-all" href={value()} target="_blank" rel="noreferrer">
+                          {value()}
+                        </a>
+                      </span>
+                    )}
+                  </Show>
+                </div>
+              </Show>
+
+              {/* 5. «Инструменты» (S-D11, ревизия 1.14): что именно коннектор умеет — видно ДО
+                  подключения, человеческими именами из словаря. Источник один — раздел `tools`
+                  словаря разрешений; словаря нет — блока нет, выдумывать список не из чего. */}
+              <Show when={connectorTools(entry()).length > 0}>
+                <div class="flex flex-col gap-2" data-slot="corp-connector-tools">
+                  <span class="flex items-center gap-2">
+                    <span class="text-14-medium text-text-strong">{language.t("corp.connector.tools")}</span>
+                    <Tag>{connectorTools(entry()).length}</Tag>
+                  </span>
+                  <div data-slot="corp-tool-chips">
+                    <For
+                      each={
+                        allTools() ? connectorTools(entry()) : connectorTools(entry()).slice(0, TOOLS_PREVIEW)
+                      }
+                    >
+                      {(tool) => (
+                        <span data-slot="corp-tool-chip" class="text-12-regular" title={tool.name}>
+                          {tool.label}
+                        </span>
+                      )}
+                    </For>
+                  </div>
+                  {/* «Показать все» появляется, только когда есть что показывать сверх видимого, и
+                      называет число: «и ещё 59» — это факт, а не намёк. */}
+                  <Show when={connectorTools(entry()).length > TOOLS_PREVIEW}>
+                    <div class="flex items-center gap-2">
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        data-action="corp-tools-toggle"
+                        onClick={() => setAllTools((value) => !value)}
+                      >
+                        {language.t(allTools() ? "corp.connector.toolsLess" : "corp.connector.toolsAll")}
+                      </Button>
+                      <Show when={!allTools()}>
+                        <span class="text-12-regular text-text-weak">
+                          {language.t("corp.connector.toolsRest", {
+                            rest: connectorTools(entry()).length - TOOLS_PREVIEW,
+                          })}
+                        </span>
+                      </Show>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+
+              {/* 6. Блок подключения (S-D13): между «Инструментами» и «Разрешениями», в окне приложения.
                   Отдельного окна, отдельной страницы и браузерного шага у подключения нет. Блок
                   есть тогда и только тогда, когда карточка получена, её `connect_mode` равен
                   `"direct"` и она не в состоянии «Подключено» (S-V29 п.1). У карточки с
@@ -951,7 +1076,7 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                 </span>
               </Show>
 
-              {/* 6. «Разрешения»: блок есть всегда. Вид `permission_groups` — режим каждой группы
+              {/* 7. «Разрешения»: блок есть всегда. Вид `permission_groups` — режим каждой группы
                   (S-V9 ревизии 1.10); прочие виды — прежний экран пресетов (S-V20, деградация). */}
               <Show when={entry().actions.includes("permissions")}>
                 <div class="flex flex-col gap-2">
@@ -987,19 +1112,6 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                 </div>
               </Show>
 
-              {/* 7. «Убрать из списка» (S-V17) — со своим подтверждением; правило не изменено. */}
-              <Show when={entry().actions.includes("forget")}>
-                <div class="flex items-center">
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    disabled={action.isPending}
-                    onClick={() => dialog.push(() => <DialogForgetConnector card={entry()} />)}
-                  >
-                    {language.t("corp.connectors.forget")}
-                  </Button>
-                </div>
-              </Show>
             </>
           )}
         </Show>

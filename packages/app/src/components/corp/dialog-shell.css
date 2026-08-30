@@ -348,3 +348,69 @@
   overscroll-behavior: contain;
   padding: 4px 12px 12px;
 }
+
+/*
+ * Шапка страницы коннектора (S-D11, макет заказчика от 30.08): крупный значок, название с
+ * техническим именем под ним и ряд действий, прижатый вправо. Ряд не сжимается: кнопка «Отключить»
+ * не должна переноситься от длинного названия — переносится и обрезается название.
+ */
+[data-slot="corp-connector-hero"] {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+[data-slot="corp-connector-hero"] > div:last-child {
+  flex: none;
+}
+
+/*
+ * Плитки инструментов (S-D11, ревизия 1.14). Три колонки, как в макете; на узком окне колонок
+ * становится меньше сама собой — сетка считается от минимальной ширины плитки, а не от их числа.
+ */
+[data-slot="corp-tool-chips"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px;
+}
+
+[data-slot="corp-tool-chip"] {
+  background: var(--surface-weak);
+  border-radius: 7px;
+  padding: 5px 10px;
+  color: var(--text-base);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Меню из трёх точек в шапке страницы коннектора: портированное в `body` содержимое приходит с
+ * z-index 50 и уходит ПОД накладку окна (`dialog-overlay`, z-index 60). Приём тот же, каким это
+ * решено у `select-v2` в `packages/ui`: z-index объявляется и содержимому (его Kobalte зеркалит на
+ * позиционер), и самому позиционеру. Равный с накладкой z-index достаточен: позиционер добавляется
+ * в `body` позже неё и потому рисуется поверх.
+ */
+[data-popper-positioner]:has([data-slot="corp-connector-menu"]) {
+  z-index: 60;
+}
+
+[data-slot="corp-connector-menu"] {
+  z-index: 60;
+}
+
+/*
+ * Ряд действий в шапке: причина недоступности стоит рядом с действием либо на его месте
+ * (S-V28 п.4), поэтому в ряду бывает не только кнопка, но и текст. Текст переносится и жмётся,
+ * кнопки — нет: длинная причина не должна выталкивать «Отключить» за край окна.
+ */
+[data-slot="corp-connector-actions"] {
+  flex: none;
+  max-width: 60%;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+[data-slot="corp-connector-actions"] > span {
+  text-align: right;
+}

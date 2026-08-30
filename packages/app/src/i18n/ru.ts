@@ -1102,6 +1102,13 @@ export const dict = {
   "corp.connector.owner": "Владелец",
   "corp.connector.type": "Тип",
   "corp.connector.docs": "Документация",
+  // S-D11 (ревизия 1.14): блок «Инструменты» на странице коннектора — что именно он умеет, видно
+  // ДО подключения и человеческими именами из словаря разрешений.
+  "corp.connector.tools": "Инструменты",
+  "corp.connector.toolsAll": "Показать все",
+  "corp.connector.toolsLess": "Свернуть",
+  "corp.connector.toolsRest": "и ещё {{rest}}",
+  "corp.connector.menu": "Ещё действия",
 
   // corp: экран разрешений вида permission_groups (S-V9, S-V20, S-V23, S-I1)
   "corp.permissions.title": "Разрешения",

@@ -1200,6 +1200,11 @@ export const dict = {
   "corp.connector.owner": "Owner",
   "corp.connector.type": "Type",
   "corp.connector.docs": "Documentation",
+  "corp.connector.tools": "Tools",
+  "corp.connector.toolsAll": "Show all",
+  "corp.connector.toolsLess": "Collapse",
+  "corp.connector.toolsRest": "and {{rest}} more",
+  "corp.connector.menu": "More actions",
 
   // corp: экран разрешений вида permission_groups (S-V9, S-V20, S-V23, S-I1)
   "corp.permissions.title": "Permissions",

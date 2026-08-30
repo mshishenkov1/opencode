@@ -747,6 +747,8 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           // S-V22: значение колонки «Тип» — данные каталога; деградацию `type` → `owner` → пусто
           // делает оболочка, у которой есть оба поля.
           ...(server.type === undefined ? {} : { type: server.type }),
+          // S-V22: значок карточки — данные каталога; без него оболочка рисует монограмму.
+          ...(server.icon === undefined ? {} : { icon: server.icon }),
           mode: server.mode,
           mcp_url: server.mcp_url,
           // Наружу уходит разобранная модель прав; непонятый вид — как отсутствующий, экран прав

@@ -2376,6 +2376,7 @@ export type CorpCatalogCard = {
   permission_groups?: CorpPermissionGroups
   permission_state?: CorpPermissionState
   type?: string
+  icon?: string
   connection_status?: "not_connected" | "connected" | "needs_reauth"
   preset?: string
   status: "connected" | "needs_auth" | "not_connected" | "unavailable"

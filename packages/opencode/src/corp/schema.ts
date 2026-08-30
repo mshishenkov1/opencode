@@ -254,6 +254,14 @@ export const CatalogServer = Schema.Struct({
   permission_groups: Schema.optional(Schema.Unknown),
   /** Человеческий тип коннектора на языке каталога (S-V22): данные, а не код — клиент их не переводит. */
   type: Schema.optional(Schema.String),
+  /**
+   * Адрес картинки коннектора (S-V22, ревизия 1.14): значок, который витрина ставит слева от имени.
+   *
+   * Поле необязательно и у большинства коннекторов пустое: без него оболочка рисует монограмму из
+   * первых букв названия. Своего значка форк не выдумывает и по alias не угадывает — источник
+   * картинки один, каталог.
+   */
+  icon: Schema.optional(Schema.String),
   auth_kind: Schema.optional(Schema.String),
   /**
    * Способы подключения (S-V24 п.1) — **дословно, как пришло от источника** (S-V3, ревизия 1.13),
@@ -846,6 +854,8 @@ export function parseCatalogServer(value: unknown): ServerResult {
   const status = decode(ServerStatus, raw["status"])
   // S-V22: значение неизвестного вида равносильно отсутствию поля и на приём карточки не влияет.
   const type = optionalString(raw["type"])
+  // То же и для значка: `null` живого каталога — это «значка нет», а не испорченная карточка.
+  const icon = optionalString(raw["icon"])
   const authKind = optionalString(raw["auth_kind"])
   const connection = raw["connection"] === undefined ? undefined : decode(Connection, raw["connection"])
 
@@ -862,6 +872,7 @@ export function parseCatalogServer(value: unknown): ServerResult {
       ...(docsUrl === undefined ? {} : { docs_url: docsUrl }),
       ...(status === undefined ? {} : { status }),
       ...(type === undefined ? {} : { type }),
+      ...(icon === undefined ? {} : { icon }),
       ...(authKind === undefined ? {} : { auth_kind: authKind }),
       // Дословно: разбирается модель отдельно, а в кэш и наружу уходит исходное значение Hub (S-V3).
       ...(raw["permission_model"] === undefined ? {} : { permission_model: raw["permission_model"] }),
@@ -1250,6 +1261,8 @@ export const CatalogCard = Schema.Struct({
   permission_state: Schema.optional(PermissionState),
   /** Значение колонки «Тип» (S-V22) — как пришло из каталога, без перевода. */
   type: Schema.optional(Schema.String),
+  /** Адрес картинки коннектора (S-V22): без него витрина рисует монограмму из букв названия. */
+  icon: Schema.optional(Schema.String),
   connection_status: Schema.optional(ConnectionStatus),
   preset: Schema.optional(Schema.String),
   status: CardStatus,

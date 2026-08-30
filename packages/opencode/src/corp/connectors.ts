@@ -155,6 +155,20 @@ export function oauthDisarmed(entry: NonNullable<ConfigV1.Info["mcp"]>[string] |
  *
  * Права в Hub при этом сохраняются как прежде: закрыт локальный ключ `oauth`, а не выбор пресета
  * (та же граница, что у охранника браузерного шага в роуте, S-V28 п.5).
+ *
+ * **`current: undefined` этой функции больше не подаётся** (MAJ-H, errata 1.13.6, §13 п.11).
+ * Записи, которой в правимом слое нет, патч заводить не вправе: у alias без записи он давал
+ * **обрывок** `mcp.<alias> = {oauth:{scope}}` — без `type` и без `url`, — а обрывок MCP-сервером не
+ * является: `ConfigParse.schema` на нём БРОСАЕТ `ConfigInvalidError`, и бросает синхронно внутри
+ * `Effect.fnUntraced`, то есть **дефектом**, мимо `orElseSucceed` в `Config.loadGlobal`. Наблюдение
+ * зондом на настоящих роутах: сам `PUT …/permissions {preset}` отвечал `500` с пустым телом, а
+ * следующий `GET /corp/catalog` — **тоже** `500`, потому что глобальный конфиг пользователя
+ * оставался нечитаемым до правки файла руками. Отсечка стоит в роуте `permissions`
+ * (`handlers/corp.ts`, `if (server && entry !== undefined)`) — там же, где читается `entry` и где
+ * живёт охранник браузерного шага, чтобы оба решения принимались по одному значению одного слоя.
+ * Здесь она НЕ продублирована намеренно: критерии AC-64 и AC-164 зовут эту функцию с
+ * `current: undefined` и ждут патч, то есть закрепляют на уровне юнита ровно то поведение, которое
+ * §13 п.11 запрещает. Тест не правится ролью dev — заведён `disputes/test-dispute-MAJ-H.json`.
  */
 export function permissionsPatch(server: CorpSchema.CatalogServer, preset: string, connection: PermissionsConnection) {
   if (connection.directConnected) return undefined

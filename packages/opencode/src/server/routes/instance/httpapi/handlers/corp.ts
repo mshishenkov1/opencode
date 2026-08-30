@@ -139,6 +139,39 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
      */
     const instanceStore = yield* InstanceStore.Service
 
+    /**
+     * **Единственный** источник конфига корп-роутов (BLK-4/MAJ-E ревью `review-i4-rev113-4`).
+     *
+     * `configSvc.get()` — это **не кэш с инвалидацией**, а per-directory СНИМОК слитого конфига:
+     * `Config.loadInstanceState` кладётся в `InstanceState`/`ScopedCache` с `capacity: Infinity` и
+     * TTL `Duration.infinity` (`effect/instance-state.ts`), ключ — рабочий каталог, снимается
+     * только `registerDisposer` при disposal инстанса. `Config.updateGlobal` этот снимок **не
+     * обновляет**: `Config.invalidate()` делает ровно `invalidateGlobal`, то есть трогает лишь
+     * TTL-кэш `getGlobal()`. Инстанс корп-роуты не диспозят никогда — `markInstanceForDisposal`
+     * зовут только `PATCH /config` и `handlers/instance.ts`. Значит снимок замерзает на **первом**
+     * обращении за жизнь инстанса и **структурно неспособен** показать хотя бы одну запись
+     * корп-роутов: открытая до подключения витрина материализует его раньше любой записи.
+     *
+     * Отсюда правило, которое здесь и держится: **признак, по которому корп-роут принимает
+     * решение или который он показывает как состояние ПОСЛЕ записи, обязан браться из источника,
+     * который эта запись обновляет.** Корп-роуты пишут ровно один слой — глобальный
+     * (`configSvc.updateGlobal`), и ровно его TTL-кэш `updateGlobal` инвалидирует. Поэтому
+     * источник здесь один — `getGlobal()`, и `configSvc.get()` в корп-обработчике не употребляется
+     * нигде (сторож — греп по этому файлу).
+     *
+     * Цена названа честно: личные слои (`opencode.json` проекта, `OPENCODE_CONFIG`) сюда не
+     * входят. Для разделов, о которых спрашивают корп-роуты, это верно по существу, а не
+     * компромисс: `mcp.<alias>` и `permission.<alias>_*` пишет и гасит сам корп-код в глобальном
+     * файле, «Отключить»/«Убрать из списка» правят его же, а рукописная запись `mcp.<alias>` в
+     * личном слое — это конфликт, о котором отдельно предупреждает `CorpDiagnostics` (S-C9 п.2), а
+     * не запись, которой корп-роут вправе распоряжаться. Там, где неизвестность всё же остаётся,
+     * она деградирует в сторону запрета (S-V28 п.10б): у охранника браузерного шага отсутствующая
+     * в глобальном слое запись `oauthDisarmed` не закрывает, но её закрывают три другие стороны.
+     */
+    const liveConfig = Effect.fnUntraced(function* () {
+      return yield* configSvc.getGlobal()
+    })
+
     const hubUrl = () => CorpConfig.corpHubUrl()
     const catalogUrl = () => CorpConfig.corpCatalogUrl()
 
@@ -431,7 +464,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // Провайдер не выключен — править нечего, и это не ошибка.
       if (disabled === undefined) return { changed: false, reason: "not_disabled" as const }
 
-      const globalConfig = yield* configSvc.getGlobal()
+      const globalConfig = yield* liveConfig()
       const patch = CorpConfig.enableProviderPatch(globalConfig.disabled_providers)
       if (patch === undefined || !isGlobalConfigFile(disabled.file))
         return { changed: false, provider_disabled: disabled, reason: "foreign_layer" as const }
@@ -491,11 +524,21 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
 
     // --- Витрина (S-V1…S-V6) ---
 
-    /** Локальные статусы MCP и записи `mcp.<alias>` действующего конфига (S-V5). */
+    /**
+     * Локальные статусы MCP и записи `mcp.<alias>` конфига (S-V5).
+     *
+     * Источник — `liveConfig()`, а не снимок инстанса: `configured`, `mcpUrls` и `permission`
+     * питают карточку, которую тот же процесс отдаёт **сразу после своей записи** («Подключить»,
+     * «Отключить», «Убрать из списка», «Права» — все зовут `cardFor`). На снимке карточка после
+     * «Убрать из списка» продолжала бы называть alias настроенным, а после подключения токеном —
+     * не видеть собственного `mcp.<alias>.url`, то есть вторую половину признака S-V29 п.4. Сегодня
+     * первое спасал `mcpSvc.status()`, второе — избыточность признака; опираться на это нельзя.
+     */
     const localState = Effect.fnUntraced(function* () {
       const statuses = yield* mcpSvc.status()
-      const config = yield* configSvc.get()
-      // S-V23: раздел `permission` действующего (слитого) конфига — по нему считается permission_state.
+      const config = yield* liveConfig()
+      // S-V23: раздел `permission` — по нему считается permission_state; тот же источник, что у
+      // ответа `applyPermissionGroups`, поэтому витрина и ответ действия не расходятся.
       return {
         statuses,
         configured: new Set(Object.keys(config.mcp ?? {})),
@@ -1315,7 +1358,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
 
       // Ключи берутся из **глобального** конфига: правится именно он, а гасить `undefined` имеет
       // смысл только то, что в этом файле действительно лежит.
-      const globalConfig = yield* configSvc.getGlobal()
+      const globalConfig = yield* liveConfig()
       const patch = CorpConnectors.permissionGroupsPatch(alias, {
         groups: parsed.groups,
         modes,
@@ -1326,7 +1369,12 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       yield* dropMemo(addr)
 
       // Состояние считается по конфигу **после** записи — и тем же правилом, что на витрине (S-V23).
-      const config = yield* configSvc.get()
+      // MAJ-E: требование «после записи» держится только тем, что источник — `liveConfig()`, то есть
+      // тот самый слой, который две строки выше перезаписали и чей кэш `updateGlobal` инвалидировал.
+      // Снимок инстанса (`configSvc.get()`) здесь давал «вчерашнее» ВСЕГДА, а не при неудачном
+      // порядке: ветка `{modes}` требует кэша каталога и без предшествующего чтения витрины отвечает
+      // `400`, то есть снимок гарантированно материализуется раньше записи.
+      const config = yield* liveConfig()
       return {
         alias,
         status: yield* cardFor(addr, alias, source),
@@ -1404,9 +1452,17 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // Действующая запись alias. Нужна и патчу, и охраннику браузерного шага ниже: разоружение
       // D-63 живёт в записи и переживает свой признак — «Отключить» удаляет учётные данные, оставляя
       // `{enabled:false, url:<адрес целевой системы>, oauth:false}`, а нечитаемый файл хранилища по
-      // S-V26 п.5 считается «данных нет». Читается **эффективный** конфиг: именно его читает
-      // `mcp/index.ts`, решая, вооружён ли провайдер.
-      const entry = (yield* configSvc.get()).mcp?.[alias]
+      // S-V26 п.5 считается «данных нет».
+      //
+      // BLK-4: источник записи — `liveConfig()`, то есть тот слой, который «Отключить» и патч прав
+      // и правят. Прежнее чтение снимка инстанса делало этот охранник **неспособным** увидеть
+      // разоружение: снимок замерзает на первом обращении, а витрина, открытая до подключения,
+      // материализует его раньше любой записи — и после «Отключить» охранник видел запись, которой
+      // уже нет, перевооружал `mcp.<alias>.oauth` и запускал браузерный шаг. Ссылка на то, что
+      // «эффективный конфиг читает `mcp/index.ts`», снята намеренно: `mcp/index.ts` читает тот же
+      // замороженный снимок, а по S-V28 п.5 запрет обязан жить в корп-роуте и на чужой охранник не
+      // опираться.
+      const entry = (yield* liveConfig()).mcp?.[alias]
 
       if (server) {
         // Патч правит **существующую** запись, поэтому ему передаётся и способ подключения, и сама

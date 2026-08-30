@@ -49,6 +49,12 @@ export function useCorpStatus() {
         .catch(() => STATUS_UNAVAILABLE),
     // Корп-режим не меняется в течение сессии, но ключ появляется после входа — обновляем по инвалидации.
     staleTime: 30_000,
+    // Клиент приложения задан с `refetchOnMount: false` (`app.tsx`, `context/global.tsx`), то есть
+    // по умолчанию **ни один** экран не перезапрашивает данные при открытии — даже помеченные
+    // устаревшими. Корп-статусу это умолчание не подходит (S-V28 п.10ж): из него читают признак
+    // входа, и читают в момент открытия экрана. Значение `true` — не «всегда перезапрашивать»:
+    // запрос уходит, только если ответ устарел по `staleTime` **или** помечен инвалидацией.
+    refetchOnMount: true,
     retry: false,
     throwOnError: false,
   }))
@@ -107,12 +113,17 @@ export function useCorpLogout() {
       }
       await invalidate()
     },
-    onError: (error) =>
+    // S-V28 п.10ж: сорванный ответ не значит «сервер ничего не сделал» — ключ мог быть уже удалён,
+    // а ответ потерян по дороге. Экран, читающий из кэша, обязан перечитать и в этой ветке: иначе
+    // «Выйти» в заголовке переживёт собственный выход.
+    onError: async (error) => {
       showToast({
         variant: "error",
         title: language.t("common.requestFailed"),
         description: error instanceof Error ? error.message : String(error),
-      }),
+      })
+      await invalidate()
+    },
   }))
 }
 
@@ -141,12 +152,16 @@ export function useProviderEnable() {
         })
       await invalidate()
     },
-    onError: (error) =>
+    // S-V28 п.10ж: конфиг мог быть уже переписан, а ответ потерян — предупреждение в заголовке
+    // витрины читается из статуса, и перечитать его нужно в обеих ветках, не только в успешной.
+    onError: async (error) => {
       showToast({
         variant: "error",
         title: language.t("common.requestFailed"),
         description: error instanceof Error ? error.message : String(error),
-      }),
+      })
+      await invalidate()
+    },
   }))
 }
 
@@ -159,6 +174,22 @@ export function useCorpCatalog(enabled: () => boolean) {
         .client.corp.catalog()
         .then((response) => required(response.data)),
     enabled: enabled(),
+    /**
+     * Витрина открывается заново — каталог перезапрашивается, если ответ устарел (S-V28 п.10ж).
+     *
+     * Отказ Hub приходит **успешным** ответом с полем `hub_error` (S-V12 п.4), а не ошибкой
+     * запроса: для клиента это обычные данные, которые ложатся в кэш и живут там как валидные.
+     * При `refetchOnMount: false` — умолчании клиента приложения (`app.tsx`, `context/global.tsx`)
+     * — такой ответ переживал и вход, и повторное открытие витрины: тело экрана говорило
+     * «Требуется вход», пока заголовок уже показывал логин и «Выйти».
+     *
+     * Пара `staleTime` + `refetchOnMount` — не «всегда перезапрашивать»: в пределах `staleTime`
+     * повторное открытие витрины берёт ответ из кэша и в сеть не ходит. Запрос уходит ровно тогда,
+     * когда ответ устарел по времени **или** помечен инвалидацией — то есть после действия, после
+     * которого из каталога читают (S-V28 п.10ж).
+     */
+    staleTime: 30_000,
+    refetchOnMount: true,
     retry: false,
     // Витрина сама показывает «Hub недоступен» по пустым данным — ошибка не должна всплывать
     // в ErrorBoundary приложения (BUG-I4-002).
@@ -166,21 +197,38 @@ export function useCorpCatalog(enabled: () => boolean) {
   }))
 }
 
-/** Инвалидация после действий витрины: каталог, статус и локальные статусы MCP (S-D7). */
+/**
+ * Инвалидация после действий витрины и входа/выхода: каталог, статус и локальные статусы MCP
+ * (S-D7, S-V28 п.10ж).
+ *
+ * Пометка «устарело» распространяется на **все** совпавшие запросы, но перезапрашиваются ей только
+ * те, у которых сейчас есть подписчик (умолчание `refetchType: "active"`). Ответы без подписчика
+ * оставались бы в кэше телом, снятым **до** действия, — и следующий экран прочитал бы из них
+ * свидетельство, которого действие уже лишило смысла. Ровно это давало «Требуется вход» на витрине
+ * при живом ключе: вход происходил на экране входа, витрина в этот момент была уничтожена
+ * (`dialog.show`), её каталог подписчика не имел и потому не перезапрашивался, а `refetchOnMount`
+ * у клиента приложения выключен глобально.
+ *
+ * Поэтому неактивные ответы не помечаются, а **удаляются**: у них нет читателя, которому важно
+ * увидеть переход, зато есть тело, пережившее действие. Следующее открытие экрана начнёт с запроса,
+ * а не с чужого прошлого. Кэш при этом остаётся кэшем: без действия ничего не удаляется, и
+ * повторное открытие того же экрана в сеть не ходит.
+ */
 export function useCorpInvalidate() {
   const client = useQueryClient()
   const sdk = useServerSDK()
-  return () => {
+  return async () => {
     const scope = sdk().scope
-    return client.invalidateQueries({
-      predicate: (query) => {
-        if (query.queryKey[0] !== scope) return false
-        // Корп-ключи — на уровне сервера, ключи MCP — на уровне рабочего каталога
-        // (`[scope, directory, "mcp"]`): после действия витрины обновляются все каталоги сервера.
-        if (query.queryKey[1] === "corp.catalog" || query.queryKey[1] === "corp.status") return true
-        return query.queryKey[2] === "mcp"
-      },
-    })
+    const matches = (queryKey: readonly unknown[]) => {
+      if (queryKey[0] !== scope) return false
+      // Корп-ключи — на уровне сервера, ключи MCP — на уровне рабочего каталога
+      // (`[scope, directory, "mcp"]`): после действия витрины обновляются все каталоги сервера.
+      if (queryKey[1] === "corp.catalog" || queryKey[1] === "corp.status") return true
+      return queryKey[2] === "mcp"
+    }
+    const refetched = client.invalidateQueries({ predicate: (query) => matches(query.queryKey) })
+    client.removeQueries({ predicate: (query) => matches(query.queryKey) && !query.isActive() })
+    await refetched
   }
 }
 
@@ -272,6 +320,12 @@ export function useConnectToken() {
     onSuccess: async () => {
       await invalidate()
     },
+    // S-V28 п.10ж: исход проверки токена показывает сама форма (S-D13 п.6), тост здесь не нужен —
+    // но сохранение могло состояться и при сорванном ответе, и витрина за формой обязана это
+    // увидеть. Ошибку обработчик не гасит: `useConnectToken` по-прежнему отдаёт её вызывающему.
+    onError: async () => {
+      await invalidate()
+    },
   }))
 }
 
@@ -352,12 +406,17 @@ export function useConnectorAction() {
       }
       await invalidate()
     },
-    onError: (error) =>
+    // S-V28 п.10ж: у действий витрины локальная часть выполняется до ответа Hub (S-V17), поэтому
+    // сорванный запрос — не «ничего не произошло». Карточка обязана показать то, что на сервере,
+    // а не то, что было до нажатия.
+    onError: async (error) => {
       showToast({
         variant: "error",
         title: language.t("common.requestFailed"),
         description: error instanceof Error ? error.message : String(error),
-      }),
+      })
+      await invalidate()
+    },
   }))
 }
 

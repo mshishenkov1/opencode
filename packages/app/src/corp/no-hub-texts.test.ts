@@ -44,6 +44,65 @@ const ERROR_CLASSES = new Function(
   "return " + /const CONNECT_ERROR_CLASSES = (\[[^\]]*\])/.exec(contextSource)![1]!,
 )() as string[]
 
+/**
+ * Правило класса ошибки — из самого продукта. Спецификатор собирается переменной по той же причине,
+ * что и словарь TUI в `dictionary.test.ts`: файл лежит вне `include` пакета `app`, и статический
+ * импорт ломает `tsgo -b`.
+ */
+const ERRORS_MODULE = "../../../opencode/src/corp/errors"
+const { connectErrorClass, ERROR_CLASSES: SERVER_ERROR_CLASSES } = (await import(ERRORS_MODULE)) as {
+  connectErrorClass: (input: Record<string, unknown>) => string
+  ERROR_CLASSES: readonly string[]
+}
+
+/** Входы, которыми продукт зовёт `connectErrorClass`, — по одному на каждую ветвь его разбора. */
+const ERROR_INPUTS: Record<string, unknown>[] = [
+  {},
+  { local: "needs_client_registration" },
+  { connection: "needs_reauth" },
+  ...["unauthorized", "forbidden", "not_found", "corp_disabled", "invalid_request", "login_expired"].map((code) => ({
+    code,
+  })),
+  ...[
+    "OAuth error: invalid_grant",
+    "authorization failed: HTTP 401 Unauthorized",
+    "access_denied by user",
+    "dynamic client registration failed with 400",
+    "DCR is not supported by the server",
+    "no mcp_url configured",
+    "fetch failed: ETIMEDOUT",
+    "network error: ECONNREFUSED",
+    "socket hang up",
+    "SSE error: Unable to connect. Is the computer able to access the url?",
+    "HTTP 502 Bad Gateway",
+    "503 Service Unavailable",
+    "504 gateway time-out",
+    "SSE error: Non-200 status code (502)",
+    "что-то пошло не так",
+    "",
+  ].map((message) => ({ message })),
+]
+
+/**
+ * Классы ошибки, ДОСТИЖИМЫЕ в разбираемой сборке (резолюция DISPUTE-I14-04).
+ *
+ * D-43 запрещает не слово «Hub» в словаре, а его показ в сборке без Hub. Достижимость здесь не
+ * пересказана текстом, а СЧИТАЕТСЯ тем же правилом продукта, каким её считает сервер: стоит
+ * `hub_unreachable` стать достижимым без Hub — он сам попадёт в матрицу и покрасит тест.
+ *
+ * Замер, которым это проверено делом (31.08): сборка без Hub (`OPENCODE_CORP_CATALOG_URL` задан,
+ * `OPENCODE_CORP_HUB_URL` снят) на карточке `mode:"facade"` с молчащим MCP дала
+ * `error_class: "network_unreachable"`, с отвечающим 502 — `"upstream_unavailable"`; та же сборка с
+ * заданным адресом Hub на тех же данных дала `"hub_unreachable"`.
+ */
+function reachableClasses(hub: boolean): string[] {
+  const found = new Set<string>()
+  for (const input of ERROR_INPUTS)
+    for (const mode of [...SERVER_MODES, undefined])
+      found.add(connectErrorClass({ ...input, ...(mode === undefined ? {} : { mode }), hubConfigured: hub }))
+  return ERROR_CLASSES.filter((cls) => found.has(cls))
+}
+
 /** Снимает TypeScript с извлечённого текста: `new Function` разбирает JavaScript. */
 const js = (text: string) =>
   text
@@ -251,9 +310,12 @@ function branches(hub: boolean, dict: Record<string, string>): Branch[] {
   if (!hub) push("экран входа без Hub", t("corp.login.needsHub"))
   // Подтверждение «Убрать из списка» (S-V17).
   push("подтверждение «Убрать из списка»", t("corp.connectors.forgetConfirm", { title: "ТЭГ" }))
-  // Четыре класса ошибок подключения (S-V19) — по перечислению из кода.
-  for (const cls of ERROR_CLASSES)
+  // Классы ошибок подключения (S-V19), ДОСТИЖИМЫЕ в этой сборке: достижимость считает само правило
+  // продукта, а не перечисление (DISPUTE-I14-04).
+  for (const cls of reachableClasses(hub))
     push(`ошибка подключения ${cls}`, t(connectErrorKey(ERROR_CLASSES, cls), { code: "E42" }))
+  // Подсказка с техническими подробностями — тоже отрисованный текст, и слова «Hub» в ней нет.
+  push("подсказка к ошибке подключения", t("corp.error.connect.details", { code: "E42" }))
 
   return rendered
 }
@@ -279,8 +341,18 @@ describe("сборка без Hub — слово «Hub» не показывае
       expect(list.some((branch) => branch.name.includes(`status=${status}`)), status).toBe(true)
     for (const mode of SERVER_MODES)
       expect(list.some((branch) => branch.name.includes(`mode=${mode}`)), mode).toBe(true)
-    for (const cls of ERROR_CLASSES)
+    // Достижимые в сборке без Hub классы — все в матрице; недостижимому там делать нечего.
+    for (const cls of reachableClasses(false))
       expect(list.some((branch) => branch.name.includes(`ошибка подключения ${cls}`)), cls).toBe(true)
+    expect(reachableClasses(false), "hub_unreachable стал достижим в сборке без Hub").not.toContain("hub_unreachable")
+    // Полнота перечисления не потеряна: две сборки вместе покрывают ВСЕ объявленные классы, поэтому
+    // новый класс без ветви разбора и без текста в словаре валит тест.
+    expect([...new Set([...reachableClasses(false), ...reachableClasses(true)])].sort()).toEqual(
+      [...ERROR_CLASSES].sort(),
+    )
+    // Оболочка и сервер знают один и тот же набор классов — расхождение сделало бы часть ветвей
+    // неотрисовываемой, а часть текстов недостижимой молча.
+    expect([...ERROR_CLASSES].sort()).toEqual([...SERVER_ERROR_CLASSES].sort())
     // Пять пустых состояний — все пять в матрице и попарно различимы (состояние 3 даёт две ветви:
     // «источник недоступен» с известным кодом и «без ответа источника» без него, — поэтому записей
     // в матрице на одну больше, чем различимых состояний).
@@ -368,14 +440,13 @@ describe("сборка без Hub — экран входа называет п�
  * AC-278). Условных ключей на них не заведено: в обеих сборках показывается один и тот же текст.
  */
 describe("тексты прежних ревизий без слова «Hub» (S-V17, S-V19; AC-278)", () => {
-  const KEYS = [
-    "corp.connectors.forgetConfirm",
-    "corp.error.connect.token_rejected",
-    "corp.error.connect.method_unavailable",
-    "corp.error.connect.hub_unreachable",
-  ]
+  // Набор считается, а не выписан: подтверждение «Убрать из списка» плюс тексты классов ошибки,
+  // ДОСТИЖИМЫХ в сборке без Hub (DISPUTE-I14-04). `hub_unreachable` в него не входит по построению
+  // — этот класс выдаётся только карточке `mode:"facade"` при заданном адресе Hub, — а вернись он в
+  // достижимые, он попал бы сюда сам и покрасил тест.
+  const KEYS = ["corp.connectors.forgetConfirm", ...reachableClasses(false).map((cls) => `corp.error.connect.${cls}`)]
 
-  test("AC-278: ни в одном из четырёх текстов нет слова «Hub», в обоих языках", () => {
+  test("AC-278: ни в одном достижимом без Hub тексте нет слова «Hub», в обоих языках", () => {
     for (const [locale, dict] of Object.entries(DICTS))
       for (const key of KEYS) {
         expect(dict[key], `${key} в ${locale}`).toBeString()
@@ -383,7 +454,7 @@ describe("тексты прежних ревизий без слова «Hub» (
       }
   })
 
-  test("AC-278: условных ключей на эти четыре случая не заведено — текст один на обе сборки", () => {
+  test("AC-278: условных ключей на эти случаи не заведено — текст один на обе сборки", () => {
     for (const dict of Object.values(DICTS))
       for (const key of KEYS) {
         expect(Object.keys(dict)).not.toContain(`${key}NoHub`)
@@ -397,11 +468,26 @@ describe("тексты прежних ревизий без слова «Hub» (
   })
 
   test("AC-278: имена ключей и значения error_class не изменены — AC-180…AC-183 и AC-187 в силе", () => {
-    expect(ERROR_CLASSES).toEqual(["token_rejected", "method_unavailable", "hub_unreachable", "unknown"])
+    // Ревизия 1.14 расщепила прежний общий класс на три: прежние имена сохранены дословно и в
+    // прежнем порядке, добавлены два новых — контракт расширен, а не переименован.
+    expect(ERROR_CLASSES).toEqual([
+      "token_rejected",
+      "method_unavailable",
+      "network_unreachable",
+      "upstream_unavailable",
+      "hub_unreachable",
+      "unknown",
+    ])
     for (const cls of ERROR_CLASSES)
       expect(connectErrorKey(ERROR_CLASSES, cls)).toBe(`corp.error.connect.${cls}`)
-    // Класс `hub_unreachable` остаётся именем значения — переименовали текст, а не контракт.
-    expect(DICTS.ru["corp.error.connect.hub_unreachable"]).toBeString()
+    // У КАЖДОГО класса есть непустой человеческий текст в обоих языках: «ошибки без объяснения» не
+    // существует ни при каком классе (D-32).
+    for (const [locale, dict] of Object.entries(DICTS))
+      for (const cls of ERROR_CLASSES) {
+        const text = dict[`corp.error.connect.${cls}`]
+        expect(text, `${cls} в ${locale}`).toBeString()
+        expect(text!.trim().length, `${cls} в ${locale}`).toBeGreaterThan(0)
+      }
   })
 
   test("AC-278: объяснение остаётся верным в сборке с Hub — «сервер» покрывает и отказ Hub", () => {
@@ -425,12 +511,17 @@ describe("тексты прежних ревизий без слова «Hub» (
         .replace(/[«»"“”:.,\s]+/g, " ")
         .trim()
         .toLowerCase()
+    // Паритет держится по ВСЕМ классам, включая два новых ревизии 1.14: расхождение оболочек по
+    // объяснению ошибки — расхождение по тому, что читает пользователь.
     for (const locale of ["ru", "en"] as const)
-      for (const key of ["corp.error.connect.token_rejected", "corp.error.connect.method_unavailable", "corp.error.connect.hub_unreachable"]) {
+      for (const cls of ERROR_CLASSES) {
+        const key = `corp.error.connect.${cls}`
         const short = key.replace(/^corp\./, "")
         const text = tui.dictionaries[locale][short]
         expect(text, `${short} отсутствует в словаре TUI (${locale})`).toBeString()
-        expect(text!, `${short} (${locale})`).not.toMatch(/hub/i)
+        // Слово «Hub» запрещено ровно там, где текст достижим в сборке без Hub.
+        if (reachableClasses(false).includes(cls))
+          expect(text!, `${short} (${locale})`).not.toMatch(/hub/i)
         expect(normalize(text!), `${short} (${locale})`).toBe(normalize(DICTS[locale][key]!))
       }
   })

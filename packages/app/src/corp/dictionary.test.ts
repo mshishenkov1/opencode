@@ -258,9 +258,75 @@ describe("i18n corp.* — состояния карточки и классы о
     for (const dict of [dictEn, dictRu]) {
       const unknown = dict["corp.error.connect.unknown"]!
       expect(unknown.trim().length).toBeGreaterThan(0)
-      // Текст называет ошибку с её кодом (S-V19, строка `unknown`).
-      expect(unknown).toContain("{{code}}")
+      // Текст класса `unknown` — человеческий и САМОДОСТАТОЧНЫЙ: техники в нём нет.
+      //
+      // Прежняя мера требовала обратного — подстановки `{{code}}` в самом предложении, — и ровно
+      // она порождала наблюдавшийся на стенде дефект: MCP-служба отдаёт `error` пустой строкой
+      // всякий раз, когда причина ей неизвестна, и на экране оставалось «Подключение не удалось:»
+      // с пустотой после двоеточия. Двоеточие обещало причину, которой нет (DISPUTE-I14-03).
+      expect(unknown).not.toContain("{{")
+      expect(unknown.trim()).not.toMatch(/[:—-]$/)
     }
+  })
+
+  test("AC-187: ни один текст класса не обрывается на двоеточии и не несёт подстановок", () => {
+    // Пустого текста после двоеточия не остаётся НИ В ОДНОМ состоянии: подстановки в объяснении
+    // класса нет ни у одного из них, поэтому пустое значение нечему оставить висящим.
+    for (const [locale, dict] of Object.entries({ en: dictEn, ru: dictRu }))
+      for (const key of Object.keys(dict).filter(
+        (name) => name.startsWith("corp.error.connect.") && name !== "corp.error.connect.details",
+      )) {
+        const text = dict[key]!
+        expect(text.trim().length, `${key} в ${locale}`).toBeGreaterThan(0)
+        expect(text, `${key} в ${locale}`).not.toContain("{{")
+        expect(text.trim(), `${key} в ${locale}`).not.toMatch(/[:—-]$/)
+      }
+  })
+
+  test("AC-187: технические подробности живут отдельным ключом-подсказкой и без кода не рисуются", () => {
+    // Код ошибки не исчез — он переехал в подсказку, у которой подстановка обязана быть.
+    for (const [locale, dict] of Object.entries({ en: dictEn, ru: dictRu })) {
+      const details = dict["corp.error.connect.details"]
+      expect(details, `corp.error.connect.details в ${locale}`).toBeString()
+      expect(details!, locale).toContain("{{code}}")
+    }
+    expect(dictRu["corp.error.connect.details"]).not.toBe(dictEn["corp.error.connect.details"])
+
+    // И подсказки нет вовсе, когда кода нет: `details()` страницы возвращает `undefined`, а не
+    // текст с пустой подстановкой. Правило исполняется из исходника, а не пересказывается.
+    const page = fs.readFileSync(path.join(APP_SRC, "components/corp/dialog-connector.tsx"), "utf8")
+    const at = page.indexOf("function details(")
+    expect(at, "функция details на странице коннектора не найдена").toBeGreaterThan(-1)
+    const open = page.indexOf("{", page.indexOf(")", at))
+    let depth = 0
+    let end = -1
+    for (let index = open; index < page.length; index++) {
+      if (page[index] === "{") depth += 1
+      else if (page[index] === "}") {
+        depth -= 1
+        if (depth === 0) {
+          end = index
+          break
+        }
+      }
+    }
+    const details = new Function("language", "entry", page.slice(open + 1, end)) as (
+      language: { t: (key: string, args?: Record<string, unknown>) => string },
+      entry: { error?: string },
+    ) => string | undefined
+    const language = { t: (key: string, args?: Record<string, unknown>) => `${key}:${args?.["code"] ?? ""}` }
+    expect(details(language, {})).toBeUndefined()
+    expect(details(language, { error: "" })).toBeUndefined()
+    expect(details(language, { error: "   " })).toBeUndefined()
+    expect(details(language, { error: "E42" })).toBe("corp.error.connect.details:E42")
+    // Объяснение кода в основной текст не подставляет: подсказка — единственное его место. Правило
+    // тоже исполняется, а не читается: `explain` зовёт словарь ОДНИМ аргументом — ключом класса.
+    const explainAt = page.indexOf("function explain(")
+    const explainBody = page.slice(explainAt, page.indexOf("\n  }", explainAt))
+    expect(explainBody).toContain("connectErrorKey(entry.error_class)")
+    expect(explainBody, "объяснение подставляет код ошибки в основной текст").not.toMatch(
+      /language\.t\([^)]*entry\.error\b[^_]/,
+    )
   })
 })
 

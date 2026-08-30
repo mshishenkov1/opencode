@@ -203,7 +203,22 @@ describe("dialog-connector — причина недоступности «По�
 })
 
 describe("dialog-connector — разметка: oauth_disabled рисует действие НЕАКТИВНЫМ, facade_needs_hub убирает его (AC-341)", () => {
-  const statusBlock = source.slice(source.indexOf("{/* 4. Статус"), source.indexOf("{/* 5."))
+  /**
+   * Ряд действий страницы коннектора. Ревизия 1.14 (макет заказчика от 30.08) переставила блоки и
+   * увела действия из блока «Статус» в шапку страницы: «рядом с действием» теперь значит «в ряду
+   * действий шапки». Срез берётся по контейнеру ряда, а не по номеру блока в комментарии, — номера
+   * блоков заказчик уже менял дважды, и мера, привязанная к ним, ломается от перестановки, ничего
+   * из охраняемого не нарушив.
+   */
+  const statusBlock = (() => {
+    const at = source.indexOf('data-slot="corp-connector-actions"')
+    expect(at, "ряд действий страницы коннектора не найден").toBeGreaterThan(-1)
+    const start = source.lastIndexOf("<Show", at)
+    // Конец ряда — закрытие охраняющего его `<Show when={hasActions(...)}>`.
+    const end = source.indexOf("</Show>\n              </div>", at)
+    expect(end, "ряд действий не закрыт").toBeGreaterThan(at)
+    return source.slice(start, end)
+  })()
 
   test("AC-341: кнопка «Подключить» отрисована с disabled по connect_mode_unavailable_code === \"oauth_disabled\"", () => {
     expect(statusBlock).toContain('data-action="corp-connect"')

@@ -99,10 +99,34 @@ describe("corp/errors — классы ошибок подключения (S-V1
     )
   })
 
-  test("AC-182: сеть, таймаут и 5xx дают hub_unreachable", () => {
-    expect(CorpErrors.connectErrorClass({ message: "fetch failed: ETIMEDOUT" })).toBe("hub_unreachable")
-    expect(CorpErrors.connectErrorClass({ message: "network error: ECONNREFUSED" })).toBe("hub_unreachable")
-    expect(CorpErrors.connectErrorClass({ message: "HTTP 502 Bad Gateway" })).toBe("hub_unreachable")
+  test("AC-182: ответа не было вовсе — network_unreachable, а у карточки через Hub — hub_unreachable", () => {
+    const viaHub = { mode: "facade", hubConfigured: true }
+    for (const message of ["fetch failed: ETIMEDOUT", "network error: ECONNREFUSED", "socket hang up", "ENOTFOUND"]) {
+      // Адрес принадлежит целевой системе — назвать молчание Hub нечем: это была бы выдумка.
+      expect(CorpErrors.connectErrorClass({ message }), message).toBe("network_unreachable")
+      // У `mode:"facade"` за MCP-адресом стоит сам Hub — и только там его честно назвать.
+      expect(CorpErrors.connectErrorClass({ message, ...viaHub }), message).toBe("hub_unreachable")
+      // Тот же вход в сборке без адреса Hub Hub не называет ни при каком способе (D-43).
+      expect(
+        CorpErrors.connectErrorClass({ message, mode: "facade", hubConfigured: false }),
+        message,
+      ).toBe("network_unreachable")
+    }
+  })
+
+  test("AC-182: система ответила отказом — upstream_unavailable, а у карточки через Hub — hub_unreachable", () => {
+    for (const message of ["HTTP 502 Bad Gateway", "503 Service Unavailable", "internal server error"]) {
+      expect(CorpErrors.connectErrorClass({ message }), message).toBe("upstream_unavailable")
+      expect(CorpErrors.connectErrorClass({ message, mode: "facade", hubConfigured: true }), message).toBe(
+        "hub_unreachable",
+      )
+    }
+    // «Gateway timeout» — ОТВЕТ, а не молчание, хотя в тексте есть слово timeout: узкий признак
+    // проверяется раньше широкого, иначе отказ шлюза выглядел бы обрывом связи и звал включить VPN.
+    expect(CorpErrors.connectErrorClass({ message: "504 gateway time-out" })).toBe("upstream_unavailable")
+  })
+
+  test("AC-182: коды S-A5 про недоступный Hub дают hub_unreachable — идентификатор класса не изменён", () => {
     for (const code of ["hub_unavailable", "hub_invalid_response", "rate_limited"] as const)
       expect(CorpErrors.connectErrorClass({ code }), code).toBe("hub_unreachable")
   })
@@ -128,10 +152,15 @@ describe("corp/errors — классы ошибок подключения (S-V1
     }
   })
 
-  test("AC-180: класс — одно из четырёх слов, тело ответа Hub и секреты в него не попадают", () => {
+  test("AC-180: класс — одно из шести слов, тело ответа Hub и секреты в него не попадают", () => {
+    // Ревизия 1.14 расщепила прежний общий `hub_unreachable` на три: имена прежних классов не
+    // менялись, добавились два новых. Список сверяется дословно и в порядке объявления: молчаливое
+    // появление седьмого класса без текста в словаре — тот самый дефект «ошибка без объяснения».
     expect([...CorpErrors.ERROR_CLASSES]).toEqual([
       "token_rejected",
       "method_unavailable",
+      "network_unreachable",
+      "upstream_unavailable",
       "hub_unreachable",
       "unknown",
     ])

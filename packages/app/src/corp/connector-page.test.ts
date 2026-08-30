@@ -45,6 +45,40 @@ function block(marker: string) {
   throw new Error(`блок ${marker} не закрыт`)
 }
 
+/**
+ * Тело ОДНОГО верхнеуровневого объявления: от него до следующего объявления нулевого отступа.
+ *
+ * Прежние меры резали исходник «от маркера до конца файла» либо «до соседнего компонента», и
+ * ревизия 1.14, добавившая рядом второй экран разрешений, красила их, ничего из охраняемого не
+ * нарушив. Дефект был двусторонним: тем же срезом не отличить второй вызов роута ВНУТРИ экрана от
+ * вызова в соседнем компоненте (резолюция DISPUTE-I14-06).
+ */
+function declaration(name: string): string {
+  const at = source.search(new RegExp(`^(?:export )?(?:const|function) ${name}\\b`, "m"))
+  expect(at, `объявление ${name} не найдено`).toBeGreaterThan(-1)
+  const rest = source.slice(at + 1)
+  const next = rest.search(/^(?:export )?(?:const|function|type|interface) [A-Za-z_$]/m)
+  return next === -1 ? source.slice(at) : source.slice(at, at + 1 + next)
+}
+
+/**
+ * Блок «Разрешения» страницы — от охраняющего его действия до конца композиции. Ищется по самому
+ * действию, а не по номеру блока в комментарии: заказчик переставлял блоки дважды, и мера,
+ * привязанная к номеру, ломается от перестановки.
+ */
+const permissionsBlock = source.slice(
+  source.indexOf('<Show when={entry().actions.includes("permissions")}>'),
+  source.lastIndexOf("</CorpDialog>"),
+)
+
+/**
+ * Экраны разрешений, которые страница способна показать, — из самой развилки блока «Разрешения», а
+ * не выписанные в тест: добавление третьего экрана расширит перебор само.
+ */
+const PERMISSION_SCREENS = [
+  ...new Set([...permissionsBlock.matchAll(/<(ConnectorPermission[A-Za-z]+|ConnectorPresets)\b/g)].map((m) => m[1]!)),
+]
+
 type Mode = "allow" | "ask" | "deny"
 interface Row {
   id: string
@@ -195,11 +229,27 @@ describe("экран разрешений — групповой селекто�
   })
 
   test("AC-205: сохранение одно на весь набор — по группе за раз экран не пишет", () => {
-    const screen = source.slice(source.indexOf("const ConnectorPermissionGroups"))
-    // Единственное место записи — `apply`, и оно шлёт `modes` целиком одним вызовом.
-    expect(screen.split("action.mutateAsync(").length - 1).toBe(1)
-    expect(screen).toContain('kind: "permissionModes"')
-    expect(screen).toContain("modes: modesWith(override)")
+    // Свойство проверяется у КАЖДОГО экрана разрешений в его собственных границах: «на экран —
+    // ровно один вызов роута». Третий экран рядом меру не ломает, второй вызов внутри экрана —
+    // ломает (DISPUTE-I14-06).
+    expect(PERMISSION_SCREENS.length, "экраны разрешений не найдены").toBeGreaterThan(1)
+    for (const name of PERMISSION_SCREENS) {
+      const screen = declaration(name)
+      // `ConnectorPresets` — прежний экран пресетов: он пишет не режимы, а пресет, и своим вызовом.
+      const calls = screen.split(name === "ConnectorPresets" ? "action.mutate(" : "action.mutateAsync(").length - 1
+      expect(calls, `${name}: вызовов роута прав не ровно один`).toBe(1)
+    }
+    const groups = declaration("ConnectorPermissionGroups")
+    expect(groups).toContain('kind: "permissionModes"')
+    expect(groups).toContain("modes: modesWith(override)")
+    // У экрана ревизии 1.14 (класс риска и строка на инструмент) то же правило: блок alias уходит
+    // целиком одним вызовом — и режимы групп, и режимы всех показанных инструментов.
+    const tools = declaration("ConnectorPermissionTools")
+    expect(tools).toContain('kind: "permissionTools"')
+    expect(tools).toContain("modes, tools }")
+    // Тело собирается по ВСЕМ строкам всех секций, а не по одной изменённой (S-V21).
+    expect(tools).toContain("for (const section of sections())")
+    expect(tools).toContain("for (const row of section.tools)")
   })
 
   test("AC-205, S-V21: в теле идут все группы, а не одна изменённая", () => {
@@ -245,7 +295,7 @@ describe("экран разрешений — действующий режим,
  */
 describe("страница коннектора — деградация экрана прав (AC-206, AC-207)", () => {
   test("AC-206: без permission_groups показывается прежний экран пресетов, блок остаётся", () => {
-    const screen = source.slice(source.indexOf("{/* 6. «Разрешения»"), source.indexOf("{/* 7."))
+    const screen = permissionsBlock
     expect(screen).toContain("when={entry().permission_groups}")
     expect(screen).toContain("<ConnectorPresets card={entry()}")
     expect(screen).toContain("<ConnectorPermissionGroups card={entry()} />")
@@ -256,6 +306,13 @@ describe("страница коннектора — деградация экр�
     expect(screen.indexOf("when={!entry().permissions_need_hub}")).toBeLessThan(
       screen.indexOf("when={entry().permission_groups}"),
     )
+    // Ревизия 1.14 добавила ВНУТРИ ветки словаря вторую развилку: словарь версии 2 (раздел `tools`
+    // разобран) даёт экран классов риска, версия 1 деградирует на прежний экран по группам. Обе
+    // ветви названы, а не подразумеваются: «деградация версии 1» проверяется, а не обещается.
+    const dictionary = screen.slice(screen.indexOf("when={entry().permission_groups}"))
+    expect(dictionary).toContain("when={toolSections(entry().permission_groups).length > 0}")
+    expect(dictionary).toContain("fallback={<ConnectorPermissionGroups card={entry()} />}")
+    expect(dictionary).toContain("<ConnectorPermissionTools card={entry()} />")
   })
 
   test("AC-206: подтверждение прежних видов по-прежнему уходит пресетом, а не режимами", () => {
@@ -280,13 +337,23 @@ describe("страница коннектора — деградация экр�
     expect(presets).not.toContain('kind: "forget"')
   })
 
-  test("AC-207: «Открыть в Hub», «Подключить» и «Отключить» живут отдельно от блока разрешений", () => {
-    // Ревизия 1.13 сдвинула нумерацию: блок подключения (S-D13) стал блоком 5, «Разрешения» — 6
-    // (S-D13, S-D11). Верхняя граница здесь по-прежнему изолирует только блок 4 «Статус».
-    const status = source.slice(source.indexOf("{/* 4. Статус"), source.indexOf("{/* 5."))
-    expect(status).toContain('entry().actions.includes("connect")')
-    expect(status).toContain('entry().actions.includes("disconnect")')
-    expect(status).toContain('entry().actions.includes("open_hub")')
+  test("AC-207: «Подключить» и «Отключить» живут отдельно от блока разрешений, а «Открыть в Hub» не рисуется вовсе", () => {
+    // Ревизия 1.14 (макет заказчика от 30.08) увела действия в ряд шапки страницы, а ссылку
+    // «Открыть в Hub» убрала совсем: человек должен понимать, что он подключает, не выходя из окна.
+    const actions = source.slice(
+      source.indexOf('data-slot="corp-connector-actions"'),
+      source.lastIndexOf("</CorpDialog>"),
+    )
+    expect(actions).toContain('entry().actions.includes("connect")')
+    expect(actions).toContain('entry().actions.includes("disconnect")')
+    // Действия — не внутри блока разрешений: их ряд объявлен до него.
+    expect(source.indexOf('data-slot="corp-connector-actions"')).toBeLessThan(
+      source.indexOf('<Show when={entry().actions.includes("permissions")}>'),
+    )
+    // «Открыть в Hub» страница не рисует ни в одном состоянии: ни действия, ни ссылки, ни текста.
+    expect(source).not.toContain('actions.includes("open_hub")')
+    expect(source).not.toContain("corp.connectors.openHub")
+    expect(source).not.toContain("hub_url")
   })
 })
 
@@ -301,13 +368,11 @@ describe("страница коннектора — деградация экр�
  */
 describe("экран разрешений — отмена не пишет ничего (S-V9, S-V21; AC-212)", () => {
   /** Ровно компонент экрана разрешений: соседние компоненты страницы в срез не входят. */
-  const screen = source.slice(
-    source.indexOf("const ConnectorPermissionGroups"),
-    source.indexOf("export const DialogConnector: Component"),
-  )
+  const screen = declaration("ConnectorPermissionGroups")
 
   test("AC-212: запись выполняется только из обработчиков выбора режима", () => {
-    // Единственный вызов роута — внутри `apply`.
+    // Единственный вызов роута — внутри `apply`, и это утверждается в границах САМОГО экрана
+    // (DISPUTE-I14-06): второй экран разрешений, добавленный рядом, к этому счёту не относится.
     expect(screen.split("action.mutateAsync(").length - 1).toBe(1)
     const apply = screen.slice(screen.indexOf("async function apply("))
     expect(apply.slice(0, apply.indexOf("\n  }"))).toContain("action.mutateAsync(")
@@ -393,11 +458,124 @@ describe("страница коннектора — причина блокир�
   })
 
   test("AC-274: блок «Разрешения» есть в обеих сборках, а причина «нет Hub» — отдельный текст", () => {
-    const screen = source.slice(source.indexOf("{/* 6. «Разрешения»"), source.indexOf("{/* 7."))
+    const screen = permissionsBlock
     // «Эта сборка без Hub» и «эта версия не умеет» — разные беды и разные советы, и текстов два.
     expect(screen).toContain('language.t("corp.connectors.permissionsNeedHub")')
     expect(screen).toContain('language.t("corp.permissions.title")')
     // Признак карточный (`permissions_need_hub`), а не второе чтение адреса.
     expect(screen).toContain("when={!entry().permissions_need_hub}")
+  })
+})
+
+/**
+ * Едущая подложка тристейта (S-V23, ревизия 1.14, макет заказчика от 30.08).
+ *
+ * Требование буквальное: подложка под активным сегментом **переезжает** между позициями, а не
+ * перекрашивается, и при `prefers-reduced-motion: reduce` переставляется мгновенно. Проверяется
+ * наблюдаемое: правило положения исполняется из исходника компонента (копии правила в тесте нет), а
+ * объявления перехода читаются из настоящего файла стилей.
+ */
+describe("экран разрешений — едущая подложка тристейта (S-V23; AC-204)", () => {
+  const UI = path.resolve(APP, "../../ui/src/v2/components")
+  const segmentedSource = fs.readFileSync(path.join(UI, "segmented-control-v2.tsx"), "utf8")
+  const segmentedCss = fs.readFileSync(path.join(UI, "segmented-control-v2.css"), "utf8")
+
+  /** Тело `measure` компонента — то самое правило, которым подложка находит своё место. */
+  const measureBody = (() => {
+    const marker = "const measure = () => {"
+    const at = segmentedSource.indexOf(marker)
+    expect(at, "функция measure подложки не найдена").toBeGreaterThan(-1)
+    const open = segmentedSource.indexOf("{", at + marker.length - 1)
+    let depth = 0
+    for (let index = open; index < segmentedSource.length; index++) {
+      if (segmentedSource[index] === "{") depth += 1
+      else if (segmentedSource[index] === "}") {
+        depth -= 1
+        if (depth === 0)
+          return segmentedSource.slice(open + 1, index).replace(/querySelectorAll<[^>]+>/g, "querySelectorAll")
+      }
+    }
+    throw new Error("тело measure не закрыто")
+  })()
+
+  /** Три сегмента РАЗНОЙ ширины: доля от числа сегментов на таком наборе промахнулась бы. */
+  const BUTTONS = [
+    { dataset: { value: "allow" }, offsetLeft: 0, offsetWidth: 28 },
+    { dataset: { value: "ask" }, offsetLeft: 28, offsetWidth: 34 },
+    { dataset: { value: "deny" }, offsetLeft: 62, offsetWidth: 26 },
+  ]
+
+  type Box = { left: number; width: number } | undefined
+  function geometryFor(value: string | null): Box {
+    let box: Box
+    const measure = new Function("root", "selected", "setGeometry", measureBody) as (
+      root: () => unknown,
+      selected: () => string | null,
+      setGeometry: (value: Box) => void,
+    ) => void
+    measure(
+      () => ({ querySelectorAll: () => BUTTONS }),
+      () => value,
+      (next) => {
+        box = next
+      },
+    )
+    return box
+  }
+
+  test("AC-204: положение подложки — измерение САМОГО активного сегмента, а не доля от их числа", () => {
+    const seen = BUTTONS.map((button) => ({ value: button.dataset.value, box: geometryFor(button.dataset.value) }))
+    for (const { value, box } of seen) {
+      const button = BUTTONS.find((entry) => entry.dataset.value === value)!
+      expect(box, value).toEqual({ left: button.offsetLeft, width: button.offsetWidth })
+    }
+    // Три позиции попарно различны — подложка действительно переезжает, а не стоит на месте.
+    expect(new Set(seen.map(({ box }) => box!.left)).size).toBe(3)
+    // И ширина берётся у сегмента: на неравных сегментах доля `ширина/3` дала бы одно число трижды.
+    expect(new Set(seen.map(({ box }) => box!.width)).size).toBe(3)
+    // Активный сегмент ищется по своему значению, а не по порядковому номеру.
+    expect(measureBody).toContain('item.dataset["value"] === current')
+  })
+
+  test("AC-204: без выбора подложки нет вовсе — пустой тристейт не рисует её у первого сегмента", () => {
+    expect(geometryFor(null)).toBeUndefined()
+    // Значение вне набора — тоже «показывать нечего», а не «показать что-нибудь».
+    expect(geometryFor("mixed")).toBeUndefined()
+  })
+
+  test("AC-204: переезд — переход transform, а при prefers-reduced-motion он снят, но подложка остаётся", () => {
+    const rule = segmentedCss.slice(segmentedCss.indexOf('[data-slot="segmented-control-v2-thumb"] {'))
+    const block = rule.slice(0, rule.indexOf("}"))
+    expect(block).toContain("transition:")
+    expect(block).toMatch(/transform\s+[\d.]+s/)
+    // Подложка — отдельный элемент под кнопками, а не фон нажатой кнопки.
+    expect(block).toContain("position: absolute")
+
+    const reduced = segmentedCss.slice(segmentedCss.indexOf("@media (prefers-reduced-motion: reduce)"))
+    const reducedBlock = reduced.slice(0, reduced.indexOf("\n}"))
+    expect(reducedBlock).toContain('[data-slot="segmented-control-v2-thumb"]')
+    expect(reducedBlock).toContain("transition: none")
+    // Снимается движение, а не средство: подложка не прячется и не теряет фон.
+    expect(reducedBlock).not.toContain("display: none")
+    expect(reducedBlock).not.toContain("background")
+  })
+
+  test("AC-204: подложка на экране одна — фон нажатого сегмента в этом режиме погашен", () => {
+    const pressed = segmentedCss.slice(
+      segmentedCss.indexOf('[data-thumb]) [data-slot="segmented-control-v2-item"]:where([data-pressed])'),
+    )
+    const block = pressed.slice(0, pressed.indexOf("}"))
+    expect(block).toContain("background: transparent")
+    expect(block).toContain("box-shadow: none")
+    // Все правила подложки ограничены `[data-thumb]`: без пропса компонент ведёт себя как upstream.
+    expect(segmentedCss).not.toMatch(/\n\[data-slot="segmented-control-v2-item"\]:where\(\[data-pressed\]\)\s*\{[^}]*transparent/)
+  })
+
+  test("AC-204: экран классов риска просит именно эту подложку, а не заводит вторую рядом", () => {
+    const tools = declaration("ConnectorPermissionTools")
+    expect(tools).toContain("<SegmentedControlV2")
+    expect(tools).toMatch(/<SegmentedControlV2\s*\n\s*thumb\b/)
+    // Второго похожего компонента рядом не заведено: корп-код своего сегментированного контрола нет.
+    expect(source).not.toContain("CorpSegmented")
   })
 })

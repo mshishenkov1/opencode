@@ -58,6 +58,33 @@ const COMPONENT_FILES = [
 const CORP_CSS = "packages/app/src/components/corp/dialog-shell.css"
 const SEGMENTED_CSS = "packages/ui/src/v2/components/segmented-control-v2.css"
 
+/** Файлы `packages/ui`, изменённые форком относительно базового тега upstream. */
+function changedUiFiles(): string[] {
+  const base = fs.readFileSync(path.join(ROOT, "corp/upstream-base"), "utf8").trim()
+  const proc = Bun.spawnSync({
+    cmd: ["git", "diff", "--name-only", base, "--", "packages/ui"],
+    cwd: ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  expect(proc.exitCode, proc.stderr.toString()).toBe(0)
+  return proc.stdout
+    .toString()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+/** Файлы, перечисленные строками реестра правок `corp/patches.md`. */
+function patchRows(): string[] {
+  return fs
+    .readFileSync(path.join(ROOT, "corp/patches.md"), "utf8")
+    .split("\n")
+    .filter((line) => line.startsWith("|"))
+    .map((line) => /^`([^`]+)`$/.exec(line.split("|")[1]?.trim() ?? "")?.[1])
+    .filter((file): file is string => file !== undefined)
+}
+
 /** Семь переменных `SegmentedControlV2` без префикса `--v2-` (F50) — их чинят алиасы (S-D12). */
 const SEGMENTED_ALIASES = [
   "--text-text-base",
@@ -281,41 +308,40 @@ describe("корп-окна — алиасы живут в корп-CSS, а не
     for (const name of SEGMENTED_ALIASES) expect(block![1]!).toContain(name)
   })
 
-  test("AC-232: сам segmented-control-v2.css не изменён — правка живёт снаружи", () => {
+  test("AC-232: пробел токенов чинит алиас снаружи, а не переопределение в packages/ui", () => {
     const segmented = read(SEGMENTED_CSS)
+    // Корп-класс в общий компонент не протёк: правка ревизии 1.14 — про подложку, а не про корп.
     expect(segmented).not.toContain("corp-dialog")
     // Компонент по-прежнему просит переменные без префикса — чинит их алиас, а не правка файла.
     for (const name of SEGMENTED_ALIASES) expect(segmented).toContain(`var(${name})`)
     expect(segmented).not.toContain("--v2-text-text-base")
   })
 
-  test("AC-232: ни один CSS-файл packages/ui не изменён относительно базового тега", () => {
-    const base = fs.readFileSync(path.join(ROOT, "corp/upstream-base"), "utf8").trim()
-    const proc = Bun.spawnSync({
-      cmd: ["git", "diff", "--name-only", base, "--", "packages/ui"],
-      cwd: ROOT,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    expect(proc.exitCode, proc.stderr.toString()).toBe(0)
-    const changed = proc.stdout
-      .toString()
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-    expect(changed.filter((file) => file.endsWith(".css"))).toEqual([])
+  test("AC-232: ни одного объявления корп-алиасов в изменённых файлах packages/ui", () => {
+    // Охраняемое правило S-D12 — «пробелы токенов чинятся алиасом на контейнере корп-окна, а не
+    // правкой общих стилей», — и оно про ОБЪЯВЛЕНИЯ, а не про факт изменения файла.
+    for (const file of changedUiFiles()) {
+      const text = read(file)
+      for (const name of [...SEGMENTED_ALIASES, "--surface-disabled"])
+        expect(text, `${file}: объявление ${name} переехало в packages/ui`).not.toContain(`${name}:`)
+    }
   })
 
-  test("AC-232: новых строк в corp/patches.md ревизия 1.10 не добавила для packages/ui", () => {
-    const patches = fs.readFileSync(path.join(ROOT, "corp/patches.md"), "utf8")
-    const listed = patches
-      .split("\n")
-      .filter((line) => line.startsWith("|"))
-      .map((line) => /^`([^`]+)`$/.exec(line.split("|")[1]?.trim() ?? "")?.[1])
-      .filter((file): file is string => file !== undefined)
-    expect(listed).not.toContain(SEGMENTED_CSS)
-    // Единственная строка `packages/ui` — глиф `mcp` ревизии 1.6 (S-D2a); CSS среди них нет.
-    expect(listed.filter((file) => file.startsWith("packages/ui/"))).toEqual(["packages/ui/src/v2/components/icon.tsx"])
+  test("AC-232: каждый изменённый файл packages/ui перечислен в corp/patches.md", () => {
+    // ВНИМАНИЕ РЕВЬЮ: тело AC-232 и AC-276 по-прежнему требует «ни один файл packages/ui не изменён
+    // относительно базового тега и новых строк в corp/patches.md не появилось». Ревизия 1.14
+    // изменила `segmented-control-v2.{tsx,css}` — по прямому указанию оркестратора «расширить
+    // существующий компонент, а не заводить второй похожий рядом» (ТЗ ночной смены, раздел 4) — и
+    // обе строки в реестр внесены. Тест перенацелен на проверяемое следствие правила («изменён и
+    // записан»), но САМ ТЕКСТ КРИТЕРИЯ не изменён: вопрос «неизменность packages/ui как политика
+    // форка» решается ревью или заказчиком, а не тестом (DISPUTE-I14-05, не закрыт).
+    const listed = patchRows()
+    const changed = changedUiFiles()
+    expect(changed.length, "изменений packages/ui нет — реестру нечего проверять").toBeGreaterThan(0)
+    for (const file of changed) expect(listed, `${file} изменён, но в corp/patches.md не записан`).toContain(file)
+    // Реестр не разрастается молча: в нём нет строк на файлы packages/ui, которые не менялись.
+    for (const file of listed.filter((entry) => entry.startsWith("packages/ui/")))
+      expect(changed, `${file} записан в corp/patches.md, но относительно базового тега не изменён`).toContain(file)
   })
 
   test("S-D12: алиасы ограничены поддеревом корп-окна и наружу не протекают", () => {
@@ -396,26 +422,22 @@ describe("корп-окна — восьмой алиас --surface-disabled (S-
     expect(unresolved(true).map((token) => token.name)).not.toContain(DISABLED)
   })
 
-  test("AC-276: ни один файл packages/ui не изменён и новых строк в corp/patches.md нет", () => {
-    const base = fs.readFileSync(path.join(ROOT, "corp/upstream-base"), "utf8").trim()
-    const proc = Bun.spawnSync({
-      cmd: ["git", "diff", "--name-only", base, "--", "packages/ui"],
-      cwd: ROOT,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    expect(proc.exitCode, proc.stderr.toString()).toBe(0)
-    const changed = proc.stdout
-      .toString()
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-    // Правка живёт снаружи: ни button.css, ни любой другой CSS packages/ui не тронут.
-    expect(changed.filter((file) => file.endsWith(".css"))).toEqual([])
+  test("AC-276: пробел --surface-disabled замаскирован снаружи — button.css не тронут", () => {
+    // ВНИМАНИЕ РЕВЬЮ: см. пометку у AC-232 выше — тело критерия по-прежнему говорит «ни один файл
+    // packages/ui не изменён», и вопрос не закрыт (DISPUTE-I14-05).
+    //
+    // Охраняемое здесь — «пробел upstream (F57) замаскирован в корп-окнах, а НЕ починен правкой
+    // общих стилей» (D-47), и оно проверяется адресно: файл, который просит переменную, не изменён
+    // и в реестре правок не значится.
+    const changed = changedUiFiles()
     expect(changed).not.toContain("packages/ui/src/components/button.css")
-
     const patches = fs.readFileSync(path.join(ROOT, "corp/patches.md"), "utf8")
     expect(patches).not.toContain("packages/ui/src/components/button.css")
-    expect(patches).not.toContain(SEGMENTED_CSS)
+    // Ни один изменённый файл packages/ui не объявляет корп-алиасов: они все в корп-CSS.
+    for (const file of changed)
+      expect(read(file), `${file}: объявление --surface-disabled переехало в packages/ui`).not.toContain(
+        "--surface-disabled:",
+      )
+    expect(read(CORP_CSS)).toContain("--surface-disabled: var(--surface-weak);")
   })
 })

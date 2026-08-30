@@ -64,6 +64,51 @@ function viewFunction<T extends (...args: never[]) => unknown>(marker: string, .
 }
 
 /**
+ * Текст открывающего тега элемента — его СОБСТВЕННЫЕ пропы и ничего больше.
+ *
+ * Прежняя мера (`/<CorpDialog[^>]*size=/`) резала исходник до первого символа `>`, а им становился
+ * `>` внутри стрелки `() =>` любого обработчика в пропах: в срез попадали пропы вложенных
+ * элементов, и `size` кнопки читался как `size` окна. Дефект был двусторонним — тем же выражением
+ * нельзя было поймать и НАСТОЯЩИЙ `size` у `CorpDialog`, стоящий после такого обработчика
+ * (резолюция TEST-DISPUTE-I14-02). Здесь граница тега считается по-настоящему: `>` засчитывается
+ * только вне фигурных скобок и вне строковых литералов.
+ */
+function openingTag(source: string, tag: string): string {
+  const at = source.indexOf(tag)
+  expect(at, `элемент ${tag} не найден`).toBeGreaterThan(-1)
+  let depth = 0
+  let quote: string | undefined
+  let own = tag
+  for (let index = at + tag.length; index < source.length; index++) {
+    const char = source[index]!
+    if (quote) {
+      own += char
+      if (char === "\\") {
+        own += source[index + 1] ?? ""
+        index += 1
+      } else if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "{") {
+      // Значение пропа в фигурных скобках — чужая территория: там живут вложенные элементы со
+      // своими пропами, и `size` любого из них про размер ОКНА ничего не говорит.
+      if (depth === 0) own += "{…}"
+      depth += 1
+      continue
+    }
+    if (char === "}") {
+      depth -= 1
+      continue
+    }
+    if (depth > 0) continue
+    if (char === '"' || char === "'" || char === "`") quote = char
+    if (char === ">") return own + ">"
+    own += char
+  }
+  throw new Error(`открывающий тег ${tag} не закрыт`)
+}
+
+/**
  * Объявленная высота контейнера окна размера `x-large` — то, что задаёт высоту окна целиком.
  * Читается из настоящего файла стилей: happy-dom вложенные `&[data-size=…]`-селекторы не
  * раскрывает, поэтому объявление сверяется по тексту правила, а растяжение панели — каскадом.
@@ -197,9 +242,11 @@ describe("корп-окно витрины — размер не зависит 
     // получают, ничего про размеры не зная (D-33).
     const text = read(path.join(APP, "components/corp", "dialog-connectors.tsx"))
     expect(text).toContain("CorpDialog")
-    // Экран витрины про размеры не знает: ни размера, ни `fit` он контейнеру не задаёт.
-    expect(text).not.toMatch(/<CorpDialog[^>]*size=/)
-    expect(text).not.toMatch(/<CorpDialog[^>]*\bfit\b/)
+    // Экран витрины про размеры не знает: ни размера, ни `fit` он контейнеру не задаёт. Проверяются
+    // пропы САМОГО `CorpDialog`, а не срез исходника до первого `>` (TEST-DISPUTE-I14-02).
+    const tag = openingTag(text, "<CorpDialog")
+    expect(tag).not.toContain("size=")
+    expect(tag).not.toMatch(/\bfit\b/)
   })
 
   test("S-D10: общие стили packages/ui ради витрины не правятся", () => {
@@ -225,48 +272,66 @@ describe("витрина и страница — признак «Подключ
   const source = SOURCE.connectors
   const page = SOURCE.connector
 
-  test("AC-223, AC-177: колонка «Статус» несёт текст состояния и цветовую точку, а не только цвет", () => {
+  test("AC-223, AC-177: колонка «Статус» несёт текст состояния всегда, а галочку — только подключённому", () => {
     const cell = source.slice(source.indexOf('data-slot="corp-status-cell"'), source.indexOf("</List>"))
-    // Текст в ячейке есть всегда — точка его дублирует, а не заменяет.
+    // Текст в ячейке есть всегда и НЕ охраняется ни одним `Show` — значок и цвет его дублируют, а
+    // не заменяют: состояние читается в чёрно-белой печати и при дальтонизме.
     expect(cell).toContain("language.t(statusKey(card))")
-    expect(cell).toContain('data-slot="corp-status-dot"')
+    const label = cell.slice(cell.indexOf("language.t(statusKey(card))"))
+    expect(label.slice(0, label.indexOf("</span>"))).not.toContain("<Show")
+    // Решение заказчика от 30.08: цветной точки нет ни у одной строки — ни в разметке, ни в стилях.
+    expect(cell).not.toContain("corp-status-dot")
+    expect(source).not.toContain("corp-status-dot")
+    expect(CSS.corp).not.toContain("corp-status-dot")
+    // Галочка — у подключённого, и ровно у него: она охраняется состоянием 4, а не отсутствием
+    // кнопки (признак положительный, AC-177).
+    const check = cell.slice(cell.indexOf('<Show when={card.state === "connected"}>'))
+    expect(cell.indexOf('<Show when={card.state === "connected"}>'), "галочка не охраняется состоянием").toBeGreaterThan(
+      -1,
+    )
+    expect(check.slice(0, check.indexOf("</Show>"))).toContain('name="check-small"')
+    // Тон переехал с точки на саму ячейку — цвет носит текст, а не отдельный кружок.
     expect(cell).toContain("data-tone={statusTone(card)}")
-    // Точка не читается вспомогательными технологиями: она дубликат, а не источник смысла.
-    expect(cell).toContain('aria-hidden="true"')
-    // Признак положительный: колонка заполняется по состоянию карточки, а не по отсутствию кнопки.
     expect(source).toContain('if (card.state === "connected") return "success"')
     expect(cell).not.toContain("!card")
   })
 
-  test("AC-223: цвет точки — семантический токен темы, а не произвольный цвет", () => {
+  test("AC-223: цвет ячейки — семантический токен темы, а не произвольный цвет", () => {
     for (const [tone, token] of [
       ["success", "--v2-state-fg-success"],
       ["warning", "--v2-state-fg-warning"],
       ["danger", "--v2-state-fg-danger"],
     ] as const) {
-      const rule = CSS.corp.slice(CSS.corp.indexOf(`[data-slot="corp-status-dot"][data-tone="${tone}"]`))
+      const rule = CSS.corp.slice(CSS.corp.indexOf(`[data-slot="corp-status-cell"][data-tone="${tone}"]`))
       expect(rule.slice(0, rule.indexOf("}")), tone).toContain(`var(${token})`)
     }
     // «Не подключён» — цвет второстепенного текста, а не отдельный «серый» из воздуха.
-    const weak = CSS.corp.slice(CSS.corp.indexOf('[data-slot="corp-status-dot"][data-tone="weak"]'))
+    const weak = CSS.corp.slice(CSS.corp.indexOf('[data-slot="corp-status-cell"][data-tone="weak"]'))
     expect(weak.slice(0, weak.indexOf("}"))).toContain("var(--text-weak)")
   })
 
-  test("AC-223: текст ячейки контрастен — «Подключено» сильнее прочих, text-text-weaker нет", () => {
+  test("AC-223: текст ячейки контрастен — text-text-weaker в ней не появляется", () => {
     const cell = source.slice(source.indexOf('data-slot="corp-status-cell"'), source.indexOf("</List>"))
-    expect(cell).toContain('"text-12-regular text-text-strong truncate"')
-    expect(cell).toContain('"text-12-regular text-text-weak truncate"')
+    // Цвет подписи приходит от тона ячейки, поэтому собственного цветового класса у неё нет; но
+    // самый бледный цвет запрещён и здесь, и во всём корп-исходнике (S-D12).
+    expect(cell).toContain('"text-12-regular truncate"')
     expect(cell).not.toContain("text-text-weaker")
   })
 
-  test("AC-224: бейдж остаётся признаком там, где колонки нет — на странице коннектора", () => {
-    const status = page.slice(page.indexOf('entry().state === "connected"'))
-    const badge = status.slice(0, status.indexOf("</Show>"))
-    expect(badge).toContain("<Tag")
-    expect(badge).toContain('language.t("corp.connectors.connected")')
-    // Бейдж «устаревший» рисуется тем же средством — `Tag` без собственного размера.
+  test("AC-224: там, где колонки нет, признак подключения — подпись состояния с галочкой", () => {
+    // Решение заказчика от 30.08: страница коннектора показывает то же состояние тем же средством,
+    // что и колонка витрины, — подписью, тоном и галочкой, а не бейджем `Tag`.
+    const line = page.slice(page.indexOf('data-slot="corp-status-line"'))
+    const block = line.slice(0, line.indexOf("</span>", line.indexOf("statusKey(entry())")))
+    expect(block).toContain("data-tone={statusTone(entry())}")
+    expect(block).toContain('<Show when={entry().state === "connected"}>')
+    expect(block).toContain('name="check-small"')
+    expect(block).toContain("language.t(statusKey(entry()))")
+    // Бейджем `Tag` на странице остались только «устаревший» и признак успеха ПРЯМОГО подключения
+    // внутри блока подключения (S-D13 п.7) — общим признаком состояния он больше не является.
     expect(page).toContain('<Tag>{language.t("corp.connectors.deprecated")}</Tag>')
-    // На витрине бейджа «Подключено» больше нет; бейдж «устаревший» там остался (S-V18).
+    expect(block).not.toContain("<Tag")
+    // На витрине бейджа «Подключено» нет; бейдж «устаревший» там остался (S-V18).
     expect(source).not.toContain('corp.connectors.connected")}</Tag>')
     expect(source).toContain('<Tag>{language.t("corp.connectors.deprecated")}</Tag>')
   })
@@ -448,8 +513,20 @@ describe("витрина — композиция и неподвижная ша
     const block = rule.slice(0, rule.indexOf("}"))
     expect(block).toContain('[data-slot="corp-connectors-row"]')
     expect(block).toMatch(/grid-template-columns:/)
-    // Второго объявления сетки в корп-CSS нет — расхождение сеток было бы дефектом.
-    expect(CSS.corp.split("grid-template-columns:").length - 1).toBe(1)
+    // Охраняемое (S-D6) — «ширины колонок ВИТРИНЫ объявлены один раз и переиспользуются шапкой и
+    // строкой», а не «в корп-CSS нет второй сетки вообще»: у других блоков других экранов (плитки
+    // инструментов страницы коннектора) раскладка своя, и к колонкам витрины она отношения не
+    // имеет. Поэтому объявление считается В ПРАВИЛЕ ВИТРИНЫ, а не в файле (резолюция
+    // TEST-DISPUTE-I14-01). Второе объявление ВНУТРИ этого правила по-прежнему валит тест.
+    expect(block.split("grid-template-columns:").length - 1).toBe(1)
+    // И второго правила, объявляющего колонки строке отдельно от шапки, в корп-CSS нет: настоящий
+    // дефект — именно расхождение этих двух, и он ловится перебором всех объявлений сетки.
+    const separate = [...CSS.corp.matchAll(/([^{}]+)\{[^}]*grid-template-columns:[^}]*\}/g)]
+      .map((match) => match[1]!.trim())
+      .filter((selector) => /corp-connectors-(header|row)/.test(selector))
+    expect(separate, "колонки витрины объявлены более чем одним правилом").toHaveLength(1)
+    expect(separate[0]).toContain('[data-slot="corp-connectors-header"]')
+    expect(separate[0]).toContain('[data-slot="corp-connectors-row"]')
 
     document.head.innerHTML = `<style>${CSS.corp}</style>`
     document.body.innerHTML = `<div class="corp-connectors">
@@ -523,23 +600,42 @@ describe("страница коннектора — стек диалогов и
     expect(source).not.toContain("dialog.replace")
   })
 
-  test("AC-229: состав страницы — описание, свойства, статус, «Разрешения» и «Убрать из списка»", () => {
+  test("AC-229: состав страницы — статус, описание, свойства, «Инструменты» и «Разрешения» в этом порядке", () => {
+    // Порядок блоков заказан 30.08 и изменён относительно ревизии 1.10: «Убрать из списка» уехало в
+    // меню шапки (и потому идёт ПЕРВЫМ в исходнике, а не последним), строка «Тип» со страницы ушла
+    // (тип у всех коннекторов один, S-V22), добавился блок «Инструменты».
     const order = [
-      "entry().description",
-      'language.t("corp.connector.type")',
-      'language.t("corp.connector.owner")',
-      'language.t("corp.connector.docs")',
+      // 1. Шапка: меню из трёх точек с «Убрать из списка».
+      'language.t("corp.connectors.forget")',
+      // 2. Статус и объяснение ошибки.
       "language.t(statusKey(entry()))",
       "explain(entry())",
+      // 3. Описание абзацами.
+      "descriptionParagraphs(entry().description)",
+      // 4. Свойства: владелец и документация.
+      'language.t("corp.connector.owner")',
+      'language.t("corp.connector.docs")',
+      // 5. «Инструменты».
+      'language.t("corp.connector.tools")',
+      // 7. «Разрешения».
       'language.t("corp.permissions.title")',
-      'language.t("corp.connectors.forget")',
     ]
+    // Порядок считается в теле САМОЙ страницы: соседние компоненты файла (окно подтверждения,
+    // экраны разрешений) несут те же ключи и в порядок блоков страницы не входят.
+    const composition = page.slice(page.indexOf("export const DialogConnector: Component"))
     let previous = -1
     for (const marker of order) {
-      const at = page.indexOf(marker, previous + 1)
+      const at = composition.indexOf(marker, previous + 1)
       expect(at, marker).toBeGreaterThan(previous)
       previous = at
     }
+    // «Убрать из списка» живёт именно в меню шапки, а не отдельной кнопкой внизу страницы.
+    const forgetAt = composition.indexOf('language.t("corp.connectors.forget")')
+    expect(forgetAt, "«Убрать из списка» на странице не найдено").toBeGreaterThan(-1)
+    const menu = composition.slice(composition.lastIndexOf("<DropdownMenu>", forgetAt), forgetAt)
+    expect(menu, "«Убрать из списка» не в меню шапки").toContain('data-action="corp-connector-menu"')
+    // Строки «Тип» на странице больше нет: колонка витрины показывает её одну на всех (S-V22).
+    expect(page).not.toContain('language.t("corp.connector.type")')
     // Описание — то, чего нет на витрине (S-D6): в строке таблицы его не рисуют, хотя поиск по нему
     // остался (S-V11).
     const row = source.slice(source.indexOf('data-slot="corp-connectors-row"'), source.indexOf("</List>"))
@@ -548,10 +644,14 @@ describe("страница коннектора — стек диалогов и
   })
 
   test("AC-229: отсутствующее свойство строки не рисует и пустой строки не оставляет", () => {
-    for (const field of ["connectorType(entry())", "entry().owner", "entry().docs_url"]) {
+    for (const field of ["entry().owner", "entry().docs_url"]) {
       const at = page.indexOf(`<Show when={${field}}>`)
       expect(at, field).toBeGreaterThan(-1)
     }
+    // Весь блок свойств не рисуется, когда не пришло ни одного из них: пустой полосы не остаётся.
+    expect(page).toContain("<Show when={entry().owner || entry().docs_url}>")
+    // Разделитель между ними — тоже условный: одинокое свойство не тянет за собой точку.
+    expect(page).toContain("<Show when={entry().owner && entry().docs_url}>")
     // Значение приходит внутрь `Show` аргументом, то есть строка рисуется только при его наличии.
     expect(page).not.toContain('{entry().owner ?? ""}')
     expect(page).not.toContain('{entry().docs_url ?? ""}')
@@ -563,10 +663,15 @@ describe("страница коннектора — стек диалогов и
     expect(block).toContain("overflow-y: auto")
     expect(block).toContain("min-height: 0")
     expect(block).toContain("flex: 1")
-    // Страница про размеры ничего не знает — их задаёт `CorpDialog` (S-D10, D-33).
+    // Страница про размеры ничего не знает — их задаёт `CorpDialog` (S-D10, D-33). Проверяются
+    // пропы САМОГО окна: заголовок ревизии 1.14 стал строкой, и в пропах появился обработчик со
+    // стрелкой `() =>`, чей `>` прежняя мера принимала за конец тега (TEST-DISPUTE-I14-02).
     expect(page).toContain("CorpDialog")
-    expect(page).not.toMatch(/<CorpDialog[^>]*size=/)
-    expect(page).not.toMatch(/<CorpDialog[^>]*\bfit\b/)
+    const tag = openingTag(page, "<CorpDialog")
+    expect(tag).not.toContain("size=")
+    expect(tag).not.toMatch(/\bfit\b/)
+    // Мера способна поймать нарушение: в собственных пропах окна `size` был бы виден.
+    expect(tag).toContain("title=")
 
     for (const branch of ["legacy", "v2"] as const) {
       const heights = new Set<string>()
@@ -639,9 +744,52 @@ describe("корп-экраны — контраст и запрещённые �
     // Значения группы и «Типа» подставляются напрямую, без обращения к словарю.
     expect(SOURCE.connector).toContain("<SettingsRowV2 title={row.title} description={row.description}>")
     expect(SOURCE.connector).toContain("title: group.title,")
-    expect(SOURCE.connectors).toContain("{connectorType(card) ?? \"\"}")
-    // Обрамление — из словаря: заголовки блоков «Тип», «Владелец», «Разрешения».
-    for (const key of ["corp.connector.type", "corp.connector.owner", "corp.permissions.title"])
+    // Колонка «Тип» подставляет значение напрямую; заглушки `?? ""` у неё больше нет — значение
+    // теперь непусто всегда (`MCP` при отсутствии поля, решение заказчика от 30.08).
+    expect(SOURCE.connectors).toContain("{connectorType(card)}")
+    expect(SOURCE.connectors).not.toContain('{connectorType(card) ?? ""}')
+    // Обрамление — из словаря: заголовки блоков «Владелец», «Инструменты», «Разрешения».
+    for (const key of ["corp.connector.owner", "corp.connector.tools", "corp.permissions.title"])
       expect(SOURCE.connector, key).toContain(`language.t("${key}")`)
+  })
+})
+
+/**
+ * Ссылки «Открыть в Hub» в интерфейсе нет (решение заказчика от 30.08).
+ *
+ * Случай живой, а не гипотетический: сервер по-прежнему кладёт `open_hub` в набор действий КАЖДОГО
+ * состояния и присылает `hub_url` у каждой карточки — наблюдение на стенде 31.08,
+ * `GET http://127.0.0.1:4096/corp/catalog` вернул `actions: ["permissions","disconnect","open_hub"]`
+ * и `hub_url: "http://127.0.0.1:8099/ui/servers/tag"`. Контракт при этом не менялся (S-V16 в силе,
+ * AC-170/AC-173/AC-185 остаются зелёными) — изменилась ОТРИСОВКА: оболочка это действие
+ * игнорирует, и человек понимает, что он подключает, не выходя из окна.
+ */
+describe("«Открыть в Hub» не рисуется ни витриной, ни страницей коннектора", () => {
+  const statusSource = read(path.join(ROOT, "packages/opencode/src/corp/status.ts"))
+
+  test("сервер действие по-прежнему присылает — случай не гипотетический", () => {
+    // Наборы действий S-V16 не переписаны: `open_hub` есть в каждом состоянии таблицы.
+    const table = statusSource.slice(statusSource.indexOf("const ACTIONS"), statusSource.indexOf("\n}", statusSource.indexOf("const ACTIONS")))
+    const states = [...table.matchAll(/^\s{2}(\w+): \[([^\]]*)\]/gm)]
+    expect(states.length, "таблица наборов действий не разобрана").toBeGreaterThan(3)
+    for (const [, state, actions] of states) expect(actions, state).toContain('"open_hub"')
+  })
+
+  test("ни один корп-компонент действие open_hub не отрисовывает", () => {
+    for (const { file, text } of CORP_COMPONENTS) {
+      expect(text, `${file}: действие open_hub отрисовано`).not.toContain('"open_hub"')
+      expect(text, `${file}: ссылка «Открыть в Hub» отрисована`).not.toContain("corp.connectors.openHub")
+    }
+    // Адрес карточки в Hub витрина и страница не читают вовсе. Экран входа сюда не входит: он
+    // читает `hub_url` статуса — адрес самого Hub, а не карточки, и ссылкой на коннектор он не
+    // является.
+    for (const text of [SOURCE.connectors, SOURCE.connector]) expect(text).not.toContain("hub_url")
+  })
+
+  test("ключ словаря при этом сохранён — удалять его спека не разрешает (S-I1)", () => {
+    // Ключ есть в обоих словарях: убрана отрисовка, а не идентификатор. Проверка AC-93 на нём в силе.
+    const en = read(path.join(ROOT, "packages/app/src/i18n/en.ts"))
+    const ru = read(path.join(ROOT, "packages/app/src/i18n/ru.ts"))
+    for (const dict of [en, ru]) expect(dict).toContain('"corp.connectors.openHub"')
   })
 })

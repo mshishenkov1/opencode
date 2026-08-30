@@ -248,9 +248,25 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       return [instance?.directory ?? "", workspace ?? "", addr.hub ?? "", addr.catalog ?? ""].join("\u0000")
     })
 
-    /** Сбрасывает memo текущего инстанса после действий витрины (S-V7…S-V9). */
-    const dropMemo = Effect.fnUntraced(function* (addr: Addresses) {
-      memo.delete(yield* memoKey(addr))
+    /**
+     * Сбрасывает memo витрины после действия, меняющего то, что витрина показывает
+     * (S-V3, S-V7…S-V9, S-A3, S-A14; правило S-V28 п.10ж).
+     *
+     * Сбрасываются **все** записи процесса, а не запись текущего инстанса. Причина — наблюдение, а
+     * не осторожность: карточки считаются по состоянию, которое у процесса ОДНО на всех, а memo
+     * ключуется рабочим каталогом. Запись `magnit_prod` в auth-store одна на процесс; глобальный
+     * конфиг (`configSvc.updateGlobal`, разделы `mcp` и `permission`) — один файл на пользователя;
+     * файлы признака подключений и учётных данных лежат в `Global.Path.data`. Подключение,
+     * выполненное в одном рабочем каталоге, наблюдаемо меняет витрину другого — а прежний
+     * `memo.delete(memoKey(addr))` снимал снимок только того каталога, из которого пришёл запрос,
+     * и соседнее окно ещё минуту показывало карточку «не подключён» при `configured: true` в
+     * конфиге. Это тот же довод, которым `invalidateProviders` дизпоузит ВСЕ инстансы, а не текущий.
+     *
+     * Сброс остаётся привязан к действиям: чтения (`GET /corp/catalog`, `GET /corp/status`) его не
+     * зовут, и окно свежести на повторном открытии витрины работает как прежде.
+     */
+    const dropMemo = Effect.fnUntraced(function* () {
+      memo.clear()
     })
 
     /** Источники каталога в порядке проб (S-C10 п.3): статический адрес, затем Hub. */
@@ -352,6 +368,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // значит живой процесс остался бы в состоянии «ключа нет» (S-C4b, BUG-I12-002).
       yield* configSvc.invalidate()
       yield* invalidateProviders()
+      // BLK-5: снимок каталога снимается тем же действием, которое сменило ключ. Карточки витрины
+      // считаются ПО КЛЮЧУ — Hub отвечает каталогом и подключениями того пользователя (и той
+      // команды), чьим ключом сделан запрос, — а memo живёт минуту и запись ключа его не касалась.
+      // Наблюдение: витрина, открытая до повторного входа (или до выбора другой команды через
+      // `POST /corp/login/poll/:id/team`, идущий сюда же), ещё минуту показывала каталог ПРЕЖНЕГО
+      // ключа. Место — здесь, в общей ветке `ready`, а не в `loginPoll`: ключ пишется тут, и обе
+      // ветки входа приходят сюда.
+      yield* dropMemo()
       return { status: "ready" as const, user: publicUser(data.user), key_kind: data.key_kind }
     })
 
@@ -425,6 +449,13 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // Отдельным условием, а не общим блоком, — порядок «инвалидация только после успешного
       // удаления» проверяется на исходнике текстом (AC-279).
       if (outcome.keyRemoved) yield* invalidateProviders()
+      // BLK-5: тем же условием — снимок каталога. Витрина после выхода обязана показывать
+      // «Требуется вход» (S-V4), а её карточки посчитаны по ключу, которого больше нет.
+      // Наблюдение: без этой строки `GET /corp/catalog` сразу после выхода отдавал ПОЛНЫЙ каталог
+      // с тем же `cached_at`, что до выхода, и «Требуется вход» появлялось только по истечении
+      // окна свежести (или по `?refresh=true`). Ключа не было — снимать нечего, и снимок не
+      // трогается: условие то же, что у инвалидации конфига.
+      if (outcome.keyRemoved) yield* dropMemo()
       return CorpLogout.toResult(outcome)
     })
 
@@ -475,6 +506,12 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // конфига здесь так же недостаточно, как при входе.
       yield* configSvc.invalidate()
       yield* invalidateProviders()
+      // Снимок каталога здесь НЕ сбрасывается — и это проверено наблюдением, а не рассуждением:
+      // `disabled_providers` не участвует ни в одном поле `CatalogView` и ни в одном поле карточки,
+      // а признак «провайдер выключен» витрина берёт из `GET /corp/status`, который снимка не имеет
+      // вовсе. Ответ витрины до «Включить» и её ответ с `?refresh=true` после — побайтно один и тот
+      // же. Сбрасывать снимок «на всякий случай» значило бы платить походом в Hub за действие,
+      // которое витрину не меняет.
       // Состояние пересчитывается заново: предупреждение исчезает потому, что исчезло состояние.
       const after = yield* providerDisabled()
       return { changed: true, ...(after === undefined ? {} : { provider_disabled: after }) }
@@ -1130,7 +1167,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       yield* configSvc.updateGlobal(patch)
       // (в) Соединение MCP. Учётные заголовки подставляются при создании транспорта (S-V26 п.4).
       yield* mcpSvc.add(alias, entry).pipe(Effect.catch(() => Effect.void))
-      yield* dropMemo(addr)
+      yield* dropMemo()
 
       return {
         alias,
@@ -1199,7 +1236,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // Шаг 1 (D-7): персист через updateGlobal, а не через runtime-only POST /mcp/:name/connect (F17).
       yield* configSvc.updateGlobal(patch)
       yield* mcpSvc.add(alias, patch.mcp[alias])
-      yield* dropMemo(addr)
+      yield* dropMemo()
 
       // Шаг 2: штатный MCP-OAuth сервера — браузер и ожидание callback 19876 (F15/F16).
       const status = yield* mcpSvc
@@ -1264,7 +1301,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       yield* mcpSvc.removeAuth(alias)
       yield* mcpSvc.disconnect(alias).pipe(Effect.catch(() => Effect.void))
       yield* configSvc.updateGlobal(CorpConnectors.disconnectPatch(alias))
-      yield* dropMemo(addr)
+      yield* dropMemo()
 
       const key = yield* corpKey()
       let hubError: CorpErrors.Code | undefined
@@ -1312,7 +1349,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       const connections = yield* readConnections(addr.identity)
       const without = CorpConnections.forget(connections, alias)
       if (without) yield* Effect.promise(() => CorpConnections.write(without))
-      yield* dropMemo(addr)
+      yield* dropMemo()
 
       // Шаг 4 необязателен: без ключа и при недоступном Hub он пропускается, а не откатывает шаги 1–3.
       // При незаданном адресе Hub шага 4 **не существует** (S-C10 п.7): предупреждение о
@@ -1366,7 +1403,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       })
       yield* configSvc.updateGlobal(patch.clear)
       yield* configSvc.updateGlobal(patch.write)
-      yield* dropMemo(addr)
+      yield* dropMemo()
 
       // Состояние считается по конфигу **после** записи — и тем же правилом, что на витрине (S-V23).
       // MAJ-E: требование «после записи» держится только тем, что источник — `liveConfig()`, то есть
@@ -1470,7 +1507,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         const patch = CorpConnectors.permissionsPatch(server, preset, { directConnected, current: entry })
         if (patch) yield* configSvc.updateGlobal(patch)
       }
-      yield* dropMemo(addr)
+      yield* dropMemo()
 
       // S-V28 п.5, третья строка (микроревизия 1.13.1): у карточки, закрытой запретом, шаг 2
       // правила S-V7 **не запускается** — браузер не открывается и ни одного исходящего запроса по

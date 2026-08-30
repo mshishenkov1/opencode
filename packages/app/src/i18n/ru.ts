@@ -1125,6 +1125,21 @@ export const dict = {
   "corp.permissions.mixed": "Смешанно",
   "corp.permissions.restTitle": "Остальные возможности",
   "corp.permissions.restDescription": "Инструменты коннектора, не попавшие ни в одну группу выше",
+  // Экран ревизии 1.14: три класса риска вместо пятнадцати смысловых групп и строка на каждый
+  // инструмент. Названия классов — тексты оболочки, а не данные каталога: класс — закрытый набор
+  // из трёх значений, известный клиенту (S-V20), и переводить его каталогу незачем.
+  "corp.permissions.toolsTitle": "Разрешения инструментов",
+  "corp.permissions.toolsHint": "Выберите, когда ассистенту можно пользоваться этими инструментами",
+  "corp.permissions.class.readOnly": "Только чтение",
+  "corp.permissions.class.readOnlyHint": "Эти инструменты только смотрят и ничего не меняют",
+  "corp.permissions.class.writeDelete": "Запись и удаление",
+  "corp.permissions.class.writeDeleteHint": "Эти инструменты создают, меняют и удаляют данные",
+  "corp.permissions.class.interactive": "Действия от вашего имени",
+  "corp.permissions.class.interactiveHint": "Эти инструменты действуют так, будто это сделали вы",
+  // Подсказки тристейта: у иконки без подписи имя обязано быть и в подсказке, и в `aria-label`.
+  "corp.permissions.allowHint": "Разрешить без спроса",
+  "corp.permissions.askHint": "Спрашивать каждый раз",
+  "corp.permissions.denyHint": "Запретить",
 
   "corp.empty.unparsed": "Каталог не разобран: отброшены все карточки ({{dropped}})",
   "corp.empty.tabConnected": "Пока ничего не подключено",

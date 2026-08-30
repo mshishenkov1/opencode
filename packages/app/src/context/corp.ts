@@ -245,6 +245,19 @@ export type ConnectorAction =
    * запись детерминирована и перезаписывает блок alias целиком, а не правит отдельные ключи.
    */
   | { kind: "permissionModes"; alias: string; modes: Record<string, CorpPermissionMode> }
+  /**
+   * Режимы **отдельных инструментов** (S-V23, ревизия 1.14) — то же тело, что `permissionModes`,
+   * с добавленным разделом `tools`. Отдельным роутом это не является и вторым видом тела тоже:
+   * `modes` по-прежнему обязателен и задаёт умолчание блока, включая режим wildcard группы
+   * «Остальное», а `tools` — поимённые исключения поверх него. В теле идут **все** показанные
+   * инструменты, а не один изменённый: запись перезаписывает блок alias целиком (S-V21).
+   */
+  | {
+      kind: "permissionTools"
+      alias: string
+      modes: Record<string, CorpPermissionMode>
+      tools: Record<string, CorpPermissionMode>
+    }
 
 
 /**
@@ -361,6 +374,10 @@ export function useConnectorAction() {
       if (action.kind === "permissionModes")
         return sdk()
           .client.corp.permissions({ alias: action.alias, modes: action.modes })
+          .then((response) => response.data)
+      if (action.kind === "permissionTools")
+        return sdk()
+          .client.corp.permissions({ alias: action.alias, modes: action.modes, tools: action.tools })
           .then((response) => response.data)
       return sdk()
         .client.corp.permissions({ alias: action.alias, preset: action.preset })

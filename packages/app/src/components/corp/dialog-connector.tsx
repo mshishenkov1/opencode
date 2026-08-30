@@ -3,9 +3,12 @@ import type {
   CorpAuthMethodField,
   CorpAuthMethodView,
   CorpCatalogCard,
+  CorpPermissionGroups,
   CorpPermissionMode,
   CorpPermissionModel,
   CorpPermissionState,
+  CorpPermissionToolClass,
+  CorpPermissionToolState,
 } from "@opencode-ai/sdk/v2"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -64,6 +67,24 @@ const BULK_KEY = {
   allow: "corp.permissions.allowAll",
   ask: "corp.permissions.ask",
   deny: "corp.permissions.denyAll",
+} as const
+
+/**
+ * Подсказки тристейта (ревизия 1.14): у иконки без подписи имя обязано быть — и в подсказке при
+ * наведении, и в `aria-label`. Короткие подписи `MODE_KEY` для этого не годятся: «Разрешить» не
+ * говорит, чем разрешение отличается от «Спрашивать».
+ */
+const MODE_HINT_KEY = {
+  allow: "corp.permissions.allowHint",
+  ask: "corp.permissions.askHint",
+  deny: "corp.permissions.denyHint",
+} as const
+
+/** Значки трёх режимов (референс заказчика): круг с галочкой, реплика, перечёркнутый круг. */
+const MODE_ICON = {
+  allow: "circle-check",
+  ask: "speech-bubble",
+  deny: "circle-ban-sign",
 } as const
 
 /**
@@ -172,6 +193,74 @@ export function aggregateMode(modes: (CorpPermissionMode | undefined)[]): CorpPe
   const first = modes[0]
   if (first === undefined || modes.length === 0) return "mixed"
   return modes.every((mode) => mode === first) ? first : "mixed"
+}
+
+/**
+ * Три класса риска — три секции экрана разрешений, в этом порядке (ТЗ ревизии 1.14, референс
+ * заказчика). Порядок и есть требование: сверху то, что ничего не меняет, снизу то, что действует
+ * от имени пользователя.
+ */
+export const TOOL_CLASSES: CorpPermissionToolClass[] = ["read_only", "write_delete", "interactive"]
+
+const CLASS_KEY = {
+  read_only: "corp.permissions.class.readOnly",
+  write_delete: "corp.permissions.class.writeDelete",
+  interactive: "corp.permissions.class.interactive",
+} as const
+
+const CLASS_HINT_KEY = {
+  read_only: "corp.permissions.class.readOnlyHint",
+  write_delete: "corp.permissions.class.writeDeleteHint",
+  interactive: "corp.permissions.class.interactiveHint",
+} as const
+
+/** Строка экрана разрешений: один инструмент — человеческое имя и техническое под ним. */
+export interface ToolRow {
+  name: string
+  title: string
+}
+
+/** Секция экрана разрешений: класс риска либо «Остальные» (S-V20). */
+export interface ToolSection {
+  id: CorpPermissionToolClass | typeof REST_GROUP_ID
+  tools: ToolRow[]
+}
+
+/**
+ * Раскладка инструментов по секциям (ТЗ ревизии 1.14, S-V20 версии 2).
+ *
+ * Состав строк — объединение инструментов групп и раздела `tools` словаря, в порядке словаря: то
+ * же множество, по которому сервер считает `permission_tool_state`, поэтому строки без режима не
+ * бывает. Секция выбирается классом инструмента; инструмент, которого в разделе `tools` нет вовсе
+ * (он назван группой, но не описан), попадает в «Остальные» — четвёртую секцию. Неизвестный класс
+ * сюда не доходит: его в `interactive` перевёл разбор словаря (S-V20), и это решение про данные, а
+ * не про экран.
+ *
+ * Пустая секция не возвращается — рисовать заголовок над пустотой нечего.
+ */
+export function toolSections(groups: CorpPermissionGroups | undefined): ToolSection[] {
+  const dictionary = groups?.tools
+  if (!dictionary) return []
+  const order: string[] = []
+  const seen = new Set<string>()
+  const add = (name: string) => {
+    if (seen.has(name)) return
+    seen.add(name)
+    order.push(name)
+  }
+  for (const group of groups!.groups) for (const tool of group.tools) add(tool)
+  for (const tool of Object.keys(dictionary)) add(tool)
+
+  const buckets = new Map<ToolSection["id"], ToolRow[]>()
+  for (const id of [...TOOL_CLASSES, REST_GROUP_ID] as ToolSection["id"][]) buckets.set(id, [])
+  for (const name of order) {
+    const def = dictionary[name]
+    const id: ToolSection["id"] = def ? def.class : REST_GROUP_ID
+    buckets.get(id)!.push({ name, title: def?.title ?? name })
+  }
+  return [...buckets.entries()]
+    .filter(([, tools]) => tools.length > 0)
+    .map(([id, tools]) => ({ id, tools }))
 }
 
 /**
@@ -462,6 +551,203 @@ const ConnectorPermissionGroups: Component<{ card: CorpCatalogCard }> = (props) 
           )}
         </For>
       </SettingsListV2>
+    </div>
+  )
+}
+
+/**
+ * Экран разрешений ревизии 1.14: три класса риска и тристейт на КАЖДОМ инструменте (ТЗ §4,
+ * референс заказчика — экран коннектора Claude Desktop).
+ *
+ * Что изменилось против прежнего экрана по группам: строка теперь на инструмент, а не на группу
+ * из пятнадцати; секций три (плюс «Остальные», если есть чему в неё попасть), и делят они
+ * инструменты по риску, а не по смыслу. Согласованные формулировки словаря при этом никуда не
+ * делись — они живут в именах строк, а групповая раскладка остаётся деградацией для словаря
+ * версии 1, у которого раздела `tools` нет вовсе.
+ *
+ * Действующий режим строки приходит готовым в `permission_tool_state` (S-V23): клиент его не
+ * пересчитывает и из режима группы не выводит. «Наследуется от группы, пока не задан лично» —
+ * результат правил конфига, посчитанный сервером, а не догадка экрана.
+ *
+ * Запись — та же детерминированная перезапись блока alias (S-V21): в теле идут режимы всех групп
+ * (включая `rest`, то есть wildcard) и режимы **всех** показанных инструментов, а не один
+ * изменённый. Отправить только правку значило бы молча сбросить остальные решения пользователя.
+ */
+const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) => {
+  const language = useLanguage()
+  const action = useConnectorAction()
+
+  /** Ответ роута прав — источник истины сразу после записи (S-V23), как и на прежнем экране. */
+  const [applied, setApplied] = createSignal<{ groups?: CorpPermissionState; tools?: CorpPermissionToolState }>()
+  const groupState = createMemo(() => applied()?.groups ?? props.card.permission_state)
+  const toolState = createMemo(() => applied()?.tools ?? props.card.permission_tool_state)
+
+  /** Свёрнутые секции: выбор живёт, пока открыта страница, и в конфиг не попадает. */
+  const [folded, setFolded] = createSignal<Record<string, boolean>>({})
+
+  const sections = createMemo(() => toolSections(props.card.permission_groups))
+  const rest = createMemo(() => props.card.permission_groups?.rest)
+
+  function sectionTitle(id: ToolSection["id"]) {
+    if (id === REST_GROUP_ID) return rest()?.title ?? language.t("corp.permissions.restTitle")
+    return language.t(CLASS_KEY[id])
+  }
+
+  function sectionHint(id: ToolSection["id"]) {
+    if (id === REST_GROUP_ID) return rest()?.description ?? language.t("corp.permissions.restDescription")
+    return language.t(CLASS_HINT_KEY[id])
+  }
+
+  const modeOf = (name: string) => toolState()?.[name]
+
+  /**
+   * Значение группового селектора секции (S-V23): одинаковый режим у всех её строк — этот режим,
+   * иначе «Смешанно». У секции «Остальные» в свёртку входит и режим wildcard: строки этой секции и
+   * wildcard — про одно и то же, инструменты вне словаря, и расходиться им незачем.
+   */
+  function sectionMode(section: ToolSection) {
+    const modes = section.tools.map((tool) => modeOf(tool.name))
+    if (section.id === REST_GROUP_ID) modes.push(restMode())
+    return aggregateMode(modes)
+  }
+
+  const restMode = () => {
+    const value = groupState()?.[REST_GROUP_ID]
+    return value === "allow" || value === "ask" || value === "deny" ? value : undefined
+  }
+
+  /**
+   * Запись: полное тело блока (S-V21).
+   *
+   * `modes` — режимы всех групп, как их посчитал сервер; группа в состоянии `mixed` в набор не
+   * попадает намеренно (для неё запись возьмёт `default` каталога), но её инструменты названы
+   * поимённо в `tools` и потому своих значений не теряют. `overrideRest` двигает wildcard —
+   * только селектор секции «Остальные» его и трогает.
+   */
+  async function apply(overrides: Record<string, CorpPermissionMode>, overrideRest?: CorpPermissionMode) {
+    const tools: Record<string, CorpPermissionMode> = {}
+    for (const section of sections())
+      for (const row of section.tools) {
+        const mode = overrides[row.name] ?? modeOf(row.name)
+        if (mode) tools[row.name] = mode
+      }
+    const modes: Record<string, CorpPermissionMode> = {}
+    for (const [id, value] of Object.entries(groupState() ?? {}))
+      if (value === "allow" || value === "ask" || value === "deny") modes[id] = value
+    if (overrideRest) modes[REST_GROUP_ID] = overrideRest
+    // Режим wildcard обязан быть в теле явно: без него запись возьмёт `default` каталога и молча
+    // отменит прежнее решение пользователя про инструменты вне словаря (S-V21).
+    if (!(REST_GROUP_ID in modes)) modes[REST_GROUP_ID] = rest()?.default ?? DEFAULT_MODE
+    try {
+      const result = await action.mutateAsync({ kind: "permissionTools", alias: props.card.alias, modes, tools })
+      if (result && "permission_state" in result)
+        setApplied({
+          ...(result.permission_state === undefined ? {} : { groups: result.permission_state }),
+          ...(result.permission_tool_state === undefined ? {} : { tools: result.permission_tool_state }),
+        })
+    } catch {
+      // Отказ роута уже объяснён тостом `onError` мутации: молчаливой неудачи здесь не бывает.
+    }
+  }
+
+  const disabled = () => action.isPending || props.card.blocked
+
+  function bulkOptions(section: ToolSection) {
+    const options = MODES.map((mode) => ({ value: mode as string, label: language.t(BULK_KEY[mode]) }))
+    // «Смешанно» показывается, только пока режимы расходятся, и выбрать его нельзя (S-V23).
+    if (sectionMode(section) === "mixed") options.push({ value: "mixed", label: language.t("corp.permissions.mixed") })
+    return options
+  }
+
+  return (
+    <div class="flex flex-col gap-3" data-slot="corp-permissions">
+      <div class="flex flex-col gap-1">
+        <span class="text-14-medium text-text-strong">{language.t("corp.permissions.toolsTitle")}</span>
+        <span class="text-12-regular text-text-weak">{language.t("corp.permissions.toolsHint")}</span>
+      </div>
+      <For each={sections()}>
+        {(section) => (
+          <div data-slot="corp-permission-section" data-section={section.id}>
+            <div data-slot="corp-permission-section-head">
+              {/* Треугольник свёртки — он же кнопка: заголовок секции целиком её открывает. */}
+              <button
+                type="button"
+                data-action="corp-permission-fold"
+                data-section={section.id}
+                aria-expanded={!folded()[section.id]}
+                title={sectionHint(section.id)}
+                onClick={() => setFolded((value) => ({ ...value, [section.id]: !value[section.id] }))}
+              >
+                <Icon name={folded()[section.id] ? "chevron-right" : "chevron-down"} size="small" />
+                <span class="text-14-medium text-text-strong">{sectionTitle(section.id)}</span>
+                <Tag>{section.tools.length}</Tag>
+              </button>
+              <span class="flex-1" />
+              <SelectV2
+                appearance="inline"
+                data-action="corp-permissions-bulk"
+                data-section={section.id}
+                options={bulkOptions(section)}
+                placement="bottom-end"
+                gutter={6}
+                disabled={disabled()}
+                current={bulkOptions(section).find((option) => option.value === sectionMode(section))}
+                value={(option) => option.value}
+                label={(option) => option.label}
+                onSelect={(option) => {
+                  if (!option || option.value === "mixed") return
+                  const mode = option.value as CorpPermissionMode
+                  void apply(
+                    Object.fromEntries(section.tools.map((tool) => [tool.name, mode])),
+                    section.id === REST_GROUP_ID ? mode : undefined,
+                  )
+                }}
+              />
+            </div>
+            <Show when={!folded()[section.id]}>
+              <For each={section.tools}>
+                {(tool) => (
+                  <div data-slot="corp-tool-row" data-tool={tool.name}>
+                    <span class="flex flex-col min-w-0">
+                      <span class="text-14-regular text-text-strong truncate">{tool.title}</span>
+                      <span class="text-12-regular text-text-weak truncate">{tool.name}</span>
+                    </span>
+                    <span class="flex-1" />
+                    {/* Тристейт: подложка под активной иконкой ПЕРЕЕЗЖАЕТ между позициями, а не
+                        перекрашивается (`thumb` компонента `SegmentedControlV2`). Тон подложки
+                        задаётся классом активного режима на самом контроле. */}
+                    <SegmentedControlV2
+                      thumb
+                      class="corp-tristate"
+                      data-action="corp-permission-tool"
+                      data-tool={tool.name}
+                      data-mode={modeOf(tool.name) ?? "none"}
+                      value={modeOf(tool.name) ?? null}
+                      disabled={disabled()}
+                      onChange={(value) => {
+                        if (!value) return
+                        void apply({ [tool.name]: value as CorpPermissionMode })
+                      }}
+                    >
+                      <For each={MODES}>
+                        {(mode) => (
+                          <SegmentedControlItemV2
+                            value={mode}
+                            aria-label={language.t(MODE_HINT_KEY[mode])}
+                            title={language.t(MODE_HINT_KEY[mode])}
+                          >
+                            <Icon name={MODE_ICON[mode]} size="small" />
+                          </SegmentedControlItemV2>
+                        )}
+                      </For>
+                    </SegmentedControlV2>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+        )}
+      </For>
     </div>
   )
 }
@@ -1130,7 +1416,16 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                         </>
                       }
                     >
-                      <ConnectorPermissionGroups card={entry()} />
+                      {/* Словарь версии 2 (раздел `tools` разобран) — экран ревизии 1.14: три
+                          класса риска и строка на каждый инструмент. Словарь версии 1 раздела
+                          `tools` не имеет, и экран деградирует на прежний вид по группам —
+                          это проверяется, а не подразумевается (ТЗ §1). */}
+                      <Show
+                        when={toolSections(entry().permission_groups).length > 0}
+                        fallback={<ConnectorPermissionGroups card={entry()} />}
+                      >
+                        <ConnectorPermissionTools card={entry()} />
+                      </Show>
                     </Show>
                   </Show>
                 </div>

@@ -414,3 +414,92 @@
 [data-slot="corp-connector-actions"] > span {
   text-align: right;
 }
+
+/*
+ * Экран разрешений ревизии 1.14 (ТЗ §4, референс заказчика): секция класса риска, строка на
+ * инструмент и тристейт с едущей подложкой.
+ *
+ * Габариты взяты из утверждённого макета: три ячейки по 34px, радиус подложки 7px при радиусе
+ * дорожки 9px, переезд 220 мс. Сама механика переезда живёт в `SegmentedControlV2` (пропс `thumb`)
+ * — второго похожего компонента рядом не заводится; здесь только размеры и тона корп-экрана.
+ */
+[data-slot="corp-permission-section-head"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 2px;
+}
+
+[data-slot="corp-permission-section-head"] > button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+
+[data-slot="corp-tool-row"] {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 7px 2px;
+  border-top: 1px solid var(--border-base);
+}
+
+/* Дорожка тристейта: фона у неё нет — видна только едущая подложка (макет заказчика). */
+[data-slot="segmented-control-v2"].corp-tristate {
+  width: auto;
+  height: 30px;
+  flex: none;
+  padding: 2px;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 9px;
+}
+
+[data-slot="segmented-control-v2"].corp-tristate [data-slot="segmented-control-v2-item"] {
+  width: 34px;
+  flex: none;
+  height: 26px;
+  padding: 0;
+  border-radius: 7px;
+  color: var(--text-weak);
+}
+
+[data-slot="segmented-control-v2"].corp-tristate [data-slot="segmented-control-v2-thumb"] {
+  top: 2px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--surface-weak);
+  box-shadow: none;
+}
+
+/*
+ * Тон подложки и значка по действующему режиму. «Спрашивать» — нейтральный, и это верно: он не
+ * решение, а отложенное решение. Разрешение и запрет — состояния, о которых надо знать, не
+ * вчитываясь: успех и опасность темы.
+ */
+[data-slot="segmented-control-v2"].corp-tristate[data-mode="allow"] [data-slot="segmented-control-v2-thumb"] {
+  background: var(--v2-state-bg-success);
+}
+
+[data-slot="segmented-control-v2"].corp-tristate[data-mode="deny"] [data-slot="segmented-control-v2-thumb"] {
+  background: var(--v2-state-bg-danger);
+}
+
+[data-slot="segmented-control-v2"].corp-tristate [data-slot="segmented-control-v2-item"]:where([data-pressed]) {
+  color: var(--text-base);
+}
+
+[data-slot="segmented-control-v2"].corp-tristate[data-mode="allow"]
+  [data-slot="segmented-control-v2-item"]:where([data-pressed]) {
+  color: var(--v2-state-fg-success);
+}
+
+[data-slot="segmented-control-v2"].corp-tristate[data-mode="deny"]
+  [data-slot="segmented-control-v2-item"]:where([data-pressed]) {
+  color: var(--v2-state-fg-danger);
+}

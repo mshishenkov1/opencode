@@ -1219,6 +1219,19 @@ export const dict = {
   "corp.permissions.mixed": "Mixed",
   "corp.permissions.restTitle": "Other capabilities",
   "corp.permissions.restDescription": "Connector tools that fall into none of the groups above",
+  // Экран ревизии 1.14: три класса риска вместо пятнадцати смысловых групп и строка на каждый
+  // инструмент. Названия классов — тексты оболочки, а не данные каталога.
+  "corp.permissions.toolsTitle": "Tool permissions",
+  "corp.permissions.toolsHint": "Choose when the assistant may use these tools",
+  "corp.permissions.class.readOnly": "Read only",
+  "corp.permissions.class.readOnlyHint": "These tools only look and change nothing",
+  "corp.permissions.class.writeDelete": "Write and delete",
+  "corp.permissions.class.writeDeleteHint": "These tools create, change and delete data",
+  "corp.permissions.class.interactive": "Actions on your behalf",
+  "corp.permissions.class.interactiveHint": "These tools act as if you did it yourself",
+  "corp.permissions.allowHint": "Allow without asking",
+  "corp.permissions.askHint": "Ask every time",
+  "corp.permissions.denyHint": "Deny",
 
   "corp.empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
   "corp.empty.tabConnected": "Nothing connected yet",

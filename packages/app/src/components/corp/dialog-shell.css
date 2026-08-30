@@ -469,25 +469,42 @@
   color: var(--text-weak);
 }
 
+/*
+ * Нейтральная подложка («спрашивать», без `data-mode`) была почти невидима: `--surface-weak` —
+ * лёгкая полупрозрачная заливка, задуманная как едва заметный слой поверх контента, а не как
+ * состояние, которое обязано читаться само по себе. На строке разрешений она сливалась с фоном
+ * строки — заказчику важно, что подложка «переваливается» на каждый режим, а переваливаться в
+ * невидимую позицию нечему.
+ *
+ * Замена — `--background-bg-base` + кайма `--border-border-strong`, ровно та пара, которой
+ * рисуется подложка активного сегмента у самого компонента по умолчанию (без `.corp-tristate`,
+ * см. `segmented-control-v2.css`) — там подложка видна во всех темах. Оба токена уже входят в
+ * восемь санкционированных алиасов корп-окна (см. блок `.corp-dialog, .corp-dialog-v2` выше),
+ * так что девятый алиас не заводится — используются существующие.
+ */
 [data-slot="segmented-control-v2"].corp-tristate [data-slot="segmented-control-v2-thumb"] {
   top: 2px;
   height: 26px;
   border-radius: 7px;
-  background: var(--surface-weak);
-  box-shadow: none;
+  background: var(--background-bg-base);
+  box-shadow: 0 0 0 0.5px var(--border-border-strong);
 }
 
 /*
  * Тон подложки и значка по действующему режиму. «Спрашивать» — нейтральный, и это верно: он не
  * решение, а отложенное решение. Разрешение и запрет — состояния, о которых надо знать, не
- * вчитываясь: успех и опасность темы.
+ * вчитываясь: успех и опасность темы. Кайма нейтрального состояния явно снимается: у success/danger
+ * подложка уже читается за счёт цвета, и рамка вокруг заливки успеха/опасности здесь не нужна —
+ * вид этих двух режимов не меняется.
  */
 [data-slot="segmented-control-v2"].corp-tristate[data-mode="allow"] [data-slot="segmented-control-v2-thumb"] {
   background: var(--v2-state-bg-success);
+  box-shadow: none;
 }
 
 [data-slot="segmented-control-v2"].corp-tristate[data-mode="deny"] [data-slot="segmented-control-v2-thumb"] {
   background: var(--v2-state-bg-danger);
+  box-shadow: none;
 }
 
 [data-slot="segmented-control-v2"].corp-tristate [data-slot="segmented-control-v2-item"]:where([data-pressed]) {

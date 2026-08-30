@@ -1,8 +1,12 @@
 import {
   createContext,
+  createEffect,
   createMemo,
   createSignal,
   mergeProps,
+  onCleanup,
+  onMount,
+  Show,
   splitProps,
   useContext,
   type Accessor,
@@ -40,11 +44,24 @@ export type SegmentedControlV2Props = Omit<ComponentProps<"div">, "onChange"> &
     /** When true, clicking the active segment clears selection (`onChange(null)`). Default false. */
     allowDeselect?: boolean
     disabled?: boolean
+    /**
+     * corp: подложка активного сегмента ПЕРЕЕЗЖАЕТ между позициями вместо перекраски (S-V23,
+     * ревизия 1.14, макет заказчика от 30.08).
+     *
+     * Отдельный элемент под кнопками получает положение и ширину активного сегмента и двигается к
+     * ним переходом `transform`; фон самого активного сегмента при этом гасится — иначе на экране
+     * оказались бы две подложки, и переезд читался бы как перекраска соседа.
+     *
+     * Пропс необязателен и по умолчанию выключен: прежний вид (перекрашиваемый сегмент) остаётся
+     * поведением по умолчанию, и ни один нынешний вызов компонента не меняется. Второго похожего
+     * компонента рядом не заводится — расширяется этот (требование ТЗ ревизии 1.14).
+     */
+    thumb?: boolean
   }>
 
 export function SegmentedControlV2(props: SegmentedControlV2Props) {
   const isControlled = createMemo(() => Object.hasOwn(props as object, "value"))
-  const merged = mergeProps({ allowDeselect: false, disabled: false }, props)
+  const merged = mergeProps({ allowDeselect: false, disabled: false, thumb: false }, props)
   const [local, rest] = splitProps(merged, [
     "class",
     "classList",
@@ -54,6 +71,7 @@ export function SegmentedControlV2(props: SegmentedControlV2Props) {
     "onChange",
     "allowDeselect",
     "disabled",
+    "thumb",
     "ref",
   ])
 
@@ -94,7 +112,45 @@ export function SegmentedControlV2(props: SegmentedControlV2Props) {
     focusNext,
   }
 
+  /**
+   * corp: геометрия едущей подложки — положение и ширина активного сегмента в пикселях.
+   *
+   * Считается ИЗМЕРЕНИЕМ настоящих кнопок (`offsetLeft`/`offsetWidth`), а не долей от числа
+   * сегментов: сегменты бывают разной ширины, и доля попала бы мимо у любого несимметричного
+   * набора. `undefined` — активного сегмента нет (пустой выбор): подложке нечего показывать, и её
+   * в дереве не появляется.
+   */
+  const [root, setRoot] = createSignal<HTMLDivElement | undefined>()
+  const [geometry, setGeometry] = createSignal<{ left: number; width: number } | undefined>()
+
+  const measure = () => {
+    const el = root()
+    const current = selected()
+    if (!el || current === null) return setGeometry(undefined)
+    const items = Array.from(el.querySelectorAll<HTMLButtonElement>(`button[data-slot="segmented-control-v2-item"]`))
+    const active = items.find((item) => item.dataset["value"] === current)
+    if (!active) return setGeometry(undefined)
+    setGeometry({ left: active.offsetLeft, width: active.offsetWidth })
+  }
+
+  // Переезд запускается сменой выбора; ширина сегментов от выбора не зависит, но зависит от
+  // ширины контейнера, поэтому её пересчитывает наблюдатель размера, а не только смена выбора.
+  createEffect(() => {
+    if (!local.thumb) return
+    void selected()
+    measure()
+  })
+  onMount(() => {
+    if (!local.thumb) return
+    const el = root()
+    if (!el || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => measure())
+    observer.observe(el)
+    onCleanup(() => observer.disconnect())
+  })
+
   const assignRef = (el: HTMLDivElement | undefined) => {
+    setRoot(el)
     const r = local.ref
     if (typeof r === "function") (r as (el: HTMLDivElement | undefined) => void)(el)
     else if (r != null && typeof r === "object" && "value" in r) (r as { value: HTMLDivElement | undefined }).value = el
@@ -108,11 +164,22 @@ export function SegmentedControlV2(props: SegmentedControlV2Props) {
         role="group"
         data-component="segmented-control-v2"
         data-slot="segmented-control-v2"
+        data-thumb={local.thumb ? "" : undefined}
         classList={{
           ...local.classList,
           [local.class ?? ""]: !!local.class,
         }}
       >
+        {/* corp: подложка идёт ПЕРВОЙ и лежит под кнопками — иначе она перекрыла бы их подписи. */}
+        <Show when={local.thumb && geometry()}>
+          {(box) => (
+            <span
+              aria-hidden="true"
+              data-slot="segmented-control-v2-thumb"
+              style={{ transform: `translateX(${box().left}px)`, width: `${box().width}px` }}
+            />
+          )}
+        </Show>
         {local.children}
       </div>
     </SegmentedControlContext.Provider>
@@ -192,6 +259,9 @@ export function SegmentedControlItemV2(props: SegmentedControlItemV2Props) {
       {...rest}
       type="button"
       data-slot="segmented-control-v2-item"
+      // corp: значение сегмента нужно в разметке, чтобы едущая подложка нашла активную кнопку по
+      // нему, а не по порядковому номеру: порядок детей компонент не знает и знать не должен.
+      data-value={local.value}
       data-pressed={pressed() ? "" : undefined}
       aria-pressed={pressed()}
       disabled={disabled()}

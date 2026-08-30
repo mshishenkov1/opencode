@@ -78,3 +78,59 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/*
+ * corp: едущая подложка (`thumb`, ревизия 1.14, макет заказчика от 30.08).
+ *
+ * Требование заказчика буквальное: подложка под активным сегментом ПЕРЕЕЗЖАЕТ между позициями, а
+ * не перекрашивается. Поэтому её рисует отдельный элемент под кнопками, положение и ширину он
+ * получает измерением активной кнопки, а переезд делает переход `transform` — 220 мс и та же
+ * кривая, что в утверждённом макете. Перекраска соседних сегментов при этом гасится: иначе на
+ * экране было бы две подложки и переезд читался бы как смена цвета.
+ *
+ * Правила ограничены `[data-thumb]`: без пропса компонент выглядит и ведёт себя ровно как прежде.
+ */
+[data-slot="segmented-control-v2"]:where([data-thumb]) {
+  position: relative;
+}
+
+[data-slot="segmented-control-v2-thumb"] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 6px;
+  background: var(--background-bg-base);
+  box-shadow: 0 0 0 0.5px var(--border-border-strong);
+  pointer-events: none;
+  z-index: 0;
+  transition:
+    transform 0.22s cubic-bezier(0.32, 0.72, 0, 1),
+    width 0.22s cubic-bezier(0.32, 0.72, 0, 1),
+    background-color 0.22s ease;
+}
+
+/*
+ * «При `prefers-reduced-motion: reduce` — мгновенно, без анимации» (ТЗ ревизии 1.14). Подложка
+ * при этом остаётся подложкой и по-прежнему переставляется, а не исчезает: снимается движение,
+ * а не средство.
+ */
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="segmented-control-v2-thumb"] {
+    transition: none;
+  }
+}
+
+/*
+ * Кнопки лежат НАД подложкой, а собственного фона активная кнопка в этом режиме не получает:
+ * подложка одна, и она едет.
+ */
+[data-slot="segmented-control-v2"]:where([data-thumb]) [data-slot="segmented-control-v2-item"] {
+  position: relative;
+  z-index: 1;
+}
+
+[data-slot="segmented-control-v2"]:where([data-thumb]) [data-slot="segmented-control-v2-item"]:where([data-pressed]) {
+  background: transparent;
+  box-shadow: none;
+}

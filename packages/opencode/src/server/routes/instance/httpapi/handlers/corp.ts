@@ -1297,6 +1297,14 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           error_class: CorpErrors.connectErrorClass({
             local: status.status,
             ...(status.error === undefined ? {} : { message: String(status.error) }),
+            // S-V19 (ревизия 1.14), S-Q9, BUG-I14-001: класс считается по тем же признакам, что и у
+            // карточки каталога (`corp/status.ts::compute`), — правило одно на оба места. Признаки
+            // идут парой: у `mode:"facade"` за `mcp_url` стоит сам Hub, но назвать его можно только
+            // когда адрес Hub в сборке задан (D-43). Без них тот же отказ того же alias получал
+            // здесь `network_unreachable`/`upstream_unavailable`, а на карточке — `hub_unreachable`:
+            // тост Desktop советовал «включите VPN», а витрина секундой позже — «Hub не отвечает».
+            mode: server.mode,
+            hubConfigured: connectInput.hubConfigured,
           }),
         }
       }

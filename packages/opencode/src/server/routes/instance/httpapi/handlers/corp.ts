@@ -1494,8 +1494,8 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // Ветка `modes` уходит до чтения каталога из Hub: в ней Hub не участвует ни на шаг (D-35).
       // Она же — единственная, работающая в сборке без Hub (S-C10 п.7): вид `permission_groups`
       // целиком локален и от источника каталога не зависит.
-      if (ctx.payload.modes !== undefined)
-        return yield* applyPermissionGroups(addr, alias, ctx.payload.modes, ctx.payload.tools)
+      const tools = ctx.payload.tools
+      if (ctx.payload.modes !== undefined) return yield* applyPermissionGroups(addr, alias, ctx.payload.modes, tools)
 
       // Тело `{preset}` подтверждается в Hub (S-V9): без его адреса роут отвечает отказом с
       // названной причиной и **ничего не записывает** ни в конфиг, ни в Hub (S-C10 п.7).

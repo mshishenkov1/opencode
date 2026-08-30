@@ -1,0 +1,23 @@
+{
+  "id": "BUG-I14-001",
+  "related_ac": "AC-182 (S-V19, редакция ревизии 1.14); S-Q9 «правило одно на обе оболочки»",
+  "severity": "medium",
+  "title": "Ответ роута connect объясняет отказ не тем классом, что карточка каталога: у mode:\"facade\" при заданном адресе Hub он говорит «нет связи с сетью» вместо «Hub не отвечает»",
+  "repro_steps": [
+    "Сборка с заданным адресом Hub (OPENCODE_CORP_HUB_URL), карточка каталога с mode: \"facade\"",
+    "Довести MCP-адрес карточки до молчания (соединение не устанавливается) либо до ответа 502",
+    "POST /corp/connectors/<alias>/connect — прочитать error_class ответа",
+    "GET /corp/catalog — прочитать error_class той же карточки"
+  ],
+  "expected": "AC-182 (ревизия 1.14): у карточки mode:\"facade\" при заданном адресе Hub оба вида отказа дают error_class = hub_unreachable — за молчащим mcp_url стоит сам Hub, и назвать его честно (решение заказчика от 30.08: «Hub не отвечает → назвать Hub, а не „сервер“»). Оба места, где класс считается, обязаны давать один ответ на один отказ: правило одно (S-Q9).",
+  "actual": "Роут connect отдаёт network_unreachable (молчание) и upstream_unavailable (502); карточка каталога на том же отказе того же alias отдаёт hub_unreachable. Пользователь видит одно объяснение в тосте сразу после попытки и другое — на карточке секундой позже.",
+  "failing_test": "packages/opencode/src/corp/orchestration.test.ts::оркестрация витрины — классы ошибок подключения (AC-172, AC-180…AC-183) > AC-182: у facade-карточки со сборкой С Hub класс — hub_unreachable (BUG-I14-001)",
+  "stacktrace": "expect(received).toBe(expected)\n  Expected: \"hub_unreachable\"\n  Received: \"network_unreachable\"   (fetch failed: ETIMEDOUT, connect ECONNREFUSED 127.0.0.1:8080)\n  Received: \"upstream_unavailable\" (HTTP 502 Bad Gateway)\n  at packages/opencode/src/corp/orchestration.test.ts, describe «оркестрация витрины — классы ошибок подключения»",
+  "evidence": "Живое наблюдение 31.08 на поднятом стенде. Инстанс 127.0.0.1:4098: статический каталог 127.0.0.1:8123 с карточкой mode:\"facade\", MCP-адрес 127.0.0.1:8299 отвечает 502, OPENCODE_CORP_HUB_URL задан. GET /corp/catalog?refresh=true — hub_configured: true, карточка tagnh (facade) -> error_class \"hub_unreachable\", карточка nativenh (native) -> \"upstream_unavailable\". Тот же инстанс без адреса Hub (порт 4097, OPENCODE_CORP_HUB_URL снят): tagnh -> \"upstream_unavailable\", а при молчащем MCP -> \"network_unreachable\". То есть cardFor признаки читает и различает верно. Роут connect на тех же входах их не читает: развёртка connectErrorClass по 48960 входам с hubConfigured:false даёт {token_rejected, method_unavailable, network_unreachable, upstream_unavailable, unknown}, с hubConfigured:true и mode:\"facade\" — ещё и hub_unreachable.",
+  "suspected_area": "packages/opencode/src/server/routes/instance/httpapi/handlers/corp.ts, ветка неудачи authenticate в роуте connect (около строки 1297): вызов CorpErrors.connectErrorClass({ local, message }) не передаёт ни mode, ни hubConfigured, хотя обе величины в этой же функции уже есть — server взят выше (serverFor), addr.hub тоже (там же строится connectInput = { server, hubConfigured: addr.hub !== undefined }). Для сравнения, packages/opencode/src/corp/status.ts::compute обе величины передаёт. Гипотеза: вызов не был обновлён вместе с расщеплением класса в ревизии 1.14 (коммит dadfb6ae92).",
+  "impact": "Пользователь, у которого не отвечает Hub, получает совет «включите VPN» вместо «подождите несколько минут, дело не в вашем токене». Совет неверный: VPN у него работает, а Hub — нет. На карточке при этом написано верно, и два экрана противоречат друг другу.",
+  "iteration": 14,
+  "status": "open",
+  "found_by": "test-agent, прогон затронутых наборов ревизии 1.14",
+  "notes": "Проверка read-only, класс — одно слово, тела ответов Hub и секреты в него по-прежнему не попадают (AC-180 зелёный). Ветка `code: \"not_found\"` того же роута (карточки нет в каталоге) верна и правки не требует: там ни mode, ни mcp_url не существует. Тест оставлен КРАСНЫМ намеренно — по правилу конвейера баг передаётся воспроизводящим падающим тестом, а не правкой продукта."
+}

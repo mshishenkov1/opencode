@@ -73,8 +73,16 @@ function viewFunction<T extends (...args: never[]) => unknown>(marker: string, .
  * (резолюция TEST-DISPUTE-I14-02). Здесь граница тега считается по-настоящему: `>` засчитывается
  * только вне фигурных скобок и вне строковых литералов.
  */
-function openingTag(source: string, tag: string): string {
-  const at = source.indexOf(tag)
+function openingTags(source: string, tag: string): string[] {
+  const found: string[] = []
+  for (let from = source.indexOf(tag); from !== -1; from = source.indexOf(tag, from + tag.length))
+    found.push(openingTag(source, tag, from))
+  expect(found.length, `элемент ${tag} не найден`).toBeGreaterThan(0)
+  return found
+}
+
+function openingTag(source: string, tag: string, from = 0): string {
+  const at = source.indexOf(tag, from)
   expect(at, `элемент ${tag} не найден`).toBeGreaterThan(-1)
   let depth = 0
   let quote: string | undefined
@@ -243,10 +251,12 @@ describe("корп-окно витрины — размер не зависит 
     const text = read(path.join(APP, "components/corp", "dialog-connectors.tsx"))
     expect(text).toContain("CorpDialog")
     // Экран витрины про размеры не знает: ни размера, ни `fit` он контейнеру не задаёт. Проверяются
-    // пропы САМОГО `CorpDialog`, а не срез исходника до первого `>` (TEST-DISPUTE-I14-02).
-    const tag = openingTag(text, "<CorpDialog")
-    expect(tag).not.toContain("size=")
-    expect(tag).not.toMatch(/\bfit\b/)
+    // пропы САМОГО `CorpDialog`, а не срез исходника до первого `>` (TEST-DISPUTE-I14-02), и у
+    // КАЖДОГО окна файла, а не у первого попавшегося.
+    for (const tag of openingTags(text, "<CorpDialog")) {
+      expect(tag).not.toContain("size=")
+      expect(tag).not.toMatch(/\bfit\b/)
+    }
   })
 
   test("S-D10: общие стили packages/ui ради витрины не правятся", () => {
@@ -277,8 +287,14 @@ describe("витрина и страница — признак «Подключ
     // Текст в ячейке есть всегда и НЕ охраняется ни одним `Show` — значок и цвет его дублируют, а
     // не заменяют: состояние читается в чёрно-белой печати и при дальтонизме.
     expect(cell).toContain("language.t(statusKey(card))")
-    const label = cell.slice(cell.indexOf("language.t(statusKey(card))"))
-    expect(label.slice(0, label.indexOf("</span>"))).not.toContain("<Show")
+    // «Всегда» проверяется буквально: к моменту подписи ни один `Show` не открыт — все, что были
+    // выше (галочка), уже закрыты. Условие вокруг подписи сделало бы состояние невидимым в той
+    // самой ветке, ради которой подпись и нужна.
+    const before = cell.slice(0, cell.indexOf("language.t(statusKey(card))"))
+    expect(
+      (before.split("<Show").length - 1) - (before.split("</Show>").length - 1),
+      "подпись состояния охраняется условием",
+    ).toBe(0)
     // Решение заказчика от 30.08: цветной точки нет ни у одной строки — ни в разметке, ни в стилях.
     expect(cell).not.toContain("corp-status-dot")
     expect(source).not.toContain("corp-status-dot")
@@ -623,9 +639,11 @@ describe("страница коннектора — стек диалогов и
     // Порядок считается в теле САМОЙ страницы: соседние компоненты файла (окно подтверждения,
     // экраны разрешений) несут те же ключи и в порядок блоков страницы не входят.
     const composition = page.slice(page.indexOf("export const DialogConnector: Component"))
+    // Берётся ПЕРВОЕ вхождение каждого маркера, а не первое после предыдущего: иначе блок,
+    // всплывший наверх, но оставивший копию маркера ниже, прошёл бы проверку незамеченным.
     let previous = -1
     for (const marker of order) {
-      const at = composition.indexOf(marker, previous + 1)
+      const at = composition.indexOf(marker)
       expect(at, marker).toBeGreaterThan(previous)
       previous = at
     }
@@ -667,11 +685,16 @@ describe("страница коннектора — стек диалогов и
     // пропы САМОГО окна: заголовок ревизии 1.14 стал строкой, и в пропах появился обработчик со
     // стрелкой `() =>`, чей `>` прежняя мера принимала за конец тега (TEST-DISPUTE-I14-02).
     expect(page).toContain("CorpDialog")
-    const tag = openingTag(page, "<CorpDialog")
-    expect(tag).not.toContain("size=")
-    expect(tag).not.toMatch(/\bfit\b/)
-    // Мера способна поймать нарушение: в собственных пропах окна `size` был бы виден.
-    expect(tag).toContain("title=")
+    // Проверяется КАЖДОЕ корп-окно файла: их там несколько (страница, подтверждение «Убрать из
+    // списка», окно пресетов), и размер не вправе задавать ни одно из них.
+    const tags = openingTags(page, "<CorpDialog")
+    expect(tags.length).toBeGreaterThan(1)
+    for (const tag of tags) {
+      expect(tag).not.toContain("size=")
+      expect(tag).not.toMatch(/\bfit\b/)
+      // Мера способна поймать нарушение: собственные пропы окна из среза не выпали.
+      expect(tag).toContain("title=")
+    }
 
     for (const branch of ["legacy", "v2"] as const) {
       const heights = new Set<string>()

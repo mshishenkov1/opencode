@@ -895,7 +895,21 @@ describe("оркестрация витрины — классы ошибок п
     }),
   )
 
-  it.live("AC-182: сеть и Hub дают hub_unreachable", () =>
+  /**
+   * AC-182 в редакции ревизии 1.14: у карточки `mode:"facade"` при заданном адресе Hub за молчащим
+   * `mcp_url` стоит сам Hub, и класс обязан быть `hub_unreachable`; у прочих способов — свой класс
+   * («ответа не было вовсе» либо «система ответила отказом»).
+   *
+   * ЭТОТ СЛУЧАЙ КРАСНЫЙ И ОСТАВЛЕН КРАСНЫМ НАМЕРЕННО — воспроизводящий тест BUG-I14-001.
+   * `error_class` ответа `connect` считается без `mode` и без `hubConfigured`
+   * (`handlers/corp.ts`, ветка неудачи `authenticate`), хотя обе величины в той же функции уже
+   * есть: `server` взят строкой выше, `addr.hub` — тоже. Из-за этого один и тот же отказ получает
+   * от роута `connect` класс `network_unreachable`/`upstream_unavailable`, а от карточки каталога
+   * (`cardFor`, тот же alias, та же ошибка) — `hub_unreachable`. Расхождение видно пользователю:
+   * тост Desktop (`context/corp.ts`) и строка TUI (`component/corp/dialog-connectors.tsx`) читают
+   * класс ответа `connect`, а витрина секундой позже показывает другое объяснение той же неудачи.
+   */
+  it.live("AC-182: у facade-карточки со сборкой С Hub класс — hub_unreachable (BUG-I14-001)", () =>
     Effect.gen(function* () {
       for (const message of ["fetch failed: ETIMEDOUT", "connect ECONNREFUSED 127.0.0.1:8080", "HTTP 502 Bad Gateway"]) {
         failWith(message)

@@ -791,14 +791,30 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
   const hubConfigured = createMemo(() => catalog.data?.hub_configured !== false)
 
   /**
-   * Подпись ошибки подключения (S-V19): объяснение своего класса плюс код ошибки как есть.
+   * Подпись ошибки подключения (S-V19): объяснение своего класса и ничего сверх него.
    * Класс есть у любой неудачи, включая `unknown`, поэтому необъяснённой ошибки не бывает (D-32).
-   * Ревизией 1.10 изменилось только место показа — блок страницы вместо подписи строки витрины.
+   *
+   * Ревизия 1.14 убрала отсюда код ошибки. До неё код подставлялся прямо в предложение класса
+   * `unknown` («Подключение не удалось: {{code}}») и приписывался в скобках к любому другому, а
+   * приходит он от MCP-службы пустой строкой всякий раз, когда причина ей неизвестна. На экране
+   * оставалось «Подключение не удалось:» — двоеточие, обещавшее причину, и пустота после него.
+   * Теперь основной текст техники не содержит вовсе, а код живёт в подсказке (`details`).
    */
   function explain(entry: CorpCatalogCard): string | undefined {
     if (!entry.error_class && !entry.error) return undefined
-    const text = language.t(connectErrorKey(entry.error_class), { code: entry.error ?? "" })
-    return entry.error ? `${text} (${entry.error})` : text
+    return language.t(connectErrorKey(entry.error_class))
+  }
+
+  /**
+   * Технические подробности ошибки — подсказка при наведении (S-V19, ревизия 1.14).
+   *
+   * Пустого кода не бывает: пустая строка подсказкой не становится, и `title=""` на элементе не
+   * появляется. Пользователю подсказка нужна, чтобы назвать код поддержке, а не чтобы читать её.
+   */
+  function details(entry: CorpCatalogCard): string | undefined {
+    const code = entry.error?.trim()
+    if (!code) return undefined
+    return language.t("corp.error.connect.details", { code })
   }
 
   return (
@@ -965,7 +981,15 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                   <span class="text-14-regular">{language.t(statusKey(entry()))}</span>
                 </span>
                 <Show when={explain(entry())}>
-                  {(value) => <span class="text-12-regular text-text-weak">{value()}</span>}
+                  {(value) => (
+                    <span
+                      class="text-12-regular text-text-weak"
+                      data-slot="corp-connect-explain"
+                      title={details(entry())}
+                    >
+                      {value()}
+                    </span>
+                  )}
                 </Show>
                 <Show when={entry().blocked}>
                   <span class="text-12-regular text-text-weak">{language.t("corp.connectors.stale")}</span>

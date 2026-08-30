@@ -386,12 +386,22 @@ export function useConnectorAction() {
         })
       }
       if (result && "error" in result && result.error) {
-        // S-V19: текст ошибки не показывается голым кодом — рядом идёт объяснение класса.
+        // S-V19, ревизия 1.14: заголовок называет, что случилось, человеческими словами
+        // («Подключение не удалось»), а не общим «Request failed» оболочки; объяснение класса идёт
+        // текстом, код ошибки — отдельным предложением и только когда он есть. Прежде код
+        // подставлялся в текст класса И приписывался в скобках, а приходит он от MCP-службы пустой
+        // строкой всякий раз, когда причина ей неизвестна: пользователь видел двоеточие и пустоту.
+        const code = result.error.trim()
         const explained =
           "error_class" in result && result.error_class
-            ? `${language.t(connectErrorKey(result.error_class), { code: result.error })} (${result.error})`
-            : result.error
-        showToast({ variant: "error", title: language.t("common.requestFailed"), description: explained })
+            ? language.t(connectErrorKey(result.error_class))
+            : language.t(connectErrorKey(undefined))
+        const details = code ? language.t("corp.error.connect.details", { code }) : undefined
+        showToast({
+          variant: "error",
+          title: language.t("corp.connectors.neverConnected"),
+          description: details ? `${explained}. ${details}` : explained,
+        })
       }
       // S-V27 п.2: исход отзыва выпущенного токена — закрытый набор из четырёх значений. `skipped`
       // («звать было некого») не показывает ничего; прочие три различимы и сливать их запрещено.
@@ -436,7 +446,14 @@ const ERROR_KEYS = [
   "invalid_request",
 ] as const
 
-const CONNECT_ERROR_CLASSES = ["token_rejected", "method_unavailable", "hub_unreachable", "unknown"] as const
+const CONNECT_ERROR_CLASSES = [
+  "token_rejected",
+  "method_unavailable",
+  "network_unreachable",
+  "upstream_unavailable",
+  "hub_unreachable",
+  "unknown",
+] as const
 
 /**
  * Ключ словаря по классу ошибки подключения (S-V19, S-I1).

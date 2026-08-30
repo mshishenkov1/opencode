@@ -177,11 +177,20 @@ const ru = {
   "error.invalid_request": "Некорректный запрос",
   "error.unknown": "Неизвестная ошибка",
 
-  "error.connect.token_rejected": "Доступ не подтверждён: сервер не принял вашу авторизацию",
+  // Ревизия 1.14: прежний общий `hub_unreachable` расщеплён на три — «связи нет вовсе»,
+  // «система ответила отказом» и «не ответил Hub», — потому что совет пользователю у них разный.
+  // Тексты дословно совпадают со словарём Desktop: их читает один и тот же человек (S-I4).
+  "error.connect.token_rejected":
+    "Токен не подошёл. Скопируйте токен заново из личного кабинета — старый мог истечь",
   "error.connect.method_unavailable":
     "Этим способом коннектор сейчас подключить нельзя — вопрос решается на стороне сервера",
-  "error.connect.hub_unreachable": "Связаться с сервисом не удалось, ваши настройки ни при чём",
-  "error.connect.unknown": "Подключение не удалось",
+  "error.connect.network_unreachable":
+    "Нет связи с корпоративной сетью: ответа не было вовсе. Включите VPN и попробуйте снова",
+  "error.connect.upstream_unavailable":
+    "Сервис сейчас недоступен. Это не про ваш токен — попробуйте через несколько минут",
+  "error.connect.hub_unreachable": "Hub не отвечает. Это не про ваш токен — попробуйте через несколько минут",
+  "error.connect.unknown": "Подключиться не удалось, а причину система не назвала. Попробуйте ещё раз",
+  "error.connect.details": "Код ошибки: {{code}}",
 
   "upgrade.disabled":
     "Обновление корпоративной сборки выполняется централизованно: новую версию нужно взять у распространителя сборки",
@@ -343,11 +352,18 @@ const en: Record<Key, string> = {
   "error.invalid_request": "Invalid request",
   "error.unknown": "Unknown error",
 
-  "error.connect.token_rejected": "Access was not confirmed: the server rejected your authorization",
+  "error.connect.token_rejected":
+    "The token was not accepted. Copy the token again from your account — the old one may have expired",
   "error.connect.method_unavailable":
     "This connector cannot be connected this way right now — it is resolved on the server side",
-  "error.connect.hub_unreachable": "The service could not be reached; your settings are not at fault",
-  "error.connect.unknown": "Connection failed",
+  "error.connect.network_unreachable":
+    "No connection to the corporate network: there was no answer at all. Turn on the VPN and try again",
+  "error.connect.upstream_unavailable":
+    "The service is unavailable right now. This is not about your token — try again in a few minutes",
+  "error.connect.hub_unreachable":
+    "The Hub is not answering. This is not about your token — try again in a few minutes",
+  "error.connect.unknown": "The connection failed and the system named no reason. Try again",
+  "error.connect.details": "Error code: {{code}}",
 
   "upgrade.disabled": "Corporate builds are updated centrally: get the new version from whoever distributes the build",
 }

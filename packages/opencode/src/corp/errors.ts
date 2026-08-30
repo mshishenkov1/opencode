@@ -67,7 +67,19 @@ export function fromResponse(status: number, body: unknown, overrides?: Partial<
  * класс — это нормально. Класс определяется **всегда**: неотнесённая ошибка получает `unknown`,
  * у которого тоже есть и текст, и предлагаемое действие; «ошибка без объяснения» — дефект.
  */
-export const ERROR_CLASSES = ["token_rejected", "method_unavailable", "hub_unreachable", "unknown"] as const
+export const ERROR_CLASSES = [
+  "token_rejected",
+  "method_unavailable",
+  // Ревизия 1.14 расщепила прежний общий `hub_unreachable` на три: «связи нет вовсе»,
+  // «система ответила отказом» и «не ответил Hub». Прежде все три давали один текст
+  // («Связаться с сервисом не удалось»), и он отвечал ровно на один вопрос из двух: что
+  // случилось — да, что делать — нет. Совет у них разный: включить VPN, подождать несколько
+  // минут и подождать несколько минут, зная, что дело в Hub, — это три разных действия.
+  "network_unreachable",
+  "upstream_unavailable",
+  "hub_unreachable",
+  "unknown",
+] as const
 
 export type ErrorClass = (typeof ERROR_CLASSES)[number]
 
@@ -97,8 +109,15 @@ const METHOD_PATTERNS =
   /client[ _-]?registration|\bdcr\b|dynamic client|registration (?:failed|not|is not)|needs_client_registration|not supported|unsupported|no mcp_url|missing mcp_url|method[ _-]?unavailable/
 const TOKEN_PATTERNS =
   /invalid_grant|access_denied|invalid_token|invalid_client|needs_reauth|unauthorized|forbidden|\b401\b|\b403\b/
+/**
+ * Признаки «система ответила, но отказом»: код 5xx и его словесные формы. Проверяются **раньше**
+ * сетевых, потому что «gateway timeout» содержит слово `timeout`, а ответ был.
+ */
+const UPSTREAM_PATTERNS = /bad gateway|service unavailable|gateway time-?out|internal server error|\b5\d\d\b/
+
+/** Признаки «ответа не было вовсе»: связи нет, имя не разрешилось, соединение оборвалось. */
 const NETWORK_PATTERNS =
-  /timeout|timed ?out|network|fetch failed|econnrefused|econnreset|enotfound|socket hang up|bad gateway|service unavailable|\b5\d\d\b/
+  /timeout|timed ?out|network|fetch failed|econnrefused|econnreset|enotfound|eai_again|socket hang up|unable to connect/
 
 /**
  * Класс ошибки подключения (S-V19).
@@ -114,7 +133,22 @@ export function connectErrorClass(input: {
   /** Статус подключения в каталоге Hub: `needs_reauth` сам по себе означает «авторизация не принята». */
   connection?: string
   message?: string
+  /**
+   * Способ подключения карточки (S-V7). У `mode:"facade"` за `mcp_url` стоит сам Hub, поэтому
+   * молчание того адреса — это молчание Hub, и назвать его так честно. У прочих способов адрес
+   * принадлежит целевой системе, и слово «Hub» в объяснении было бы выдумкой.
+   */
+  mode?: string
+  /**
+   * Задан ли адрес Hub в этой сборке (S-C10 п.7, D-43). Без него `hub_unreachable` не выдаётся ни
+   * при каком сообщении: в сборке без Hub называть Hub нечем и незачем — там нет ни адреса, ни
+   * сущности, о которой шла бы речь.
+   */
+  hubConfigured?: boolean
 }): ErrorClass {
+  // Молчащий адрес принадлежит Hub тогда и только тогда, когда карточка ходит через фасад и адрес
+  // Hub в сборке задан. Оба условия обязательны: одно без другого назвало бы Hub наугад.
+  const viaHub = input.mode === "facade" && input.hubConfigured !== false
   if (input.local === "needs_client_registration") return "method_unavailable"
   if (input.code !== undefined) {
     const byCode = CLASS_BY_CODE[input.code]
@@ -124,7 +158,8 @@ export function connectErrorClass(input: {
   if (message) {
     if (METHOD_PATTERNS.test(message)) return "method_unavailable"
     if (TOKEN_PATTERNS.test(message)) return "token_rejected"
-    if (NETWORK_PATTERNS.test(message)) return "hub_unreachable"
+    if (UPSTREAM_PATTERNS.test(message)) return viaHub ? "hub_unreachable" : "upstream_unavailable"
+    if (NETWORK_PATTERNS.test(message)) return viaHub ? "hub_unreachable" : "network_unreachable"
   }
   // Проверяется последней: конкретная местная ошибка знает о причине больше, чем пометка Hub.
   // Но если местной ошибки нет вовсе, `needs_reauth` — не «неизвестно», а прямо названная причина

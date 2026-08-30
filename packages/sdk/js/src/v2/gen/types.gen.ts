@@ -2398,7 +2398,13 @@ export type CorpCatalogCard = {
   auth_methods?: Array<CorpAuthMethodView>
   has_credentials?: boolean
   error?: string
-  error_class?: "token_rejected" | "method_unavailable" | "hub_unreachable" | "unknown"
+  error_class?:
+    | "token_rejected"
+    | "method_unavailable"
+    | "network_unreachable"
+    | "upstream_unavailable"
+    | "hub_unreachable"
+    | "unknown"
   hub_url?: string
 }
 
@@ -2435,7 +2441,13 @@ export type CorpConnectorResult = {
   alias: string
   status: "connected" | "needs_auth" | "not_connected" | "unavailable"
   error?: string
-  error_class?: "token_rejected" | "method_unavailable" | "hub_unreachable" | "unknown"
+  error_class?:
+    | "token_rejected"
+    | "method_unavailable"
+    | "network_unreachable"
+    | "upstream_unavailable"
+    | "hub_unreachable"
+    | "unknown"
   revoke?: "skipped" | "revoked" | "not_revoked" | "unreachable"
   hub_error?:
     | "corp_disabled"

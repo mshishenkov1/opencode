@@ -1180,9 +1180,12 @@ export const dict = {
   "corp.connect.verify.verifiedAs": "Connected as {{account}}",
   "corp.connect.verify.accountMissing":
     "The system accepted the request but named no user — the token is not confirmed",
-  "corp.connect.verify.tokenRejected": "The target system rejected the token",
-  "corp.connect.verify.verifyFailed": "The check failed: the system answered with code {{status}}",
-  "corp.connect.verify.unreachable": "The system could not be reached",
+  "corp.connect.verify.tokenRejected":
+    "The token was not accepted. Copy the token again from your account — the old one may have expired",
+  "corp.connect.verify.verifyFailed":
+    "The service is unavailable right now: it answered with code {{status}}. This is not about your token — try again in a few minutes",
+  "corp.connect.verify.unreachable":
+    "No connection to the corporate network: the system did not answer at all. Turn on the VPN and try again",
   "corp.connect.exchange.exchanged": "A permanent token was issued",
   "corp.connect.exchange.denied":
     "Issuing a permanent token is not allowed — the connection works on the token you entered",
@@ -1245,17 +1248,25 @@ export const dict = {
   "corp.error.invalid_request": "Invalid request",
   "corp.error.unknown": "Unknown error",
 
-  // \u0422\u0440\u0438 \u0438\u0437 \u0447\u0435\u0442\u044b\u0440\u0451\u0445 \u043a\u043b\u0430\u0441\u0441\u043e\u0432 \u0434\u043e\u0441\u0442\u0438\u0436\u0438\u043c\u044b \u0443 `native`-\u043a\u0430\u0440\u0442\u043e\u0447\u0435\u043a **\u0431\u0435\u0437** Hub (\u043e\u0442\u043a\u0430\u0437 \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u0438 \u0441\u0430\u043c\u043e\u0433\u043e
-  // MCP-\u0441\u0435\u0440\u0432\u0435\u0440\u0430, \u043e\u0442\u043a\u0430\u0437 DCR, \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u043e\u0441\u0442\u044c \u0441\u0435\u0442\u0438), \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u044f \u043d\u0430\u0437\u0432\u0430\u043d\u044b \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a-\u043d\u0435\u0439\u0442\u0440\u0430\u043b\u044c\u043d\u043e:
-  // \u00ab\u0441\u0435\u0440\u0432\u0435\u0440\u00bb \u0432\u043c\u0435\u0441\u0442\u043e \u00abHub\u00bb (S-V19, D-43). \u0422\u0435\u043a\u0441\u0442 \u043e\u0434\u0438\u043d \u043d\u0430 \u043e\u0431\u0435 \u0441\u0431\u043e\u0440\u043a\u0438 \u2014 \u0441\u043e\u0432\u0435\u0442 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044e \u0432 \u043d\u0438\u0445
-  // \u043e\u0434\u0438\u043d\u0430\u043a\u043e\u0432 (D-32), \u0430 \u0432 \u0441\u0431\u043e\u0440\u043a\u0435 \u0441 Hub \u043e\u0431\u044a\u044f\u0441\u043d\u0435\u043d\u0438\u0435 \u043e\u0441\u0442\u0430\u0451\u0442\u0441\u044f \u0432\u0435\u0440\u043d\u044b\u043c: Hub \u2014 \u0442\u043e\u0436\u0435 \u0441\u0435\u0440\u0432\u0435\u0440.
-  // \u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440\u044b \u043a\u043b\u0430\u0441\u0441\u043e\u0432 (`error_class = "hub_unreachable"`) \u043f\u0440\u0438 \u044d\u0442\u043e\u043c \u043d\u0435 \u043c\u0435\u043d\u044f\u044e\u0442\u0441\u044f: \u043a\u043e\u0434\u044b \u043d\u0430\u0437\u0432\u0430\u043d\u044b
-  // \u0434\u043b\u044f \u043c\u0430\u0448\u0438\u043d\u044b, \u0430 \u043d\u0435 \u0434\u043b\u044f \u0447\u0438\u0442\u0430\u0442\u0435\u043b\u044f \u044d\u043a\u0440\u0430\u043d\u0430 (S-A5).
-  "corp.error.connect.token_rejected": "Access was not confirmed: the server rejected your authorization",
+  // Каждый класс отвечает на два вопроса — что случилось и что теперь делать (S-V19, D-32), — и
+  // ревизия 1.14 расщепила прежний общий `hub_unreachable` ровно потому, что на второй вопрос он
+  // отвечал одинаково там, где ответы разные: включить VPN, подождать и подождать, зная про Hub.
+  // Слово «Hub» есть ровно в одном тексте, и класс этот выдаётся только у карточки `mode:"facade"`
+  // при заданном адресе Hub, поэтому D-43 выполняется: в сборке без Hub он недостижим.
+  // Технических подробностей в основном тексте нет ни у одного класса, включая `unknown`: код
+  // ошибки живёт в подсказке при наведении (`corp.error.connect.details`).
+  "corp.error.connect.token_rejected":
+    "The token was not accepted. Copy the token again from your account — the old one may have expired",
   "corp.error.connect.method_unavailable":
-    "This connector cannot be connected this way right now \u2014 it is resolved on the server side",
-  "corp.error.connect.hub_unreachable": "The service could not be reached; your settings are not at fault",
-  "corp.error.connect.unknown": "Connection failed: {{code}}",
+    "This connector cannot be connected this way right now — it is resolved on the server side",
+  "corp.error.connect.network_unreachable":
+    "No connection to the corporate network: there was no answer at all. Turn on the VPN and try again",
+  "corp.error.connect.upstream_unavailable":
+    "The service is unavailable right now. This is not about your token — try again in a few minutes",
+  "corp.error.connect.hub_unreachable":
+    "The Hub is not answering. This is not about your token — try again in a few minutes",
+  "corp.error.connect.unknown": "The connection failed and the system named no reason. Try again",
+  "corp.error.connect.details": "Error code: {{code}}",
 
   "corp.upgrade.disabled":
     "Corporate builds are updated centrally: get the new version from whoever distributes the build",

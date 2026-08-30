@@ -80,6 +80,19 @@ export interface Card {
 const NEEDS_AUTH_LOCAL: ReadonlySet<string> = new Set(["needs_auth", "needs_client_registration"])
 
 /**
+ * Текст ошибки локального статуса, если он есть (S-V19).
+ *
+ * Пустая строка ошибкой **не является** и наружу не уходит: MCP-служба отдаёт `error: ""` там, где
+ * причина ей неизвестна, и это ровно то же самое, что отсутствие поля. Разница между ними была
+ * видна пользователю: оболочка подставляла пустое значение в объяснение и показывала
+ * «Подключение не удалось:» с пустотой после двоеточия. Двоеточие обещало причину, которой нет.
+ */
+function nonEmpty(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed
+}
+
+/**
  * Действия по состоянию (S-V16). Таблица здесь одна на обе оболочки: и TUI, и Desktop берут набор
  * отсюда и сами его не вычисляют (S-T10), поэтому разойтись они не могут по построению.
  *
@@ -155,11 +168,11 @@ export function compute(input: Input): Card {
   if (input.local === "failed") {
     // Правило 3 (D-11): `failed` ближе к «недоступен», чем к «требуется авторизация».
     status = "unavailable"
-    error = input.localError
+    error = nonEmpty(input.localError)
   } else if ((input.local && NEEDS_AUTH_LOCAL.has(input.local)) || connection === "needs_reauth") {
     // Правило 4.
     status = "needs_auth"
-    error = input.local === "needs_client_registration" ? input.localError : undefined
+    error = input.local === "needs_client_registration" ? nonEmpty(input.localError) : undefined
   } else if (input.local === "connected") {
     // Правило 5.
     status = "connected"
@@ -232,6 +245,11 @@ export function compute(input: Input): Card {
           ...(input.local === undefined ? {} : { local: input.local }),
           ...(connection === undefined ? {} : { connection }),
           ...(error === undefined ? {} : { message: error }),
+          // S-V19, ревизия 1.14: у карточки `mode:"facade"` за MCP-адресом стоит Hub, и молчание
+          // того адреса честно называть молчанием Hub. Оба признака идут парой — без адреса Hub в
+          // сборке слово «Hub» не появляется ни в одном объяснении (D-43).
+          ...(input.server?.mode === undefined ? {} : { mode: input.server.mode }),
+          ...(input.hubConfigured === undefined ? {} : { hubConfigured: input.hubConfigured }),
         })
       : undefined
 

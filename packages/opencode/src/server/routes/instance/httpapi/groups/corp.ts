@@ -113,7 +113,30 @@ export class CorpStorageUnavailableError extends Schema.ErrorClass<CorpStorageUn
 )({ error: Schema.Literal("storage_unavailable"), message: Schema.String }, { httpApiStatus: 500 }) {}
 
 export const TeamPayload = Schema.Struct({ team_id: Schema.String })
-export const ConnectPayload = Schema.Struct({ preset: Schema.optional(Schema.String) })
+
+/**
+ * Тело фасадного подключения (S-V7 шаг 1): `{preset?: string}` — и **тело целиком необязательно**.
+ *
+ * Единственное поле необязательно, поэтому у действия «Подключить» без выбранного пресета тела нет
+ * вовсе: сгенерированный клиент выбрасывает пустой слот (`stripEmptySlots` в `core/params.gen.ts`)
+ * и шлёт `POST` без `body`. Прежняя схема требовала объект, и такой запрос получал
+ * `400 {"message":"Expected object, got undefined","kind":"Payload"}` — то есть **фасадное
+ * подключение не работало вовсе**: именно так подключаются Jira и Confluence в каталоге заказчика.
+ *
+ * Отсутствие тела и `{}` теперь значат одно и то же — «пресет не выбран, берётся умолчание»
+ * (`CorpStatus.DEFAULT_PRESET`). Чинится это здесь, а не подпоркой в клиенте: клиент
+ * сгенерирован, правка в нём стёрлась бы следующей генерацией, а необязательное тело у роута с
+ * единственным необязательным полем — то, чем контракт и был на самом деле.
+ */
+export const ConnectBody = Schema.Struct({ preset: Schema.optional(Schema.String) })
+
+/**
+ * Схем у тела ДВЕ, а не одна объединённая: пустое тело превращается в `null` только когда среди
+ * схем эндпоинта есть схема, кодируемая в `null` (`nullOnEmpty` в `HttpApiBuilder`). Один
+ * `Schema.Union([...])` на этом месте разбором не помогает — он остаётся одной схемой, пустое тело
+ * остаётся `undefined`, и роут отвечает тем же `400`.
+ */
+export const ConnectPayload = [ConnectBody, Schema.Null]
 
 /**
  * Тело роута прав (S-V1, ревизия 1.10) — два взаимоисключающих вида.

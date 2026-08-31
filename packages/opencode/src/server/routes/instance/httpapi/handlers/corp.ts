@@ -769,11 +769,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
                 permission_state: CorpConnectors.permissionState(server.alias, groups.groups, permission),
                 // Ревизия 1.14: экран разрешений рисует строку на инструмент, и режим каждой строки
                 // считает тот же сервер тем же правилом — клиент его не выводит из режима группы.
-                permission_tool_state: CorpConnectors.permissionToolState(
-                  server.alias,
-                  groups.groups,
-                  permission,
-                ),
+                permission_tool_state: CorpConnectors.permissionToolState(server.alias, groups.groups, permission),
               }),
           ...(server.connection === undefined ? {} : { connection_status: server.connection.status }),
           ...(server.connection?.preset === undefined ? {} : { preset: server.connection.preset }),
@@ -1248,10 +1244,34 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       }
     })
 
+    /**
+     * Отказ браузерного шага — в канал ошибок, а не в дефект (S-V19, S-Q9; BUG фасадного подключения).
+     *
+     * `MCP.startAuth` завершает попытку `Effect.die(error)` на всём, что не является ожидаемым
+     * `UnauthorizedError` (`mcp/index.ts`): отказ DCR, недоступный сервер, ответ не той формы. Дефект
+     * идёт мимо канала ошибок, поэтому `Effect.catch` вокруг вызова его не ловил, и роут отвечал
+     * `500 UnknownError` — «Unexpected server error», то есть текстом про поломку приложения там, где
+     * на самом деле не ответила целевая система. Наблюдение на стенде: `POST …/connect` фасадной
+     * карточки → `500 {"name":"UnknownError"}`, в логе — `ServerError` из `registerClient`.
+     *
+     * Чинится **на стороне корп-кода**, а не в `mcp/index.ts`, и причина названа: типизированный
+     * отказ `startAuth` расширил бы канал ошибок upstream-роута `POST /mcp/:A/auth/authenticate`, а
+     * его файл править запрещено (S-V28 п.5, AC-345). Дефект здесь не проглатывается: его текст
+     * доезжает до поля `error` ответа и до класса отказа `error_class` (S-V19) ровно тем же путём,
+     * каким доезжал бы обычный отказ, — пользователь получает человеческий текст класса, а
+     * техническая строка остаётся в подсказке.
+     */
+    const authFailure = <A, R>(effect: Effect.Effect<A, unknown, R>) =>
+      effect.pipe(Effect.catchDefect((defect: unknown) => Effect.fail(defect)))
 
     const connect = Effect.fn("CorpHttpApi.connect")(function* (ctx: {
       params: { alias: string }
-      payload: { preset?: string }
+      /**
+       * Тела может не быть вовсе (S-V7 шаг 1): у «Подключить» без выбранного пресета клиент
+       * пустой слот выбрасывает и шлёт `POST` без `body`. Отсутствие тела и `{}` значат одно и то
+       * же — пресет не выбран, берётся умолчание.
+       */
+      payload: { preset?: string } | null
     }) {
       const addr = yield* requireCatalog()
       const alias = ctx.params.alias
@@ -1298,7 +1318,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       if (addr.hub === undefined && server.mode === "facade")
         return yield* new CorpBadRequestError({ error: "facade_needs_hub" })
 
-      const preset = ctx.payload.preset ?? CorpStatus.DEFAULT_PRESET
+      const preset = ctx.payload?.preset ?? CorpStatus.DEFAULT_PRESET
       const patch = CorpConnectors.connectPatch(server, preset)
       // Шаг 1 (D-7): персист через updateGlobal, а не через runtime-only POST /mcp/:name/connect (F17).
       yield* configSvc.updateGlobal(patch)
@@ -1306,9 +1326,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       yield* dropMemo()
 
       // Шаг 2: штатный MCP-OAuth сервера — браузер и ожидание callback 19876 (F15/F16).
-      const status = yield* mcpSvc
-        .authenticate(alias)
-        .pipe(Effect.catch((error) => Effect.succeed({ status: "failed" as const, error: String(error) })))
+      const status = yield* authFailure(mcpSvc.authenticate(alias)).pipe(
+        Effect.catch((error) => Effect.succeed({ status: "failed" as const, error: String(error) })),
+      )
       if (status.status === "failed" || status.status === "needs_client_registration") {
         // Шаг 4: запись mcp.<alias> остаётся, чтобы повтор был в один клик. Признак «подключение
         // состоялось» (S-V15) при этом не выставляется — попытка не удалась.
@@ -1660,7 +1680,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         server === undefined ||
         CorpStatus.nativeConnectDisabled({ server, hubConfigured: true })
       if (reauth && !oauthClosed) {
-        yield* mcpSvc.authenticate(alias).pipe(Effect.catch(() => Effect.void))
+        yield* authFailure(mcpSvc.authenticate(alias)).pipe(Effect.catch(() => Effect.void))
       }
       return {
         alias,

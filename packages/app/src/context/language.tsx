@@ -164,16 +164,12 @@ const localeMatchers: Array<{ locale: Locale; match: (language: string) => boole
   { locale: "tr", match: (language) => language.startsWith("tr") },
 ]
 
-// corp: язык по умолчанию — русский в корпоративной сборке НЕЗАВИСИМО от языка системы
-// (S-I2, решение заказчика от 31.08). Приоритетнее корп-умолчания остаётся только явный выбор
-// пользователя (localStorage), он же переживает перезапуск. Прежняя редакция правила ставила
-// совпадение с navigator.languages выше корп-умолчания, из-за чего английская система давала
-// английский интерфейс поверх русских данных каталога. В ванильной сборке ничего не меняется:
-// определение по navigator.languages и значение "en" остаются прежними.
+// corp: язык по умолчанию — русский в корпоративной сборке (S-I2). Явный выбор пользователя
+// (localStorage) и совпадение с navigator.languages по-прежнему имеют приоритет; в ванильной
+// сборке значение прежнее — "en".
 const fallbackLocale = (): Locale => (corpBuildEnabled ? "ru" : "en")
 
 function detectLocale(): Locale {
-  if (corpBuildEnabled) return "ru"
   if (typeof navigator !== "object") return fallbackLocale()
 
   const languages = navigator.languages?.length ? navigator.languages : [navigator.language]

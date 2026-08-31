@@ -110,6 +110,10 @@ const ru = {
   "connectors.methodUnavailable.oauthDisabled":
     "Подключение через OAuth пока недоступно: приложение авторизации ещё не выдано",
   "connectors.methodUnavailable.envHeader": "Этот способ подключения требует значения, которого нет у приложения",
+  // Общая причина неактивного «Подключить» (S-V28 п.4; решение заказчика от 31.08): способ не
+  // называется, слова «OAuth» пользователь не видит. Ключ `…oauthDisabled` остаётся — им отвечает
+  // роут на запрос мимо интерфейса и он же вернётся на экран после снятия запрета.
+  "connectors.connectMethodNotConfigured": "Способ подключения пока не настроен",
   "connect.title": "Подключение",
   "connect.chooseMethod": "Способ подключения",
   "connect.docs": "Где взять токен",
@@ -286,6 +290,8 @@ const en: Record<Key, string> = {
   "connectors.methodUnavailable.oauthDisabled":
     "Connecting via OAuth is not available yet: the authorization application has not been issued",
   "connectors.methodUnavailable.envHeader": "This connection method requires a value the app does not have",
+  // Общая причина неактивного «Подключить» (S-V28 п.4; решение заказчика от 31.08). См. ru.
+  "connectors.connectMethodNotConfigured": "No connection method is set up yet",
   "connect.title": "Connection",
   "connect.chooseMethod": "Connection method",
   "connect.docs": "Where to get the token",

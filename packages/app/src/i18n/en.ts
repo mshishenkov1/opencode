@@ -1162,6 +1162,9 @@ export const dict = {
   "corp.connectors.methodUnavailable.oauthDisabled":
     "Connecting via OAuth is not available yet: the authorization application has not been issued",
   "corp.connectors.methodUnavailable.envHeader": "This connection method requires a value the app does not have",
+  // Общая причина неактивного «Подключить» (S-V28 п.4; решение заказчика от 31.08): способ не
+  // называется, слова «OAuth» в интерфейсе нет. См. комментарий в ru.ts.
+  "corp.connectors.connectMethodNotConfigured": "No connection method is set up yet",
 
   // Форма подключения (S-D13).
   // Заголовок шапки формы (макет заказчика, экран 4): «Подключение <имя>», а не голое «Подключение».

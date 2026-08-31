@@ -92,16 +92,24 @@ const connectUnavailableKey = new Function("card", block("export function connec
 }) => string | undefined
 
 /**
- * AC-312 в переформулировке решения заказчика от 31.08 (макет, экран 4).
+ * AC-312 в переформулировке решений заказчика от 31.08 (макет, экран 4).
  *
- * Что изменилось: критерий выбора идёт по числу ДОСТУПНЫХ способов, а не по общему их числу, и
- * недоступный способ переехал из ряда выбора под форму. Прежняя мера закрепляла обратное — «два
- * способа в любом сочетании доступности дают список», то есть у карточки ТЭГ, где OAuth закрыт
- * администратором, над формой висел выбор из одного нажимаемого элемента и одного серого.
+ * **Первое решение (утро 31.08).** Критерий выбора идёт по числу ДОСТУПНЫХ способов, а не по общему
+ * их числу. Прежняя мера закрепляла обратное — «два способа в любом сочетании доступности дают
+ * список», то есть у карточки ТЭГ, где OAuth закрыт администратором, над формой висел выбор из
+ * одного нажимаемого элемента и одного серого.
  *
- * Что НЕ ослаблено: требование S-V28 п.4 «недоступный способ не прячется» проверяется здесь же и
- * строже прежнего — мера смотрит не только на то, что он отрисован, но и на то, что рядом с ним
- * названа причина, и что поля ввода у него по-прежнему нет.
+ * **Второе решение (31.08, дословно).** «Не упоминай подключение через OAuth сейчас в сборке,
+ * конечному пользователю это не нужно, просто сохрани возможность подключения по OAuth в коде, но
+ * пока не скажу, что есть приложения, и не пришлю их данные — не включай их». Способ с
+ * `available: false` не рисуется НИГДЕ: ни элементом выбора, ни приглушённой строкой под формой, ни
+ * названием в строке свойств. Прежняя редакция S-V28 п.4 требовала обратного («недоступный способ
+ * не прячется»), и мера сторожила именно показ; теперь она сторожит отсутствие показа.
+ *
+ * Что НЕ ослаблено. Разбор способов не тронут: `available` считает сервер (S-V28 п.3), поле ввода
+ * достаётся только выбранному ИЗ ДОСТУПНЫХ способу, а роут по-прежнему отказывает `409` на попытку
+ * подключиться недоступным способом мимо интерфейса (S-V28 п.5) — эти меры стоят там же, где
+ * стояли, и ослаблению не подвергались.
  */
 describe("dialog-connector — методChoice: четыре случая S-V28 п.4 (AC-312)", () => {
   test("AC-312: доступных нет ни одного → \"none\" (случай 4: формы нет)", () => {
@@ -153,20 +161,20 @@ describe("dialog-connector — методChoice: четыре случая S-V28
     expect(row).not.toContain("disabled=")
   })
 
-  test("AC-312, S-V28 п.4: недоступный способ НЕ спрятан — он назван под формой вместе с причиной", () => {
-    const at = source.indexOf('data-slot="corp-connect-methods-unavailable"')
-    expect(at, "блок недоступных способов под формой не найден").toBeGreaterThan(-1)
-    // Блок рисуется тогда и только тогда, когда недоступные способы есть, — пустого места не остаётся.
-    expect(source.lastIndexOf("<Show when={unavailable().length > 0}>", at)).toBeGreaterThan(-1)
-    const block = source.slice(at, source.indexOf("</Show>", at))
-    expect(block).toContain("<For each={unavailable()}>")
-    // Названо и то, ЧТО за способ, и ПОЧЕМУ им сейчас нельзя: одного названия без причины мало.
-    expect(block).toContain("{method.title}")
-    expect(block).toContain("method.unavailable_reason ?? language.t(methodUnavailableKey(method.unavailable_code))")
-    expect(block).toContain('data-slot="corp-connect-method-reason"')
-    // Поля ввода у недоступного способа нет: оно рисуется под `Show when={selected()}`, а `selected`
-    // выбирается ИЗ ДОСТУПНЫХ — недоступный способ в него не попадает по построению.
-    expect(block).not.toContain('data-slot="corp-connect-token"')
+  test("AC-312, S-V28 п.4: недоступный способ не рисуется НИГДЕ — ни блока под формой, ни строк причин", () => {
+    // Мера перенацелена решением заказчика от 31.08 (см. заголовок describe). Прежняя редакция
+    // требовала блока `corp-connect-methods-unavailable` со строками «способ — причина» ПОД формой;
+    // теперь недоступный способ не показывается вовсе, и мера сторожит именно отсутствие.
+    expect(source).not.toContain('data-slot="corp-connect-methods-unavailable"')
+    expect(source).not.toContain('data-slot="corp-connect-method-reason"')
+    expect(source).not.toContain("unavailable().length > 0")
+    expect(source).not.toContain("<For each={unavailable()}>")
+    // Ни имени способа, ни текста его причины из каталога в файле не остаётся: поля
+    // `unavailable_reason` и `unavailable_code` элемента `auth_methods` не читаются ни в одной точке.
+    expect(source).not.toContain("unavailable_reason")
+    expect(source).not.toContain("methodUnavailableKey")
+    // Что НЕ ослаблено: способ по-прежнему выбирается ИЗ ДОСТУПНЫХ, то есть поле ввода недоступному
+    // способу не достаётся ни при каком составе карточки — оно рисуется под `Show when={selected()}`.
     // Искать от объявления САМОЙ формы: имя `selected` встречается и у прежнего экрана пресетов выше.
     const formAt = source.indexOf("const ConnectorConnect: Component<")
     expect(formAt, "компонент формы подключения не найден").toBeGreaterThan(-1)
@@ -176,6 +184,17 @@ describe("dialog-connector — методChoice: четыре случая S-V28
     expect(selected).toContain("available().find(")
     expect(selected).toContain("available()[0]")
     expect(selected).not.toContain("methods()[")
+  })
+
+  test("AC-312: строка свойств «Способ подключения» называет только ДОСТУПНЫЙ способ", () => {
+    // Та же граница, что у формы: закрытый способ не показывается и здесь. Прежний откат на первый
+    // объявленный способ печатал в свойствах имя закрытого OAuth — «нигде» решения заказчика
+    // включает и строку свойств.
+    const at = source.indexOf("export function connectionMethodTitle(")
+    expect(at, "connectionMethodTitle не найдена").toBeGreaterThan(-1)
+    const body = source.slice(at, source.indexOf("\n}", at))
+    expect(body).toContain("methods.find((method) => method.available)?.title")
+    expect(body).not.toContain("methods[0]")
   })
 
   test("AC-312: шапка формы называет способ, когда выбирать не из чего (макет, экран 4)", () => {
@@ -262,9 +281,25 @@ describe("dialog-connector — причина недоступности «По�
   test("AC-341: oauth_disabled и facade_needs_hub — РАЗНЫЕ ключи, слияние запрещено", () => {
     const oauth = connectUnavailableKey({ connect_mode_unavailable_code: "oauth_disabled" })
     const facade = connectUnavailableKey({ connect_mode_unavailable_code: "facade_needs_hub" })
-    expect(oauth).toBe("corp.connectors.methodUnavailable.oauthDisabled")
+    // Ключ у oauth_disabled перенацелен решением заказчика от 31.08: причина рядом с кнопкой ОБЩАЯ и
+    // способа не называет. Что мера держала и держит — что это РАЗНЫЕ ключи с разной отрисовкой:
+    // слияние с facade_needs_hub по-прежнему запрещено (S-V28 п.4).
+    expect(oauth).toBe("corp.connectors.connectMethodNotConfigured")
     expect(facade).toBe("corp.connectors.facadeNeedsHub")
     expect(oauth).not.toBe(facade)
+  })
+
+  test("AC-341: тексты обеих причин не называют OAuth ни в одном словаре (решение заказчика 31.08)", () => {
+    const keys = [
+      connectUnavailableKey({ connect_mode_unavailable_code: "oauth_disabled" })!,
+      connectUnavailableKey({ connect_mode_unavailable_code: "facade_needs_hub" })!,
+      connectUnavailableKey({ connect_mode_unavailable_code: "no_method" })!,
+    ]
+    for (const [locale, dict] of Object.entries({ en: en as Record<string, string>, ru: ru as Record<string, string> }))
+      for (const key of keys) {
+        expect(dict[key], `${locale}.${key}`).toBeString()
+        expect(dict[key]!.toLowerCase(), `${locale}.${key} = ${dict[key]}`).not.toContain("oauth")
+      }
   })
 
   test("AC-341: connect_mode_unavailable_code отсутствует (null) — причины нет, действие работает", () => {
@@ -325,9 +360,12 @@ describe("dialog-connector — разметка: oauth_disabled рисует д�
     expect(buttonAt).toBeGreaterThan(connectShow)
   })
 
-  test("AC-341: причина oauth_disabled отрисована РЯДОМ (в том же блоке), а не в другой части экрана", () => {
+  test("AC-341: причина отрисована РЯДОМ (в том же блоке), а не в другой части экрана", () => {
     expect(statusBlock).toContain('data-slot="corp-connect-disabled-reason"')
-    expect(statusBlock).toContain('corp.connectors.methodUnavailable.oauthDisabled')
+    // Ключ перенацелен решением заказчика от 31.08: общий текст вместо названия закрытого способа.
+    // Место отрисовки — то же самое, и его мера сторожит по-прежнему.
+    expect(statusBlock).toContain("corp.connectors.connectMethodNotConfigured")
+    expect(statusBlock).not.toContain("methodUnavailable.oauthDisabled")
   })
 
   test("AC-341: facade_needs_hub — прежний текст ревизии 1.11 дословно, AC-252 не переформулирован", () => {
@@ -393,8 +431,16 @@ describe("dialog-connector — доступность способа не пер
   test("исходник не импортирует corp/status.ts и не вызывает oauthDisabled() — поле available берётся из карточки", () => {
     expect(source).not.toMatch(/from\s+["']@?.*corp\/status["']/)
     expect(source).not.toContain("oauthDisabled(")
-    // Единственное упоминание "oauthDisabled" в файле — имя КЛЮЧА словаря, а не вызов предиката.
-    const occurrences = source.match(/oauthDisabled/g) ?? []
-    for (const _ of occurrences) expect(source).toContain("methodUnavailable.oauthDisabled")
+    // Решением заказчика от 31.08 из отрисовки ушёл ключ словаря `methodUnavailable.oauthDisabled`:
+    // текстов со словом «OAuth» файл не показывает ни одного. Мера усилена, а не ослаблена — прежде
+    // одно такое упоминание допускалось, теперь не допускается ни одного.
+    //
+    // Сам КОД ПРИЧИНЫ `"oauth_disabled"` остаётся: это значение поля контракта
+    // `connect_mode_unavailable_code` (S-V28 п.2, D-62), по нему идёт ветвление, и пользователю оно
+    // не показывается. Поэтому мера перечисляет допустимые вхождения поимённо, а не запрещает
+    // подстроку целиком.
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+    for (const hit of code.match(/[A-Za-z_.]*[Oo][Aa]uth[A-Za-z_.]*/g) ?? [])
+      expect(hit, "неожиданное упоминание OAuth в отрисовке").toBe("oauth_disabled")
   })
 })

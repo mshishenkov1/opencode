@@ -90,19 +90,43 @@ const connectDirect = new Function("card", block(connectorsSource, "export funct
 ) => boolean
 
 describe("TUI dialog-connect-token — способ, маска, длина, исходы (S-T12; AC-335)", () => {
+  /**
+   * Перенацелено решением заказчика от 31.08 вместе с близнецом в Desktop (AC-312): случаи
+   * считаются по числу ДОСТУПНЫХ способов, а недоступный способ не рисуется нигде — ни строкой
+   * списка, ни причиной под ней (S-V28 п.4 в новой редакции). Прежняя мера закрепляла обратное:
+   * «недоступный рядом с доступным даёт список», то есть в терминале стояла нерабочая строка
+   * «Корпоративная авторизация ТЭГ — OAuth-приложение ещё не выдано».
+   */
   test("методChoice — те же три случая, что в Desktop (AC-312, AC-335)", () => {
     expect(methodChoice([{ id: "a", title: "A", type: "user_token", available: true, unavailable_code: null }])).toBe(
       "single",
     )
+    // Доступен ровно один, рядом лежит недоступный: выбора нет — выбирать не из чего.
     expect(
       methodChoice([
         { id: "a", title: "A", type: "oauth2", available: false, unavailable_code: "oauth_disabled" },
+        { id: "b", title: "B", type: "user_token", available: true, unavailable_code: null },
+      ]),
+    ).toBe("single")
+    // Список — только когда доступных больше одного.
+    expect(
+      methodChoice([
+        { id: "a", title: "A", type: "user_token", available: true, unavailable_code: null },
         { id: "b", title: "B", type: "user_token", available: true, unavailable_code: null },
       ]),
     ).toBe("list")
     expect(
       methodChoice([{ id: "a", title: "A", type: "oauth2", available: false, unavailable_code: "oauth_disabled" }]),
     ).toBe("none")
+  })
+
+  test("недоступный способ не рисуется на экране подключения (S-V28 п.4; решение заказчика 31.08)", () => {
+    // Список выбора перебирает ДОСТУПНЫЕ способы, а не все: нерабочих строк в нём не бывает.
+    expect(connectSource).toContain("options={available().map((entry) => ({")
+    expect(connectSource).not.toContain("options={methods().map((entry) => ({")
+    // Ни названия недоступного способа, ни текста его причины экран не печатает.
+    expect(connectSource).not.toContain("methodUnavailableText(")
+    expect(connectSource).not.toContain("unavailable_reason")
   })
 
   test("маскирование: ввод маскирован при field.secret != false, значение восстанавливается по разнице экранов", () => {

@@ -29,15 +29,20 @@ import { useToast } from "../../ui/toast"
 export const MASK = "•"
 
 /**
- * Три случая выбора способа (S-V28 п.4) — то же правило, что в Desktop:
- * `single` — доступен ровно один способ и недоступных нет: выбора нет вовсе, сразу поле ввода;
- * `list` — способов больше одного в любом сочетании: список **всех**, недоступные с причиной;
+ * Три случая выбора способа (S-V28 п.4) — то же правило, что в Desktop, и считается оно по числу
+ * **доступных** способов (решение заказчика от 31.08):
+ * `single` — доступен ровно один: выбора нет вовсе, сразу поле ввода;
+ * `list` — доступных больше одного: список из **доступных**;
  * `none` — доступных нет ни одного: поля ввода нет и подключаться нечем.
+ *
+ * Недоступный способ на экран не попадает ни в одном из трёх случаев — ни строкой списка, ни
+ * причиной под ней. Прежняя редакция считала общее число способов и показывала недоступные с
+ * причиной; она отменена заказчиком вместе с прежней редакцией S-V28 п.4.
  */
 export function methodChoice(methods: CorpAuthMethodView[]): "single" | "list" | "none" {
   const available = methods.filter((method) => method.available)
   if (available.length === 0) return "none"
-  if (methods.length === 1) return "single"
+  if (available.length === 1) return "single"
   return "list"
 }
 
@@ -51,10 +56,12 @@ export function methodUnavailableKey(code: string | null | undefined) {
   return "connectors.methodUnavailable.catalog" as const
 }
 
-/** Текст причины: `unavailable_reason` каталога дословно, иначе — свой ключ (S-I6, S-V28 п.1). */
-export function methodUnavailableText(method: CorpAuthMethodView) {
-  return method.unavailable_reason ?? t(methodUnavailableKey(method.unavailable_code))
-}
+/*
+ * Функции `methodUnavailableText` здесь больше нет: она печатала «способ — причина» на экране
+ * выбора, а недоступный способ решением заказчика от 31.08 не рисуется нигде (S-V28 п.4). Ключ
+ * причины (`methodUnavailableKey` выше) остаётся — им объясняется отказ РОУТА
+ * `409 auth_method_unavailable` на запрос мимо интерфейса (S-V28 п.5).
+ */
 
 /** Экранное представление значения: секретное поле маскируется посимвольно (S-T12). */
 export function maskedValue(value: string, secret: boolean) {
@@ -253,8 +260,9 @@ export function DialogConnectToken(props: DialogConnectTokenProps) {
     }, 1)
   })
 
-  // Шаг 1: выбор способа (S-V28 п.4, случай 2). Недоступный способ **показан** строкой с текстом
-  // причины и выбран быть не может: спрятанный способ неотличим от несуществующего.
+  // Шаг 1: выбор способа (S-V28 п.4, случай 2). В списке стоят только ДОСТУПНЫЕ способы: решением
+  // заказчика от 31.08 недоступный способ не рисуется нигде — ни строкой, ни причиной под ней.
+  // Нерабочих строк в списке поэтому не бывает, и ветки «выбрали недоступное» тоже нет.
   return (
     <Show
       when={!picking()}
@@ -263,19 +271,14 @@ export function DialogConnectToken(props: DialogConnectTokenProps) {
           title={`${t("connect.chooseMethod")}: ${props.card.title}`}
           renderFilter={false}
           skipFilter={true}
-          options={methods().map((entry) => ({
+          options={available().map((entry) => ({
             // Подпись способа — данные каталога, клиент их не переводит (S-I6).
             title: entry.title,
             value: entry.id,
-            ...(entry.available ? {} : { description: methodUnavailableText(entry) }),
           }))}
           onSelect={(option) => {
-            const picked = methods().find((entry) => entry.id === option.value)
-            if (!picked || !picked.available) {
-              // Строку выбрать нельзя, и почему — сказано тем же текстом, что стоит рядом с ней.
-              toast.show({ variant: "warning", message: picked ? methodUnavailableText(picked) : "" })
-              return
-            }
+            const picked = available().find((entry) => entry.id === option.value)
+            if (!picked) return
             setChosen(picked.id)
             setPicking(false)
           }}
@@ -295,18 +298,13 @@ export function DialogConnectToken(props: DialogConnectTokenProps) {
         {/* Название коннектора — данные каталога (S-I6). */}
         <text fg={theme.textMuted}>{props.card.title}</text>
 
-        {/* Случай 3 таблицы S-V28 п.4: доступных способов нет ни одного — поля ввода нет вовсе. */}
+        {/* Случай 3 таблицы S-V28 п.4: доступных способов нет ни одного — поля ввода нет вовсе, и
+            перечня недоступных способов с причинами тоже нет (решение заказчика от 31.08). Экран
+            говорит одно: подключаться сейчас нечем. Прежде здесь стоял столбец «способ — причина»,
+            и на живом каталоге он был ровно одной строкой: закрытым OAuth. */}
         <Show when={choice() === "none"}>
           <box gap={1}>
-            {methods().map((entry) => (
-              <box>
-                <text fg={theme.textMuted}>{entry.title}</text>
-                <text fg={theme.textMuted}>{methodUnavailableText(entry)}</text>
-              </box>
-            ))}
-            <Show when={methods().length === 0}>
-              <text fg={theme.textMuted}>{t("connect.noMethod")}</text>
-            </Show>
+            <text fg={theme.textMuted}>{t("connect.noMethod")}</text>
           </box>
         </Show>
 

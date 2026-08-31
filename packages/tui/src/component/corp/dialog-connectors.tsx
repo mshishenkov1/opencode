@@ -155,9 +155,15 @@ export function connectDisabled(card: CorpCatalogCard | undefined) {
   return card?.connect_mode_unavailable_code === "oauth_disabled"
 }
 
-/** Текст причины закрытого подключения — тот же, что у способа `oauth2` (D-62, S-I4). */
+/**
+ * Текст причины закрытого подключения — **общий**, способа не называет (решение заказчика от 31.08,
+ * S-V28 п.4, S-I4). Прежде здесь стоял тот же текст, что у способа `oauth2`
+ * (`connectors.methodUnavailable.oauthDisabled`), и в терминале это было единственное место, где
+ * пользователь читал слово «OAuth». Ключ причины и ветвление по `oauth_disabled` не тронуты — до
+ * пользователя они не доходят.
+ */
 export function connectDisabledText() {
-  return t(methodUnavailableKey("oauth_disabled"))
+  return t("connectors.connectMethodNotConfigured")
 }
 
 /**

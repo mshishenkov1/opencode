@@ -116,6 +116,174 @@ function openingTag(source: string, tag: string, from = 0): string {
   throw new Error(`открывающий тег ${tag} не закрыт`)
 }
 
+/** Индекс сразу за `>` открывающего тега, начинающегося в позиции `at`: `>` внутри `{…}` не в счёт. */
+function tagEnd(source: string, at: number): number {
+  let depth = 0
+  let quote: string | undefined
+  for (let index = at; index < source.length; index++) {
+    const char = source[index]!
+    if (quote) {
+      if (char === "\\") index += 1
+      else if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "{") depth += 1
+    else if (char === "}") depth -= 1
+    else if (depth > 0) continue
+    else if (char === '"' || char === "'" || char === "`") quote = char
+    else if (char === ">") return index + 1
+  }
+  throw new Error("открывающий тег не закрыт")
+}
+
+/** Содержимое фигурных скобок, открывающихся в позиции `at`, и индекс сразу за закрывающей. */
+function braced(source: string, at: number): { text: string; end: number } {
+  expect(source[at], "ожидалась открывающая фигурная скобка").toBe("{")
+  let depth = 0
+  let quote: string | undefined
+  for (let index = at; index < source.length; index++) {
+    const char = source[index]!
+    if (quote) {
+      if (char === "\\") index += 1
+      else if (char === quote) quote = undefined
+      continue
+    }
+    if (char === '"' || char === "'" || char === "`") quote = char
+    else if (char === "{") depth += 1
+    else if (char === "}") {
+      depth -= 1
+      if (depth === 0) return { text: source.slice(at + 1, index), end: index + 1 }
+    }
+  }
+  throw new Error("фигурные скобки не закрыты")
+}
+
+/** Снятие внешних скобок целиком: `(a || b)` → `a || b`, а `(a) && (b)` остаётся как есть. */
+function stripParens(expression: string): string {
+  let value = expression.trim()
+  for (;;) {
+    if (!value.startsWith("(")) return value
+    let depth = 0
+    let close = -1
+    for (let index = 0; index < value.length && close === -1; index++) {
+      if (value[index] === "(") depth += 1
+      else if (value[index] === ")") {
+        depth -= 1
+        if (depth === 0) close = index
+      }
+    }
+    if (close !== value.length - 1) return value
+    value = value.slice(1, close).trim()
+  }
+}
+
+/** Разбор выражения по оператору ВЕРХНЕГО уровня: то, что в скобках и в строках, не разделитель. */
+function splitTop(expression: string, operator: "&&" | "||"): string[] {
+  const parts: string[] = []
+  let depth = 0
+  let quote: string | undefined
+  let from = 0
+  for (let index = 0; index < expression.length; index++) {
+    const char = expression[index]!
+    if (quote) {
+      if (char === "\\") index += 1
+      else if (char === quote) quote = undefined
+      continue
+    }
+    if (char === '"' || char === "'" || char === "`") quote = char
+    else if (char === "(" || char === "[" || char === "{") depth += 1
+    else if (char === ")" || char === "]" || char === "}") depth -= 1
+    else if (depth === 0 && expression.startsWith(operator, index)) {
+      parts.push(expression.slice(from, index))
+      index += operator.length - 1
+      from = index + 1
+    }
+  }
+  parts.push(expression.slice(from))
+  return parts.map(stripParens)
+}
+
+/** Дети-`Show` разметки верхнего уровня: условие и содержимое каждого. */
+function showChildren(body: string): { when: string; inner: string }[] {
+  const children: { when: string; inner: string }[] = []
+  for (let cursor = 0; ; ) {
+    const at = body.indexOf("<Show", cursor)
+    if (at === -1) return children
+    const when = braced(body, body.indexOf("{", at))
+    const from = tagEnd(body, when.end)
+    let depth = 1
+    let close = -1
+    for (let index = from; depth > 0; ) {
+      const open = body.indexOf("<Show", index)
+      const shut = body.indexOf("</Show>", index)
+      expect(shut, "`Show` не закрыт").toBeGreaterThan(-1)
+      if (open !== -1 && open < shut) {
+        depth += 1
+        index = open + "<Show".length
+      } else {
+        depth -= 1
+        close = shut
+        index = shut + "</Show>".length
+        cursor = index
+      }
+    }
+    children.push({ when: when.text.trim(), inner: body.slice(from, close) })
+  }
+}
+
+/**
+ * Строка свойств страницы коннектора, разобранная ПО САМОМУ ИСХОДНИКУ.
+ *
+ * Прежняя мера записывала состав строки литералами условий (`entry().owner || entry().docs_url`,
+ * `entry().owner && entry().docs_url`) — то есть кодировала ЧИСЛО свойств, а не правило, и третье
+ * свойство красило её, ничего не нарушив (резолюция TEST-DISPUTE-I14-07). Здесь перечень свойств
+ * берётся из `data-property="…"` самого блока, а утверждения делаются про каждое из них.
+ */
+function propertiesRow(page: string) {
+  const anchor = page.indexOf('data-slot="corp-connector-properties"')
+  expect(anchor, "строка свойств на странице не найдена").toBeGreaterThan(-1)
+  // Охранник всего блока — ближайший `Show` перед контейнером строки, и между ними не должно быть
+  // ничего, кроме конца его тега: иначе он охраняет не строку.
+  const guardAt = page.lastIndexOf("<Show when={", anchor)
+  expect(guardAt, "блок свойств не под `Show`").toBeGreaterThan(-1)
+  const guard = braced(page, page.indexOf("{", guardAt + "<Show when=".length))
+  const containerAt = page.lastIndexOf("<div", anchor)
+  expect(page.slice(guard.end, containerAt).trim(), "между охранником и строкой свойств не пусто").toBe(">")
+  // Тело контейнера — от конца его открывающего тега до ПАРНОГО `</div>`.
+  const from = tagEnd(page, containerAt)
+  let depth = 1
+  let close = -1
+  for (let index = from; depth > 0; ) {
+    const open = page.indexOf("<div", index)
+    const shut = page.indexOf("</div>", index)
+    expect(shut, "контейнер строки свойств не закрыт").toBeGreaterThan(-1)
+    if (open !== -1 && open < shut) {
+      depth += 1
+      index = open + "<div".length
+    } else {
+      depth -= 1
+      close = shut
+      index = shut + "</div>".length
+    }
+  }
+  const children = showChildren(page.slice(from, close)).map((child) => {
+    const property = /data-property="([^"]+)"/.exec(child.inner)
+    const separator = child.inner.includes('aria-hidden="true"')
+    expect(
+      Boolean(property) !== separator,
+      `внутри строки свойств Show, который не свойство и не разделитель: ${child.when}`,
+    ).toBe(true)
+    return { kind: property ? ("property" as const) : ("separator" as const), name: property?.[1] ?? "", ...child }
+  })
+  return {
+    block: page.slice(guardAt, close),
+    guard: guard.text.trim(),
+    children,
+    properties: children.filter((child) => child.kind === "property"),
+    separators: children.filter((child) => child.kind === "separator"),
+  }
+}
+
 /**
  * Объявленная высота контейнера окна размера `x-large` — то, что задаёт высоту окна целиком.
  * Читается из настоящего файла стилей: happy-dom вложенные `&[data-size=…]`-селекторы не
@@ -662,17 +830,44 @@ describe("страница коннектора — стек диалогов и
   })
 
   test("AC-229: отсутствующее свойство строки не рисует и пустой строки не оставляет", () => {
-    for (const field of ["entry().owner", "entry().docs_url"]) {
-      const at = page.indexOf(`<Show when={${field}}>`)
-      expect(at, field).toBeGreaterThan(-1)
+    // Проверяется ПРАВИЛО, а не число свойств: перечень строки берётся из самого исходника (по
+    // `data-property="…"`), и каждое утверждение делается про КАЖДОЕ найденное свойство. Четвёртое
+    // свойство расширит перебор само, а настоящий дефект — безусловное свойство, висящий
+    // разделитель, `?? ""` вместо условия, блок без охранника — мера ловит (TEST-DISPUTE-I14-07).
+    const row = propertiesRow(page)
+    const names = row.properties.map((property) => property.name)
+    expect(names.length, "в строке меньше двух свойств — правило проверять не на чем").toBeGreaterThan(1)
+    expect(new Set(names).size, `свойство нарисовано дважды: ${names.join(", ")}`).toBe(names.length)
+    // Каждое `data-property` блока разобрано как свойство ПОД СВОИМ `Show`: свойство, нарисованное
+    // безусловно, в перебор не попадёт и обнаружится здесь несовпадением перечней.
+    expect([...row.block.matchAll(/data-property="([^"]+)"/g)].map((match) => match[1])).toEqual(names)
+    for (const property of row.properties) {
+      // Значение приходит внутрь `Show` аргументом, то есть строка рисуется только при его наличии.
+      const argument = /^\s*\{\(\s*(\w+)\s*\)\s*=>/.exec(property.inner)
+      expect(argument, `${property.name}: значение не приходит аргументом Show`).not.toBeNull()
+      expect(property.inner, `${property.name}: аргумент Show не используется`).toContain(`${argument![1]}()`)
     }
-    // Весь блок свойств не рисуется, когда не пришло ни одного из них: пустой полосы не остаётся.
-    expect(page).toContain("<Show when={entry().owner || entry().docs_url}>")
-    // Разделитель между ними — тоже условный: одинокое свойство не тянет за собой точку.
-    expect(page).toContain("<Show when={entry().owner && entry().docs_url}>")
-    // Значение приходит внутрь `Show` аргументом, то есть строка рисуется только при его наличии.
-    expect(page).not.toContain('{entry().owner ?? ""}')
-    expect(page).not.toContain('{entry().docs_url ?? ""}')
+    // Подстановки пустой строки вместо условия в строке свойств нет ни у одного свойства.
+    expect(row.block).not.toContain('?? ""')
+    // Разделителей ровно на один меньше, чем свойств, и каждый стоит МЕЖДУ двумя свойствами: ни
+    // висящего у одинокого свойства с краю, ни двух подряд.
+    expect(row.children.map((child) => child.kind).join(" ")).toBe(
+      names.flatMap((_, at) => (at === 0 ? ["property"] : ["separator", "property"])).join(" "),
+    )
+    // Весь блок не рисуется, когда не пришло ни одного свойства: охранник — ИЛИ по источникам ВСЕХ
+    // свойств строки, ни больше ни меньше.
+    const sources = row.properties.map((property) => property.when)
+    expect(splitTop(row.guard, "||").sort(), "охранник блока не по всем свойствам строки").toEqual([...sources].sort())
+    // Каждый разделитель условен парой «есть что слева И есть что справа»: справа — следующее
+    // свойство, слева — ИЛИ по всем предыдущим, любое из которых делает точку нужной.
+    row.separators.forEach((separator, at) => {
+      const parts = splitTop(separator.when, "&&")
+      expect(parts.length, `разделитель ${at}: условие не пара «слева И справа»`).toBe(2)
+      expect(parts[1], `разделитель ${at}: справа не следующее свойство`).toBe(sources[at + 1])
+      expect(splitTop(parts[0], "||").sort(), `разделитель ${at}: слева не все предыдущие`).toEqual(
+        sources.slice(0, at + 1).sort(),
+      )
+    })
   })
 
   test("AC-230: высота страницы не зависит от содержимого — прокручивается содержимое, не окно", () => {

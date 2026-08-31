@@ -507,10 +507,11 @@ export const DialogConnectors: Component = () => {
                   остаётся полем поиска (`matchesQuery`) и виден на странице коннектора (D-53).
 
                   Значок слева от имени (S-V22, ревизия 1.14): картинка каталога, а без неё —
-                  монограмма на нейтральной подложке. Он опознавательный, а не смысловой, поэтому
-                  скрыт от скринридера: имя рядом говорит ровно то же. */}
+                  монограмма на подложке цвета `icon_color` из того же каталога либо на нейтральной,
+                  если цвет не назван. Он опознавательный, а не смысловой, поэтому скрыт от
+                  скринридера: имя рядом говорит ровно то же. */}
               <div class="flex items-center gap-3 min-w-0">
-                <ConnectorIcon title={card.title} icon={card.icon} />
+                <ConnectorIcon title={card.title} icon={card.icon} color={card.icon_color} />
                 <span class="text-14-regular text-text-strong truncate">{card.title}</span>
                 {/* Бейдж «устаревший» живёт в колонке «Имя»: он про карточку, а не про
                     подключение (S-V18). */}

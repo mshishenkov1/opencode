@@ -288,6 +288,17 @@ export const CatalogServer = Schema.Struct({
    * картинки один, каталог.
    */
   icon: Schema.optional(Schema.String),
+  /**
+   * Цвет подложки значка коннектора (макет заказчика от 30.08, экран 1): плитка с монограммой на
+   * фирменном цвете — `#1F4C86` у ТЭГ, `#E24329` у GitLab, `#1868DB` у Jira и Confluence.
+   *
+   * Цвет — **данные каталога, а не логика клиента**: таблицы «alias → цвет» в форке нет и быть не
+   * должно, иначе каждый новый коннектор требовал бы сборки приложения. Поле необязательно; без
+   * него подложка нейтральная, как была. Значение принимается только вида `#RRGGBB` — иное
+   * отбрасывается молча тем же терпимым правилом, что и прочие необязательные поля (S-V14 п.3):
+   * мусор в цвете не должен ронять карточку.
+   */
+  icon_color: Schema.optional(Schema.String),
   auth_kind: Schema.optional(Schema.String),
   /**
    * Способы подключения (S-V24 п.1) — **дословно, как пришло от источника** (S-V3, ревизия 1.13),
@@ -332,6 +343,18 @@ function coreString(value: unknown): string | undefined {
 /** Необязательная строка: неразобранное значение трактуется как отсутствующее (S-V14 п.3). */
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined
+}
+
+/**
+ * Цвет подложки значка (`icon_color`): принимается **только** запись `#RRGGBB`.
+ *
+ * Оболочка подставляет значение прямо в `background` элемента, поэтому произвольная строка каталога
+ * туда попасть не может: сузить приём до одной шестнадцатеричной записи дешевле и честнее, чем
+ * разбирать весь синтаксис CSS-цвета. Не строка, другой вид записи, мусор — «цвета нет», а не
+ * испорченная карточка (S-V14 п.3). Регистр букв сохраняется как пришёл: цвет — данные.
+ */
+function optionalHexColor(value: unknown): string | undefined {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value : undefined
 }
 
 function decode<S extends Schema.Codec<any, any, never, never>>(schema: S, value: unknown): S["Type"] | undefined {
@@ -883,6 +906,8 @@ export function parseCatalogServer(value: unknown): ServerResult {
   const type = optionalString(raw["type"])
   // То же и для значка: `null` живого каталога — это «значка нет», а не испорченная карточка.
   const icon = optionalString(raw["icon"])
+  // Цвет подложки значка сужен до `#RRGGBB` (макет от 30.08): он уходит прямо в стиль элемента.
+  const iconColor = optionalHexColor(raw["icon_color"])
   const authKind = optionalString(raw["auth_kind"])
   const connection = raw["connection"] === undefined ? undefined : decode(Connection, raw["connection"])
 
@@ -901,6 +926,7 @@ export function parseCatalogServer(value: unknown): ServerResult {
       ...(status === undefined ? {} : { status }),
       ...(type === undefined ? {} : { type }),
       ...(icon === undefined ? {} : { icon }),
+      ...(iconColor === undefined ? {} : { icon_color: iconColor }),
       ...(authKind === undefined ? {} : { auth_kind: authKind }),
       // Дословно: разбирается модель отдельно, а в кэш и наружу уходит исходное значение Hub (S-V3).
       ...(raw["permission_model"] === undefined ? {} : { permission_model: raw["permission_model"] }),
@@ -1298,6 +1324,11 @@ export const CatalogCard = Schema.Struct({
   type: Schema.optional(Schema.String),
   /** Адрес картинки коннектора (S-V22): без него витрина рисует монограмму из букв названия. */
   icon: Schema.optional(Schema.String),
+  /**
+   * Цвет подложки значка (макет заказчика от 30.08, экран 1) — данные каталога вида `#RRGGBB`.
+   * Без него подложка нейтральная; монограмма на цветной подложке рисуется белой.
+   */
+  icon_color: Schema.optional(Schema.String),
   connection_status: Schema.optional(ConnectionStatus),
   preset: Schema.optional(Schema.String),
   status: CardStatus,

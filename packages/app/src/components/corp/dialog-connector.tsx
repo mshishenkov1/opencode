@@ -1621,7 +1621,7 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
               {/* 1. Шапка страницы (S-D11, макет заказчика от 30.08): крупный значок, название,
                   под ним техническое имя, справа — действие и меню из трёх точек. */}
               <div data-slot="corp-connector-hero">
-                <ConnectorIcon title={entry().title} icon={entry().icon} size="large" />
+                <ConnectorIcon title={entry().title} icon={entry().icon} color={entry().icon_color} size="large" />
                 <div class="flex flex-col gap-0.5 min-w-0">
                   <span class="flex items-center gap-2 min-w-0">
                     <span class="text-16-medium text-text-strong truncate">{entry().title}</span>

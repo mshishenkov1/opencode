@@ -22868,6 +22868,9 @@
           "icon": {
             "type": "string"
           },
+          "icon_color": {
+            "type": "string"
+          },
           "connection_status": {
             "type": "string",
             "enum": ["not_connected", "connected", "needs_reauth"]

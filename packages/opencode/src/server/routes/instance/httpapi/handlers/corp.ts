@@ -752,6 +752,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           ...(server.type === undefined ? {} : { type: server.type }),
           // S-V22: значок карточки — данные каталога; без него оболочка рисует монограмму.
           ...(server.icon === undefined ? {} : { icon: server.icon }),
+          // Цвет подложки значка (макет от 30.08, экран 1) — тоже данные каталога: таблицы
+          // «alias → цвет» в оболочке нет, без поля подложка остаётся нейтральной.
+          ...(server.icon_color === undefined ? {} : { icon_color: server.icon_color }),
           mode: server.mode,
           mcp_url: server.mcp_url,
           // Наружу уходит разобранная модель прав; непонятый вид — как отсутствующий, экран прав

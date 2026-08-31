@@ -326,8 +326,12 @@ describe("corp/permission-groups — частичная порча мягче (S
 })
 
 describe("corp/permission-groups — колонка «Тип» (S-V22, S-I6; AC-215, AC-216)", () => {
+  /** Карточка каталога сверх `type` несёт и другие поля (например, `owner`) — connectorType их игнорирует. */
+  type CardLike = { type?: string; owner?: string }
+
   test("AC-215: значение колонки — type каталога как есть, без перевода", () => {
-    expect(connectorType({ type: "Мессенджер", owner: "AI Lab" })).toBe("Мессенджер")
+    const messengerWithOwner: CardLike = { type: "Мессенджер", owner: "AI Lab" }
+    expect(connectorType(messengerWithOwner)).toBe("Мессенджер")
     // Словаря типов клиент не ведёт: значение возвращается тем же, каким пришло.
     expect(connectorType({ type: "Трекер задач" })).toBe("Трекер задач")
   })
@@ -336,16 +340,22 @@ describe("corp/permission-groups — колонка «Тип» (S-V22, S-I6; AC-
     // Решение заказчика от 30.08: деградация «type → owner → пустая ячейка» отменена. Владелец —
     // ответ на другой вопрос («чей коннектор»), и в колонке «что это» он был неверен; пустой
     // ячейки не бывает вовсе.
-    expect(connectorType({ type: "Мессенджер", owner: "AI Lab" })).toBe("Мессенджер")
-    expect(connectorType({ owner: "AI Lab" })).toBe("MCP")
+    // (Случай «type есть, owner тоже есть» уже проверен в AC-215 выше — здесь его не повторяем.)
+    const onlyOwner: CardLike = { owner: "AI Lab" }
+    expect(connectorType(onlyOwner)).toBe("MCP")
     expect(connectorType({})).toBe("MCP")
     // Пустая и пробельная строка равносильны отсутствию поля — и дают то же умолчание.
-    expect(connectorType({ type: "", owner: "AI Lab" })).toBe("MCP")
-    expect(connectorType({ type: "   ", owner: "AI Lab" })).toBe("MCP")
-    expect(connectorType({ type: "", owner: "" })).toBe("MCP")
+    const emptyTypeWithOwner: CardLike = { type: "", owner: "AI Lab" }
+    expect(connectorType(emptyTypeWithOwner)).toBe("MCP")
+    const blankTypeWithOwner: CardLike = { type: "   ", owner: "AI Lab" }
+    expect(connectorType(blankTypeWithOwner)).toBe("MCP")
+    const emptyTypeEmptyOwner: CardLike = { type: "", owner: "" }
+    expect(connectorType(emptyTypeEmptyOwner)).toBe("MCP")
     // Ни при каком составе карточки значение owner в колонку «Тип» не попадает.
-    for (const owner of ["AI Lab", "Платформа", ""])
-      expect(connectorType({ owner }), owner).not.toBe(owner === "" ? " " : owner)
+    for (const owner of ["AI Lab", "Платформа", ""]) {
+      const withOwner: CardLike = { owner }
+      expect(connectorType(withOwner), owner).not.toBe(owner)
+    }
   })
 
   test("AC-216: значение колонки непусто всегда — пустой ячейки в витрине не бывает", () => {

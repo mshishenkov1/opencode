@@ -182,7 +182,11 @@ describe("useCorpInvalidate — устаревший ответ каталога
 
     // Активный подписчик получил обновление ЧЕРЕЗ обычную инвалидацию (перезапрос), а не остался
     // без записи в кэше вовсе.
-    expect(qc.getQueryData(key)).toEqual({ enabled: true, authenticated: true })
+    // (Через промежуточную переменную: `expect(qc.getQueryData(key))` инлайном сталкивает вывод типов
+    // `getQueryData` с перегрузками `expect`, и tsgo ошибочно схлопывает результат до `undefined` —
+    // TS2769. Присваивание разрывает эту цепочку вывода, поведение проверки не меняется.)
+    const activeStatus = qc.getQueryData(key)
+    expect(activeStatus).toEqual({ enabled: true, authenticated: true })
     unsubscribe()
   })
 })

@@ -42,10 +42,13 @@ import { CorpDialog } from "./dialog-shell"
  * возврат (`Esc` или «Назад») приводит пользователя ровно туда, откуда он ушёл — с той же вкладкой,
  * той же строкой поиска и той же позицией прокрутки. `show` уничтожил бы её вместе с состоянием.
  *
- * Состав сверху вниз: заголовок с `title` и бейджем «устаревший», описание карточки, свойства
- * (тип, владелец, документация), статус с объяснением ошибки и предлагаемым действием (S-V19),
- * блок «Разрешения» (S-V9) и блок «Убрать из списка» (S-V17). Размер окна страница получает от
- * `CorpDialog`, ничего про размеры не зная (S-D10); прокручивается содержимое, а не окно.
+ * Состав сверху вниз (макет заказчика от 30.08): хлебная крошка «‹ Коннекторы / <имя>» в
+ * заголовке окна; шапка страницы — значок, имя с бейджами «Подключено» и «устаревший»,
+ * техническое имя под ним и ряд действий («Убрать из списка» — в меню из трёх точек, S-V17);
+ * статус с объяснением ошибки и предлагаемым действием (S-V19); описание абзацами; свойства
+ * (владелец, способ подключения, документация); «Инструменты»; блок подключения (S-D13) и
+ * «Разрешения» (S-V9, S-V20). Размер окна страница получает от `CorpDialog`, ничего про размеры
+ * не зная (S-D10); прокручивается содержимое, а не окно.
  */
 
 /** Идентификатор группы «Остальное» в словаре и в `permission_state` (S-V20, S-V23). */
@@ -167,6 +170,39 @@ export function descriptionParagraphs(description: string | undefined): string[]
     .split(/\n\s*\n/)
     .map((paragraph) => paragraph.trim())
     .filter((paragraph) => paragraph.length > 0)
+}
+
+/**
+ * Способ подключения в строке свойств (макет заказчика от 30.08, экран 2).
+ *
+ * Отвечает на вопрос «чем этот коннектор подключается», и потому это свойство КАРТОЧКИ, а не
+ * состояния связи: в макете строка стоит и у неподключённого коннектора. Берётся первый доступный
+ * способ, а если доступных нет — первый объявленный: способ, закрытый администратором, ответа не
+ * меняет, а причина его недоступности живёт в блоке подключения (S-V28 п.4).
+ *
+ * Название способа — данные каталога и рисуется как есть (S-I6). Каким способом подключение было
+ * выполнено ФАКТИЧЕСКИ, карточка не сообщает — такого поля в контракте нет.
+ */
+export function connectionMethodTitle(card: CorpCatalogCard): string | undefined {
+  const methods = card.auth_methods ?? []
+  return (methods.find((method) => method.available) ?? methods[0])?.title
+}
+
+/**
+ * Человеческое имя ссылки на документацию (макет заказчика от 30.08, экран 2).
+ *
+ * В строке свойств стоит имя места, куда ведёт ссылка, а не адрес целиком: адрес со схемой,
+ * путём и параметрами читать человеку незачем, а строка свойств от него распухает и переносится.
+ * Название портала («внутренний портал» макета) каталог не присылает вовсе, и выдумывать его
+ * нельзя — показывается имя узла, то же данное, прочитанное так, как его читает человек.
+ * Неразобранный адрес показывается как есть: спрятать ссылку хуже, чем показать её адресом.
+ */
+export function docsLabel(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, "")
+  } catch {
+    return url
+  }
 }
 
 /** Сколько плиток инструментов показывается до нажатия «Показать все» (S-D11, ревизия 1.14). */
@@ -1104,10 +1140,27 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
   }
 
   return (
-    // Заголовок окна — хлебная крошка: имя коннектора и ничего сверх него. Крупное представление
-    // (значок, техническое имя, бейдж «устаревший») живёт в шапке страницы.
+    // Заголовок окна — настоящая хлебная крошка «‹ Коннекторы / <имя>» (макет заказчика от 30.08,
+    // экраны 2 и 3): она называет и место, откуда пришёл человек, и место, где он сейчас. Первая
+    // ступень — то же действие, что и «Назад» справа: возврат закрывает верхний диалог, и живая
+    // витрина под ним всплывает со своей вкладкой, строкой поиска и позицией прокрутки (S-D11).
+    // Крупное представление (значок, техническое имя, бейдж «устаревший») живёт в шапке страницы.
     <CorpDialog
-      title={card()?.title ?? props.alias}
+      title={
+        <span data-slot="corp-connector-crumbs">
+          <button
+            type="button"
+            data-action="corp-connector-up"
+            class="text-text-weak"
+            onClick={() => dialog.close()}
+          >
+            <Icon name="chevron-left" size="small" />
+            {language.t("corp.connectors.title")}
+          </button>
+          <span aria-hidden="true">/</span>
+          <span class="truncate">{card()?.title ?? props.alias}</span>
+        </span>
+      }
       action={
         <Button size="small" variant="ghost" onClick={() => dialog.close()}>
           {language.t("corp.connector.back")}
@@ -1127,6 +1180,17 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                 <div class="flex flex-col gap-0.5 min-w-0">
                   <span class="flex items-center gap-2 min-w-0">
                     <span class="text-16-medium text-text-strong truncate">{entry().title}</span>
+                    {/* Бейдж «Подключено» РЯДОМ С ИМЕНЕМ (макет заказчика от 30.08, экран 3):
+                        главное про коннектор человек читает там же, где его имя, а не строкой
+                        ниже. Отдельная строка состояния при этом остаётся — она несёт ВСЕ
+                        состояния, их тон и объяснение ошибки (S-V18, S-V19), а бейдж есть только
+                        у подключённого, как в макете. Текст тот же, каким подключение названо в
+                        блоке подключения после успеха: одно состояние — одно слово. Бейдж
+                        нейтральный, как в макете: цвет состояния несёт строка ниже, а рядом с
+                        именем стоит факт, а не тревога. */}
+                    <Show when={entry().state === "connected"}>
+                      <Tag>{language.t("corp.connectors.connected")}</Tag>
+                    </Show>
                     <Show when={entry().deprecated}>
                       <Tag>{language.t("corp.connectors.deprecated")}</Tag>
                     </Show>
@@ -1296,25 +1360,48 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
               {/* 4. Свойства — ниже описания и мельче его (S-D11, ревизия 1.14): одной строкой,
                   отсутствующее поле её не удлиняет. Колонка «Тип» отсюда ушла: у всех коннекторов
                   каталога она теперь одна и та же (S-V22), и строкой свойства не является.
-                  Владелец остался: именно он отвечает на вопрос «чей это коннектор». */}
-              <Show when={entry().owner || entry().docs_url}>
+                  Владелец остался: именно он отвечает на вопрос «чей это коннектор».
+
+                  Состав и порядок — как в макете заказчика от 30.08 (экран 2): владелец, способ
+                  подключения, документация. Способ подключения вернулся в строку, потому что он
+                  отвечает на вопрос «что именно я подключаю» до нажатия кнопки, а данные для него
+                  в карточке есть (`auth_methods`). Документация показывается ИМЕНЕМ места, а не
+                  адресом целиком: адрес со схемой и путём человеку читать незачем. */}
+              <Show when={entry().owner || connectionMethodTitle(entry()) || entry().docs_url}>
                 <div class="text-12-regular text-text-weak" data-slot="corp-connector-properties">
                   <Show when={entry().owner}>
                     {(value) => (
-                      <span>
+                      <span data-slot="corp-connector-property" data-property="owner">
                         {language.t("corp.connector.owner")} &mdash; {value()}
                       </span>
                     )}
                   </Show>
-                  <Show when={entry().owner && entry().docs_url}>
+                  <Show when={entry().owner && connectionMethodTitle(entry())}>
+                    <span aria-hidden="true"> &middot; </span>
+                  </Show>
+                  <Show when={connectionMethodTitle(entry())}>
+                    {(value) => (
+                      <span data-slot="corp-connector-property" data-property="connection">
+                        {/* Название способа — данные каталога и рисуется как есть (S-I6). */}
+                        {language.t("corp.connector.connection")} &mdash; {value()}
+                      </span>
+                    )}
+                  </Show>
+                  <Show when={(entry().owner || connectionMethodTitle(entry())) && entry().docs_url}>
                     <span aria-hidden="true"> &middot; </span>
                   </Show>
                   <Show when={entry().docs_url}>
                     {(value) => (
-                      <span>
+                      <span data-slot="corp-connector-property" data-property="docs">
                         {language.t("corp.connector.docs")} &mdash;{" "}
-                        <a class="underline break-all" href={value()} target="_blank" rel="noreferrer">
-                          {value()}
+                        <a
+                          class="underline"
+                          href={value()}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={value()}
+                        >
+                          {docsLabel(value())}
                         </a>
                       </span>
                     )}

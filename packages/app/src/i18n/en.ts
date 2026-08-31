@@ -1202,6 +1202,7 @@ export const dict = {
   "corp.connector.back": "Back",
   "corp.connector.owner": "Owner",
   "corp.connector.type": "Type",
+  "corp.connector.connection": "Connection",
   "corp.connector.docs": "Documentation",
   "corp.connector.tools": "Tools",
   "corp.connector.toolsAll": "Show all",

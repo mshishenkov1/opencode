@@ -520,3 +520,41 @@
   [data-slot="segmented-control-v2-item"]:where([data-pressed]) {
   color: var(--v2-state-fg-danger);
 }
+
+/*
+ * Хлебная крошка в заголовке страницы коннектора (макет заказчика от 30.08, экраны 2 и 3):
+ * «‹ Коннекторы / <имя>». Первая ступень — кнопка возврата, вторая — место, где человек сейчас,
+ * и она же обрезается при длинном имени: обрезаться должно имя, а не путь до него.
+ */
+[data-slot="corp-connector-crumbs"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+[data-slot="corp-connector-crumbs"] button {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  cursor: pointer;
+}
+
+[data-slot="corp-connector-crumbs"] button:hover {
+  color: var(--text-strong);
+}
+
+[data-slot="corp-connector-crumbs"] > span[aria-hidden="true"] {
+  flex: none;
+  color: var(--text-weak);
+}
+
+/*
+ * Строка свойств (S-D11, макет заказчика от 30.08): владелец, способ подключения, документация —
+ * одной строкой. Свойство целиком не разрывается посередине, а ссылка на документацию несёт имя
+ * узла, а не адрес: переносить по буквам больше нечего.
+ */
+[data-slot="corp-connector-property"] {
+  white-space: nowrap;
+}

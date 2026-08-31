@@ -1044,6 +1044,71 @@ export const dict = {
   "workspace.reset.archived.many": "{{count}} sessions will be archived.",
   "workspace.reset.note": "This will reset the workspace to match the default branch.",
 
+  // Нативное меню Desktop (macOS) и его двойник в оболочке Windows. Тексты здесь ТЕ ЖЕ, что стояли
+  // литералами в `desktop-menu.ts` до перевода: английская сборка от переноса в словарь не меняется
+  // ни одной строкой. Регистр — заголовочный, как принято в нативных меню платформы, а не как в
+  // палитре команд («New Session», а не «New session»): это два разных места с разными правилами.
+  // Пункты, которые macOS раньше подписывала сама (роли about/hide/hideOthers/unhide/quit): без
+  // своей подписи они печатались на языке СИСТЕМЫ, и русское меню начиналось с английских «About
+  // OpenCode» и «Quit OpenCode». Тексты здесь — дословно те, что показывала macOS по-английски.
+  "menu.app.about": "About OpenCode",
+  "menu.app.hide": "Hide OpenCode",
+  "menu.app.hideOthers": "Hide Others",
+  "menu.app.unhide": "Show All",
+  "menu.app.quit": "Quit OpenCode",
+  "menu.app.checkForUpdates": "Check for Updates...",
+  "menu.app.settings": "Settings",
+  "menu.app.reloadWebview": "Reload Webview",
+  "menu.app.restart": "Restart",
+  "menu.app.exportLogs": "Export Logs...",
+
+  "menu.file": "File",
+  "menu.file.newSession": "New Session",
+  "menu.file.openProject": "Open Project...",
+  "menu.file.settings": "Settings",
+  "menu.file.newWindow": "New Window",
+  "menu.file.closeWindow": "Close Window",
+
+  "menu.edit": "Edit",
+  "menu.edit.undo": "Undo",
+  "menu.edit.redo": "Redo",
+  "menu.edit.cut": "Cut",
+  "menu.edit.copy": "Copy",
+  "menu.edit.paste": "Paste",
+  "menu.edit.delete": "Delete",
+  "menu.edit.selectAll": "Select All",
+
+  "menu.view": "View",
+  "menu.view.toggleSidebar": "Toggle Sidebar",
+  "menu.view.toggleTerminal": "Toggle Terminal",
+  "menu.view.toggleFileTree": "Toggle File Tree",
+  "menu.view.reload": "Reload",
+  "menu.view.toggleDevTools": "Toggle Developer Tools",
+  "menu.view.actualSize": "Actual Size",
+  "menu.view.zoomIn": "Zoom In",
+  "menu.view.zoomOut": "Zoom Out",
+  "menu.view.toggleFullScreen": "Toggle Full Screen",
+
+  "menu.go": "Go",
+  "menu.go.back": "Back",
+  "menu.go.forward": "Forward",
+  "menu.go.previousSession": "Previous Session",
+  "menu.go.nextSession": "Next Session",
+  "menu.go.previousProject": "Previous Project",
+  "menu.go.nextProject": "Next Project",
+
+  "menu.window": "Window",
+  "menu.window.minimize": "Minimize",
+  "menu.window.maximize": "Maximize",
+  "menu.window.closeWindow": "Close Window",
+
+  "menu.help": "Help",
+  "menu.help.documentation": "OpenCode Documentation",
+  "menu.help.supportForum": "Support Forum",
+  "menu.help.exportLogs": "Export Logs...",
+  "menu.help.shareFeedback": "Share Feedback",
+  "menu.help.reportBug": "Report a Bug",
+
   // corp: корпоративный слой — вход по SSO и витрина коннекторов (S-I1)
   "corp.command.connectors": "Connector catalog",
   "corp.command.connectors.description": "Corporate MCP servers from the Hub",

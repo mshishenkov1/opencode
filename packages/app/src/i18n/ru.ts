@@ -1048,6 +1048,70 @@ export const dict = {
   "error.childStore.storeCreateFailed": "Не удалось создать хранилище",
   "terminal.connectionLost.abnormalClose": "WebSocket закрыт аварийно: {{code}}",
 
+  // Нативное меню Desktop (macOS) и его двойник в оболочке Windows. Термины взяты из уже
+  // переведённой палитры команд, чтобы одно и то же действие не называлось в меню и в палитре
+  // по-разному: «сессия», «проект», «боковая панель», «дерево файлов», «настройки».
+  // Многоточие в конце пункта означает «откроется диалог» — это соглашение платформы, и оно
+  // сохраняется в переводе. Имя приложения (OpenCode) не переводится.
+  // Пункты стандартного меню приложения: имя приложения в них не переводится, а глаголы — да.
+  "menu.app.about": "О программе OpenCode",
+  "menu.app.hide": "Скрыть OpenCode",
+  "menu.app.hideOthers": "Скрыть остальные",
+  "menu.app.unhide": "Показать все",
+  "menu.app.quit": "Завершить OpenCode",
+  "menu.app.checkForUpdates": "Проверить обновления…",
+  "menu.app.settings": "Настройки",
+  "menu.app.reloadWebview": "Перезагрузить оболочку",
+  "menu.app.restart": "Перезапустить",
+  "menu.app.exportLogs": "Выгрузить журналы…",
+
+  "menu.file": "Файл",
+  "menu.file.newSession": "Новая сессия",
+  "menu.file.openProject": "Открыть проект…",
+  "menu.file.settings": "Настройки",
+  "menu.file.newWindow": "Новое окно",
+  "menu.file.closeWindow": "Закрыть окно",
+
+  "menu.edit": "Правка",
+  "menu.edit.undo": "Отменить",
+  "menu.edit.redo": "Вернуть",
+  "menu.edit.cut": "Вырезать",
+  "menu.edit.copy": "Копировать",
+  "menu.edit.paste": "Вставить",
+  "menu.edit.delete": "Удалить",
+  "menu.edit.selectAll": "Выделить всё",
+
+  "menu.view": "Вид",
+  "menu.view.toggleSidebar": "Боковая панель",
+  "menu.view.toggleTerminal": "Терминал",
+  "menu.view.toggleFileTree": "Дерево файлов",
+  "menu.view.reload": "Перезагрузить",
+  "menu.view.toggleDevTools": "Инструменты разработчика",
+  "menu.view.actualSize": "Исходный размер",
+  "menu.view.zoomIn": "Крупнее",
+  "menu.view.zoomOut": "Мельче",
+  "menu.view.toggleFullScreen": "Полноэкранный режим",
+
+  "menu.go": "Переход",
+  "menu.go.back": "Назад",
+  "menu.go.forward": "Вперёд",
+  "menu.go.previousSession": "Предыдущая сессия",
+  "menu.go.nextSession": "Следующая сессия",
+  "menu.go.previousProject": "Предыдущий проект",
+  "menu.go.nextProject": "Следующий проект",
+
+  "menu.window": "Окно",
+  "menu.window.minimize": "Свернуть",
+  "menu.window.maximize": "Развернуть",
+  "menu.window.closeWindow": "Закрыть окно",
+
+  "menu.help": "Справка",
+  "menu.help.documentation": "Документация OpenCode",
+  "menu.help.supportForum": "Форум поддержки",
+  "menu.help.exportLogs": "Выгрузить журналы…",
+  "menu.help.shareFeedback": "Оставить отзыв",
+  "menu.help.reportBug": "Сообщить об ошибке",
+
   // corp: корпоративный слой — вход по SSO и витрина коннекторов (S-I1)
   "corp.command.connectors": "Витрина коннекторов",
   "corp.command.connectors.description": "Корпоративные MCP-серверы из Hub",

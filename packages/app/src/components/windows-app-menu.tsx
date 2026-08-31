@@ -6,7 +6,14 @@ import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 
 import { useCommand } from "@/context/command"
-import { DESKTOP_MENU, desktopMenuVisible, type DesktopMenuAction, type DesktopMenuEntry } from "@/desktop-menu"
+import {
+  DESKTOP_MENU,
+  desktopMenuLabel,
+  desktopMenuVisible,
+  type DesktopMenuAction,
+  type DesktopMenuEntry,
+} from "@/desktop-menu"
+import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 
 export function WindowsAppMenu(props: {
@@ -14,6 +21,12 @@ export function WindowsAppMenu(props: {
   platform: ReturnType<typeof usePlatform>
   variant?: "legacy" | "v2"
 }) {
+  const language = useLanguage()
+  /* Подписи приходят из общего словаря (F30): полоса меню Windows и нативное меню macOS берут одни и
+     те же ключи, а смену языка эта оболочка отрабатывает сама — `t` реактивен. */
+  const label = (entry: { label?: string; labelKey?: Parameters<typeof desktopMenuLabel>[0]["labelKey"] }) =>
+    desktopMenuLabel(entry, language.t) ?? ""
+
   let lastFocused: HTMLElement | undefined
 
   const rememberFocus = () => {
@@ -79,7 +92,7 @@ export function WindowsAppMenu(props: {
           <DropdownMenu.Group>
             <DropdownMenu.GroupLabel class="desktop-app-menu-heading">OpenCode</DropdownMenu.GroupLabel>
             {DESKTOP_MENU.filter((menu) => desktopMenuVisible(menu, "windows")).map((menu) => (
-              <DesktopMenuSubmenu label={menu.label}>
+              <DesktopMenuSubmenu label={label(menu)}>
                 {menu.items
                   ?.filter((entry) => desktopMenuVisible(entry, "windows"))
                   .map((entry) =>
@@ -87,7 +100,7 @@ export function WindowsAppMenu(props: {
                       <DropdownMenu.Separator />
                     ) : (
                       <DesktopMenuItem
-                        label={entry.label ?? ""}
+                        label={label(entry)}
                         keybind={entry.command ? props.command.keybind(entry.command) : entry.accelerator?.windows}
                         disabled={entry.command ? commandDisabled(entry.command) : false}
                         onSelect={() => runEntry(entry)}

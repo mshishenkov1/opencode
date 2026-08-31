@@ -374,14 +374,25 @@
   gap: 6px;
 }
 
+/*
+ * Плитка инструмента (макет заказчика от 30.08, экран 2): на ней стоит ТЕХНИЧЕСКОЕ имя, и потому
+ * шрифт моноширинный — как в макете. Имя инструмента читают как код, а не как фразу: одинаковая
+ * ширина знака держит колонку плиток ровной и не даёт спутать `l` с `1`.
+ */
 [data-slot="corp-tool-chip"] {
   background: var(--surface-weak);
   border-radius: 7px;
   padding: 5px 10px;
   color: var(--text-base);
+  font-family: var(--font-family-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Техническое имя в строке разрешений — тем же моноширинным и по той же причине (макет, экран 3). */
+[data-slot="corp-tool-row"] [data-slot="corp-tool-name"] {
+  font-family: var(--font-family-mono);
 }
 
 /*

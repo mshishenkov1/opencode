@@ -997,7 +997,9 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
                   >
                     <span class="flex flex-col min-w-0">
                       <span class="text-14-regular text-text-strong truncate">{tool.title}</span>
-                      <span class="text-12-regular text-text-weak truncate">{tool.name}</span>
+                      <span data-slot="corp-tool-name" class="text-12-regular text-text-weak truncate">
+                        {tool.name}
+                      </span>
                     </span>
                     <span class="flex-1" />
                     {/*
@@ -1882,8 +1884,14 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
               </Show>
 
               {/* 5. «Инструменты» (S-D11, ревизия 1.14): что именно коннектор умеет — видно ДО
-                  подключения, человеческими именами из словаря. Источник один — раздел `tools`
-                  словаря разрешений; словаря нет — блока нет, выдумывать список не из чего. */}
+                  подключения. Источник один — раздел `tools` словаря разрешений; словаря нет —
+                  блока нет, выдумывать список не из чего.
+
+                  На плитке стоит ТЕХНИЧЕСКОЕ имя моноширинным, как в утверждённом макете (экран 2:
+                  `whoami`, `list_my_channels`, `get_channel_posts`), а человеческое имя из словаря
+                  уходит в подсказку при наведении. Прежде было наоборот — заказчик это расхождение
+                  отклонил 31.08. Человеческие имена при этом не пропали: экран разрешений строит по
+                  ним каждую свою строку. */}
               <Show when={connectorTools(entry()).length > 0}>
                 <div class="flex flex-col gap-2" data-slot="corp-connector-tools">
                   <span class="flex items-center gap-2">
@@ -1897,8 +1905,15 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                       }
                     >
                       {(tool) => (
-                        <span data-slot="corp-tool-chip" class="text-12-regular" title={tool.name}>
-                          {tool.label}
+                        <span
+                          data-slot="corp-tool-chip"
+                          class="text-12-regular"
+                          // Подсказка — человеческое имя, и ТОЛЬКО когда оно есть: у инструмента без
+                          // строки в словаре `label` равен `name`, и подсказка повторяла бы плитку
+                          // слово в слово. Пустой подсказки на плитке не остаётся.
+                          title={tool.label === tool.name ? undefined : tool.label}
+                        >
+                          {tool.name}
                         </span>
                       )}
                     </For>

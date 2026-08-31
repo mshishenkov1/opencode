@@ -1281,6 +1281,7 @@ export const dict = {
     "The Hub is not answering. This is not about your token — try again in a few minutes",
   "corp.error.connect.unknown": "The connection failed and the system named no reason. Try again",
   "corp.error.connect.details": "Error code: {{code}}",
+  "corp.error.request.unknown": "The app could not complete the request and the system named no reason. Try again",
 
   "corp.upgrade.disabled":
     "Corporate builds are updated centrally: get the new version from whoever distributes the build",

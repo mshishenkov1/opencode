@@ -352,6 +352,31 @@ export function revokeKey(result: "revoked" | "not_revoked" | "unreachable" | "s
   return "corp.connect.revoke.unreachable" as const
 }
 
+/**
+ * Заголовок тоста, когда сорвался САМ запрос действия (S-V19, S-I1).
+ *
+ * Заголовок называет, что не получилось, а не то, каким способом это выяснилось: у «Подключить»
+ * это «Подключение не удалось» — тот же текст, каким тот же отказ назван на карточке и в тосте
+ * успешного ответа с полем `error`. У прочих действий отдельного текста в словаре нет, и общий
+ * «Запрос не выполнен» честнее выдуманного: он говорит ровно то, что известно.
+ */
+export function actionFailureTitleKey(kind: ConnectorAction["kind"]) {
+  return kind === "connect" ? ("corp.connectors.neverConnected" as const) : ("common.requestFailed" as const)
+}
+
+/**
+ * Техническая подробность сорвавшегося запроса — то, что покажется подсказкой (S-V19).
+ *
+ * В основной текст она не попадает никогда и не показывается вовсе, когда её нет: пустая строка
+ * подсказкой не становится, и «Код ошибки:» с пустотой после двоеточия на экране не появляется —
+ * ровно тот дефект, который ревизия 1.14 убрала у класса `unknown` (DISPUTE-I14-03).
+ */
+export function actionFailureDetail(error: unknown): string | undefined {
+  const text = error instanceof Error ? error.message : typeof error === "string" ? error : ""
+  const trimmed = text.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
 export function useConnectorAction() {
   const sdk = useServerSDK()
   const language = useLanguage()
@@ -436,11 +461,24 @@ export function useConnectorAction() {
     // S-V28 п.10ж: у действий витрины локальная часть выполняется до ответа Hub (S-V17), поэтому
     // сорванный запрос — не «ничего не произошло». Карточка обязана показать то, что на сервере,
     // а не то, что было до нажатия.
-    onError: async (error) => {
+    //
+    // S-V19 (ревизия 1.14): отказ, пришедший ИСКЛЮЧЕНИЕМ, говорит с пользователем теми же словами,
+    // что и отказ, пришедший полем `error` успешного ответа. Прежде текст исключения уходил в тост
+    // как есть, и на стенде на первом же клике «Подключить» у неподключённой карточки появлялось
+    // «Запрос не выполнен / Expected object, got undefined» — английская фраза про схему тела
+    // запроса. Класс отказа здесь неизвестен (его считает сервер, а сюда попадает случай, когда
+    // сервер до ответа не дошёл), и клиент правило сервера не повторяет (S-T12): пользователю
+    // достаётся честное «причину система не назвала» и предлагаемый шаг, а техническая строка —
+    // отдельным предложением-подсказкой и только когда она непуста.
+    onError: async (error, action) => {
+      const detail = actionFailureDetail(error)
+      const explained = language.t("corp.error.request.unknown")
       showToast({
         variant: "error",
-        title: language.t("common.requestFailed"),
-        description: error instanceof Error ? error.message : String(error),
+        title: language.t(actionFailureTitleKey(action.kind)),
+        description: detail
+          ? `${explained}. ${language.t("corp.error.connect.details", { code: detail })}`
+          : explained,
       })
       await invalidate()
     },

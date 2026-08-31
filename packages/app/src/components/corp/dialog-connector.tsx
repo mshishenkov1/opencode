@@ -239,6 +239,34 @@ export function verifiedShape(verifiedAt: string | undefined, now: Date): Verifi
 }
 
 /**
+ * ВИД страницы коннектора — состав блоков зависит от СОСТОЯНИЯ (решение заказчика от 31.08).
+ *
+ * До этого решения страница показывала всё подряд в любом состоянии, и заказчик, глядя на собранное
+ * приложение, назвал это расхождением с макетом: в макете экраны 2 и 3 отличаются не оформлением, а
+ * СОСТАВОМ. Экран 2 (не подключён) — витрина товара: «Скопировать ссылку», описание абзацами, строка
+ * свойств, плитки инструментов; человек читает, что он собирается подключить. Экран 3 (подключён) —
+ * пульт управления: шапка с бейджем и строкой «учётная запись · способ · когда проверено» и сразу
+ * «Разрешения»; ни описания, ни свойств, ни плиток там нет. Рекламу того, что уже стоит, показывать
+ * незачем, а список инструментов у подключённого и так стоит строками экрана разрешений — плитками
+ * он дублировался бы дважды на одной странице.
+ *
+ * `"account"` — вид экрана 3, `"catalog"` — вид экрана 2. Промежуточные состояния (соединение
+ * потеряно, подключение не удалось, нужна повторная авторизация) макет не рисует, и решение по ним
+ * принято по его духу: делит их наличие СОХРАНЁННЫХ учётных данных. Есть `has_credentials` — про
+ * коннектор уже известно «кем» и «когда проверено», человек им пользовался, и ему нужен пульт, а не
+ * витрина: вид `"account"`. Нет — подключение не состоялось ни разу (или данные забыты), и человеку
+ * снова нужно понять, что он подключает: вид `"catalog"`.
+ *
+ * Строка состояния с объяснением (S-V19) в состав НЕ входит и этим правилом не трогается: она есть
+ * в обоих видах всегда — именно в промежуточных состояниях она и объясняет, что случилось.
+ */
+export type ConnectorPageView = "catalog" | "account"
+
+export function pageView(card: CorpCatalogCard): ConnectorPageView {
+  return card.state === "connected" || card.has_credentials === true ? "account" : "catalog"
+}
+
+/**
  * Строка под именем подключённого коннектора: «учётная запись · способ · когда проверено»
  * (макет заказчика от 30.08, экран 3).
  *
@@ -259,7 +287,7 @@ export function identityParts(
   method: string | undefined,
   verified: string | undefined,
 ): string[] {
-  if (card.state !== "connected" && card.has_credentials !== true) return []
+  if (pageView(card) !== "account") return []
   return [card.account, method, verified].filter((part): part is string => Boolean(part))
 }
 
@@ -1083,14 +1111,25 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
  *
  * | Состав способов карточки | Что на экране |
  * |---|---|
- * | доступен ровно один, недоступных нет | выбора нет вовсе; сразу форма ввода токена |
- * | способов больше одного (в любом сочетании) | список **всех**: доступные выбираются, каждый недоступный — элемент выбора с `disabled` и причиной рядом |
- * | доступных нет ни одного | формы нет; список способов с причинами и ни одного поля ввода |
+ * | доступен ровно один | выбора нет вовсе; способ назван подзаголовком шапки формы, сразу поле ввода |
+ * | доступных больше одного | компактный ряд выбора над формой — по элементу на каждый ДОСТУПНЫЙ способ |
+ * | доступных нет ни одного | формы нет; ни одного поля ввода |
+ *
+ * Критерий — число ДОСТУПНЫХ способов, а не общее их число (решение заказчика от 31.08 по макету,
+ * экран 4). До него «доступен ровно один, а рядом лежит недоступный» давало `"list"`, и у ТЭГ, где
+ * OAuth закрыт администратором, над формой висел выбор из одного нажимаемого элемента и одного
+ * серого. Выбор из одного — не выбор; способ в такой карточке называет подзаголовок шапки, как в
+ * макете, а недоступный способ уходит приглушённой строкой ПОД форму.
+ *
+ * Недоступный способ при этом по-прежнему **не прячется** (S-V28 п.4): он назван вместе с причиной
+ * в обоих случаях, и меняется только его место на экране — из ряда выбора он ушёл под форму.
+ * Спрятанный способ неотличим от несуществующего, и пользователь идёт спрашивать, куда делось
+ * подключение.
  */
 export function methodChoice(methods: CorpAuthMethodView[]): "single" | "list" | "none" {
   const available = methods.filter((method) => method.available)
   if (available.length === 0) return "none"
-  if (methods.length === 1) return "single"
+  if (available.length === 1) return "single"
   return "list"
 }
 
@@ -1216,8 +1255,13 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
   const language = useLanguage()
   const connect = useConnectToken()
 
-  const methods = createMemo(() => props.card.auth_methods ?? [])
+  /** Та же карточка под тем же именем, что и на самой странице: значок формы берётся из неё же. */
+  const entry = () => props.card
+
+  const methods = createMemo(() => entry().auth_methods ?? [])
   const available = createMemo(() => methods().filter((method) => method.available))
+  /** Недоступные способы — они не прячутся, а стоят приглушёнными строками под формой (S-V28 п.4). */
+  const unavailable = createMemo(() => methods().filter((method) => !method.available))
   const choice = createMemo(() => methodChoice(methods()))
 
   const [chosen, setChosen] = createSignal<string | undefined>()
@@ -1268,16 +1312,21 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
 
   return (
     <div class="flex flex-col gap-3" data-slot="corp-connect">
-      {/* Шапка формы (макет заказчика, экран 4): значок и подпись способа. Приглушённый заголовок
-          «Подключение» больше не висит голой строкой над пустым местом — он стоит в шапке рядом со
-          значком, а под ним названо то, чем именно подключаются. */}
+      {/* Шапка формы (макет заказчика, экран 4). Форма — САМОСТОЯТЕЛЬНЫЙ блок со своей шапкой, а не
+          поле, воткнутое посреди страницы: крупный значок коннектора, заголовок «Подключение <имя>»
+          и под ним подзаголовок — название способа. Значок тот же, что в шапке страницы и в строке
+          витрины, и берётся он из тех же полей карточки: своего значка форма не выдумывает. */}
       <div data-slot="corp-connect-head">
-        <Icon name="shield" size="small" />
+        <ConnectorIcon title={entry().title} icon={entry().icon} color={entry().icon_color} size="large" />
         <span>
-          <span class="text-14-regular text-text-strong">{language.t("corp.connect.title")}</span>
-          {/* Название способа печатается ЗДЕСЬ ровно тогда, когда выбирать не из чего: при выборе
-              его несут сами элементы выбора, и второй раз оно не повторяется. Подпись способа —
-              данные каталога, клиент их не переводит (S-I6). */}
+          {/* Имя коннектора — данные каталога и подставляется как есть (S-I6); переводится только
+              обрамляющая фраза. */}
+          <span class="text-16-medium text-text-strong">
+            {language.t("corp.connect.title", { title: entry().title })}
+          </span>
+          {/* Подзаголовок — название способа. Печатается ровно тогда, когда выбирать не из чего:
+              при выборе его несут сами элементы выбора, и второй раз оно не повторяется. Подпись
+              способа — данные каталога, клиент их не переводит (S-I6). */}
           <Show when={choice() === "single" ? selected() : undefined}>
             {(method) => <span class="text-12-regular text-text-weak">{method().title}</span>}
           </Show>
@@ -1285,43 +1334,35 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
       </div>
 
       <Show when={!connected()}>
-        {/* Случай 2 и 3 таблицы S-V28 п.4: список ВСЕХ способов. Недоступный отрисован элементом
-            выбора с атрибутом `disabled` и текстом причины в том же блоке — рядом с ним, а не в
-            другой части экрана. Поля ввода токена у недоступного способа в дереве нет.
+        {/* Выбор способа — только когда ДОСТУПНЫХ больше одного (случай 2 таблицы S-V28 п.4), и
+            стоит он компактным рядом НАД формой, как в макете. Выбор из одного элемента не выбор:
+            в случае 1 способ назван подзаголовком шапки выше, а недоступные способы вместе с
+            причинами стоят приглушёнными строками ПОД формой — они не спрятаны ни в одном случае.
 
             Заголовок «Способ подключения» ушёл из отрисовки в `aria-label` группы: голой строкой
             над списком названий он читался как сырая подпись поля данных, а не как выбор. Для
             скринридера группа названа по-прежнему, и текст ключа не тронут. */}
-        <Show when={choice() !== "single"}>
+        <Show when={choice() === "list"}>
           <div
             data-slot="corp-connect-methods"
             role="radiogroup"
             aria-label={language.t("corp.connect.chooseMethod")}
           >
-            <For each={methods()}>
+            <For each={available()}>
               {(method) => (
-                <div data-slot="corp-connect-method-option">
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={method.available && selected()?.id === method.id ? "true" : "false"}
-                    data-action="corp-connect-method"
-                    data-method={method.id}
-                    data-selected={method.available && selected()?.id === method.id ? "true" : undefined}
-                    disabled={!method.available}
-                    class="text-14-regular"
-                    onClick={() => method.available && setChosen(method.id)}
-                  >
-                    {/* Подпись способа — данные каталога, клиент их не переводит (S-I6). */}
-                    {method.title}
-                  </button>
-                  <Show when={!method.available}>
-                    <span class="text-12-regular text-text-weak" data-slot="corp-connect-method-reason">
-                      {/* Текст причины из каталога показывается дословно, иначе — свой ключ (S-I6). */}
-                      {method.unavailable_reason ?? language.t(methodUnavailableKey(method.unavailable_code))}
-                    </span>
-                  </Show>
-                </div>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={selected()?.id === method.id ? "true" : "false"}
+                  data-action="corp-connect-method"
+                  data-method={method.id}
+                  data-selected={selected()?.id === method.id ? "true" : undefined}
+                  class="text-14-regular"
+                  onClick={() => setChosen(method.id)}
+                >
+                  {/* Подпись способа — данные каталога, клиент их не переводит (S-I6). */}
+                  {method.title}
+                </button>
               )}
             </For>
           </div>
@@ -1360,32 +1401,40 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
                   if (event.key === "Enter") submit()
                 }}
               />
-              {/* Отсутствующее необязательное поле строки не рисует — пустой строки не появляется. */}
-              <Show when={method().field?.hint}>
-                {(hint) => (
-                  <span class="text-12-regular text-text-weak" data-slot="corp-connect-hint">
-                    {hint()}
-                  </span>
-                )}
-              </Show>
-              {/* Где живёт введённое значение (макет заказчика, экран 4). Утверждение проверяемое:
-                  токен кладётся в `connector-credentials.json` с правами `0o600` (S-V26 п.1), а в
-                  прямом режиме уходит только в саму целевую систему. */}
+              {/* Где живёт введённое значение (макет заказчика, экран 4) — сразу под полем, как в
+                  макете. Утверждение проверяемое: токен кладётся в `connector-credentials.json` с
+                  правами `0o600` (S-V26 п.1), а в прямом режиме уходит только в саму целевую
+                  систему. */}
               <span class="text-12-regular text-text-weak" data-slot="corp-connect-storage">
                 {language.t("corp.connect.storage")}
               </span>
-              <Show when={method().field?.docs_url}>
-                {(docs) => (
-                  <a
-                    class="text-12-regular text-text-weak underline break-all"
-                    data-slot="corp-connect-docs"
-                    href={docs()}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {language.t("corp.connect.docs")}
-                  </a>
-                )}
+              {/* Подсказка каталога и ссылка на документацию — ОДНОЙ приглушённой строкой под полем.
+                  В макете их нет вовсе, но это данные каталога, и прятать их нельзя: без них человек
+                  не знает, где взять токен. Поэтому они не спрятаны, а сделаны второстепенными по
+                  весу — приглушённый текст в одну строку вместо двух самостоятельных блоков, каждый
+                  из которых спорил за внимание с полем ввода.
+
+                  Отсутствующее необязательное поле строки не рисует — пустой строки не появляется, и
+                  сама строка не рисуется, когда нет ни подсказки, ни ссылки. */}
+              <Show when={method().field?.hint || method().field?.docs_url}>
+                <span class="text-12-regular text-text-weak" data-slot="corp-connect-note">
+                  <Show when={method().field?.hint}>
+                    {(hint) => <span data-slot="corp-connect-hint">{hint()}</span>}
+                  </Show>
+                  <Show when={method().field?.docs_url}>
+                    {(docs) => (
+                      <a
+                        class="underline break-all"
+                        data-slot="corp-connect-docs"
+                        href={docs()}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {language.t("corp.connect.docs")}
+                      </a>
+                    )}
+                  </Show>
+                </span>
               </Show>
               <Show when={length()}>
                 {(error) => (
@@ -1423,6 +1472,29 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
               </div>
             </div>
           )}
+        </Show>
+
+        {/* Недоступные способы (S-V28 п.4) — ПОД формой, по приглушённой строке на способ: «способ —
+            причина». Спрятать их нельзя: спрятанный способ неотличим от несуществующего, и человек
+            идёт спрашивать, куда делось подключение. Но и в ряд выбора им нельзя — выбрать их
+            нельзя, а серый элемент выбора рядом с нажимаемым читается как «сейчас загрузится».
+            Поэтому они стоят под формой второстепенным весом, названные вместе с причиной.
+
+            Правило одно на оба случая: и когда доступный способ один (пилюль нет вовсе), и когда их
+            несколько (в ряду выбора стоят только доступные). */}
+        <Show when={unavailable().length > 0}>
+          <div data-slot="corp-connect-methods-unavailable">
+            <For each={unavailable()}>
+              {(method) => (
+                <span class="text-12-regular text-text-weak" data-slot="corp-connect-method-reason" data-method={method.id}>
+                  {/* Название способа — данные каталога (S-I6); текст причины из каталога
+                      показывается дословно, а без него — свой ключ по коду. */}
+                  {method.title} &mdash;{" "}
+                  {method.unavailable_reason ?? language.t(methodUnavailableKey(method.unavailable_code))}
+                </span>
+              )}
+            </For>
+          </div>
         </Show>
       </Show>
 
@@ -1500,6 +1572,17 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
 
   /** Раскрыт ли список инструментов целиком (S-D11): выбор живёт только пока открыта страница. */
   const [allTools, setAllTools] = createSignal(false)
+
+  /**
+   * Вид страницы (решение заказчика от 31.08): состав блоков зависит от состояния карточки.
+   * Пока карточка не получена, страница показывает только крошку, и вид ни на что не влияет — но
+   * значение у него всё равно должно быть определённым, и это `"catalog"`: про непришедшую карточку
+   * неизвестно ничего, а вид `"account"` утверждал бы, что подключение состоялось.
+   */
+  const view = createMemo<ConnectorPageView>(() => {
+    const entry = card()
+    return entry ? pageView(entry) : "catalog"
+  })
 
   /**
    * Задан ли адрес Hub в этой сборке (S-C10 п.7). Тот же признак, которым сервер решает судьбу
@@ -1602,11 +1685,16 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
       action={
         // Строка с хлебной крошкой макета несёт справа «Скопировать ссылку» (экран 2) — оно и
         // стоит крайним справа, как в макете; «Назад» осталось в том же ряду, левее.
+        //
+        // «Скопировать ссылку» есть ТОЛЬКО в виде «catalog»: в макете оно стоит на экране 2 и
+        // отсутствует на экране 3 (решение заказчика от 31.08). Копируется адрес документации —
+        // ссылка, которой делятся с тем, кто коннектор ещё НЕ подключил; у себя на пульте
+        // управления уже подключённым она не нужна.
         <div class="flex items-center gap-2">
           <Button size="small" variant="ghost" onClick={() => dialog.close()}>
             {language.t("corp.connector.back")}
           </Button>
-          <Show when={card()?.docs_url}>
+          <Show when={view() === "catalog" ? card()?.docs_url : undefined}>
             {(value) => (
               <Button
                 size="small"
@@ -1811,6 +1899,13 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                 </Show>
               </div>
 
+              {/* 3–5. Витрина товара: описание, свойства и плитки инструментов. Все три блока
+                  живут ТОЛЬКО в виде «catalog» (макет заказчика, экран 2; решение заказчика от
+                  31.08): на экране 3 подключённого коннектора их нет ни одного. Охранник вида
+                  стоит НАД тройкой, а не внутри каждого блока: правило одно на все три, и
+                  собственные условия блоков (есть ли описание, есть ли хоть одно свойство, есть ли
+                  словарь инструментов) он не подменяет — они остаются на своих местах. */}
+              <Show when={view() === "catalog"}>
               {/* 3. Описание — то, чего на витрине нет (S-D6, S-D11), и рисуется оно абзацами:
                   разделитель абзацев в данных — пустая строка. До ревизии 1.14 описание шло одним
                   блоком, и два абзаца слипались в стену текста. */}
@@ -1947,6 +2042,7 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                     </div>
                   </Show>
                 </div>
+              </Show>
               </Show>
 
               {/* 6. Блок подключения (S-D13): между «Инструментами» и «Разрешениями», в окне приложения.

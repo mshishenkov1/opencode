@@ -1164,7 +1164,9 @@ export const dict = {
   "corp.connectors.methodUnavailable.envHeader": "This connection method requires a value the app does not have",
 
   // Форма подключения (S-D13).
-  "corp.connect.title": "Connection",
+  // Заголовок шапки формы (макет заказчика, экран 4): «Подключение <имя>», а не голое «Подключение».
+  // Имя коннектора — данные каталога и подставляется как есть (S-I6).
+  "corp.connect.title": "Connect {{title}}",
   "corp.connect.chooseMethod": "Connection method",
   "corp.connect.docs": "Where to get the token",
   "corp.connect.submit": "Connect",

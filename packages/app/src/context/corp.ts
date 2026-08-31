@@ -365,16 +365,53 @@ export function actionFailureTitleKey(kind: ConnectorAction["kind"]) {
 }
 
 /**
- * Техническая подробность сорвавшегося запроса — то, что покажется подсказкой (S-V19).
+ * Полный технический текст сорвавшегося запроса — то, что кладётся в ПОДСКАЗКУ, и только туда.
+ *
+ * Отдельно от {@link actionFailureDetail} потому, что у этих двух текстов разные места и разные
+ * права: подсказка терпит длинную многострочную техническую строку (её читают, наведя мышь и
+ * решив прочитать), а видимый текст отказа — нет.
+ */
+export function actionFailureText(error: unknown): string | undefined {
+  const text = error instanceof Error ? error.message : typeof error === "string" ? error : ""
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return undefined
+  // Верхняя граница есть и у подсказки: она живёт в атрибуте `title`, и дамп конфига на несколько
+  // экранов подсказкой быть перестаёт.
+  return trimmed.length > HINT_LIMIT ? trimmed.slice(0, HINT_LIMIT) + "…" : trimmed
+}
+
+/** Предел подсказки: столько технического текста человек ещё способен прочитать наведением. */
+const HINT_LIMIT = 2000
+
+/**
+ * Сколько технического текста имеет право попасть в ВИДИМЫЙ текст отказа как «Код ошибки: …».
+ * Код ошибки — короткая строка в одну строчку; всё, что длиннее, кодом не является.
+ */
+const DETAIL_LIMIT = 120
+
+/**
+ * Технический код сорвавшегося запроса — то, что попадает в текст отказа рядом с объяснением
+ * (S-V19), и **только** когда это действительно код.
  *
  * В основной текст она не попадает никогда и не показывается вовсе, когда её нет: пустая строка
  * подсказкой не становится, и «Код ошибки:» с пустотой после двоеточия на экране не появляется —
  * ровно тот дефект, который ревизия 1.14 убрала у класса `unknown` (DISPUTE-I14-03).
+ *
+ * Ревизия 1.14, второй дефект того же места: сюда приходит `error.message`, а у отказа разбора
+ * конфига это НЕ код, а весь файл целиком — `\n--- JSONC Input ---\n{ … }\n--- Errors ---\n…`.
+ * Заказчик получил тост, в котором после «Код ошибки:» шёл дамп его собственного `opencode.jsonc`.
+ * Правило теперь описывает не «непустая строка», а «код»: одна строка, не длиннее
+ * {@link DETAIL_LIMIT}. Всё прочее из видимого текста уходит — человеку остаётся честное «причину
+ * система не назвала», а полный текст живёт в подсказке ({@link actionFailureText}) и в логе
+ * сервера. Прятать техническую строку от того, кому она нужна, при этом не приходится: подсказку
+ * показывает то место, где у отказа есть свой знак — строка разрешений.
  */
 export function actionFailureDetail(error: unknown): string | undefined {
-  const text = error instanceof Error ? error.message : typeof error === "string" ? error : ""
-  const trimmed = text.trim()
-  return trimmed.length > 0 ? trimmed : undefined
+  const text = actionFailureText(error)
+  if (text === undefined) return undefined
+  if (text.length > DETAIL_LIMIT) return undefined
+  if (text.includes("\n")) return undefined
+  return text
 }
 
 export function useConnectorAction() {

@@ -268,6 +268,14 @@ export const CatalogServer = Schema.Struct({
   owner: Schema.optional(Schema.String),
   contact: Schema.optional(Schema.String),
   docs_url: Schema.optional(Schema.String),
+  /**
+   * Человеческое имя места, куда ведёт `docs_url` (макет заказчика от 30.08, экран 2:
+   * «Документация — внутренний портал»).
+   *
+   * Поле необязательно и разбирается тем же терпимым правилом, что `summary`. Своего названия
+   * форк не выдумывает: без поля ссылка подписывается именем узла, как и до появления `docs_label`.
+   */
+  docs_label: Schema.optional(Schema.String),
   status: Schema.optional(ServerStatus),
   mode: ServerMode,
   mcp_url: Schema.String,
@@ -901,6 +909,8 @@ export function parseCatalogServer(value: unknown): ServerResult {
   const owner = optionalString(raw["owner"])
   const contact = optionalString(raw["contact"])
   const docsUrl = optionalString(raw["docs_url"])
+  // Подпись ссылки на документацию (макет от 30.08, экран 2) — данные каталога, как и сам адрес.
+  const docsLabelValue = optionalString(raw["docs_label"])
   const status = decode(ServerStatus, raw["status"])
   // S-V22: значение неизвестного вида равносильно отсутствию поля и на приём карточки не влияет.
   const type = optionalString(raw["type"])
@@ -923,6 +933,7 @@ export function parseCatalogServer(value: unknown): ServerResult {
       ...(owner === undefined ? {} : { owner }),
       ...(contact === undefined ? {} : { contact }),
       ...(docsUrl === undefined ? {} : { docs_url: docsUrl }),
+      ...(docsLabelValue === undefined ? {} : { docs_label: docsLabelValue }),
       ...(status === undefined ? {} : { status }),
       ...(type === undefined ? {} : { type }),
       ...(icon === undefined ? {} : { icon }),
@@ -1302,6 +1313,8 @@ export const CatalogCard = Schema.Struct({
   owner: Schema.optional(Schema.String),
   contact: Schema.optional(Schema.String),
   docs_url: Schema.optional(Schema.String),
+  /** Человеческое имя места, куда ведёт `docs_url` (макет заказчика от 30.08, экран 2). */
+  docs_label: Schema.optional(Schema.String),
   // Для alias, пропавшего из каталога (S-V6, правило 1), данных Hub нет — поля отсутствуют.
   server_status: Schema.optional(ServerStatus),
   mode: Schema.optional(ServerMode),

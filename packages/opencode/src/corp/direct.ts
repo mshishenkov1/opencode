@@ -85,6 +85,29 @@ export function readField(text: string, field: string): string | undefined {
   return typeof current === "string" && current !== "" ? current : undefined
 }
 
+/**
+ * Как человека зовут — по ответу целевой системы на проверку токена (макет заказчика от 30.08,
+ * экран 3: «Шишенков М. А. · токен сессии · проверен сегодня в 21:40»).
+ *
+ * Целевая система называет человека дважды и по-разному: полем `account_field`, которое каталог
+ * указал явно (у ТЭГ это `email`), и парой имени и фамилии, которую отдаёт `/users/me`
+ * Mattermost-совместимого API. В строке под именем коннектора стоит имя, а не почта: почта — это
+ * логин, а в макете написано, КТО подключён.
+ *
+ * Порядок предпочтения: «Фамилия И.» → фамилия → имя → поле `account_field`. Ничего не собирается
+ * из воздуха: нет ни имени, ни фамилии — остаётся ровно то, что система назвала, то есть прежняя
+ * почта. Отчество в ответе Mattermost отсутствует, и второго инициала в подписи не появляется —
+ * выдумать его неоткуда.
+ */
+export function displayAccount(text: string, accountField: string | undefined): string | undefined {
+  const first = readField(text, "first_name")
+  const last = readField(text, "last_name")
+  if (last && first) return `${last} ${[...first][0]}.`
+  if (last) return last
+  if (first) return first
+  return accountField === undefined ? undefined : readField(text, accountField)
+}
+
 export interface VerifyOutcome {
   result: CorpSchema.VerifyResult
   /** Код ответа, когда он был; при `upstream_unreachable` поля нет — не известно ничего. */
@@ -120,9 +143,10 @@ export async function verify(
     const rejected = answer.status === 401 || answer.status === 403
     return { result: rejected ? "token_rejected" : "verify_failed", status: answer.status }
   }
-  // Имя учётной записи читается всегда, когда каталог назвал поле: при `require_account: false` оно
-  // не обязательно, но подпись «Подключено как {{account}}» показать всё равно есть чем.
-  const account = spec.account_field === undefined ? undefined : readField(answer.text, spec.account_field)
+  // Имя учётной записи читается всегда: при `require_account: false` оно не обязательно, но подпись
+  // под именем коннектора показать всё равно есть чем. Предпочитается человеческое имя из ответа
+  // системы, а поле `account_field` каталога остаётся запасным — см. `displayAccount`.
+  const account = displayAccount(answer.text, spec.account_field)
   // Тело, не разобранное как JSON, при успешном коде даёт тот же исход, что пустое поле: система
   // приняла запрос, но пользователя не назвала (S-V25 п.3).
   if (spec.require_account && account === undefined) return { result: "account_missing", status: answer.status }

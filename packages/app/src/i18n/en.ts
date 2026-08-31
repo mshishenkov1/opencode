@@ -1288,7 +1288,7 @@ export const dict = {
   "corp.connector.tools": "Tools",
   "corp.connector.toolsAll": "Show all",
   "corp.connector.toolsLess": "Collapse",
-  "corp.connector.toolsRest": "and {{rest}} more",
+  "corp.connector.toolsRest": "and {{rest}} more — expand with “{{action}}”",
   "corp.connector.menu": "More actions",
 
   // corp: экран разрешений вида permission_groups (S-V9, S-V20, S-V23, S-I1)

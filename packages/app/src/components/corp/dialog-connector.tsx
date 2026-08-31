@@ -166,6 +166,24 @@ export function hasActions(card: CorpCatalogCard): boolean {
 }
 
 /**
+ * Показывается ли на странице отдельная строка состояния (решение заказчика от 31.08).
+ *
+ * В макете такой строки нет ни на экране 2, ни на экране 3, и в обоих случаях по одной причине:
+ * она повторяет то, что уже сказано рядом. У подключённого это делает бейдж «Подключено» возле
+ * имени; у неподключённого — сама страница: кнопка «Подключить» и форма ввода токена не оставляют
+ * места вопросу, подключён ли он.
+ *
+ * Остаются два тона из четырёх — `warning` и `danger`: «соединение потеряно», «подключение не
+ * удалось», «нужна повторная авторизация», «отключено вами», «недоступен». Их не дублирует ничто,
+ * и молчать о них нельзя (S-V19): именно ради них строка и существует. Объяснение ошибки и
+ * признак устаревшей записи живут отдельными строками и этим правилом не трогаются.
+ */
+export function statusVisible(card: Pick<CorpCatalogCard, "state" | "status">): boolean {
+  const tone = statusTone(card)
+  return tone === "warning" || tone === "danger"
+}
+
+/**
  * Описание карточки абзацами (S-D11, ревизия 1.14).
  *
  * Разделитель абзацев в данных — пустая строка; одиночный перенос абзаца не начинает. Текст
@@ -205,11 +223,16 @@ export function connectionMethodTitle(card: CorpCatalogCard): string | undefined
  *
  * В строке свойств стоит имя места, куда ведёт ссылка, а не адрес целиком: адрес со схемой,
  * путём и параметрами читать человеку незачем, а строка свойств от него распухает и переносится.
- * Название портала («внутренний портал» макета) каталог не присылает вовсе, и выдумывать его
- * нельзя — показывается имя узла, то же данное, прочитанное так, как его читает человек.
- * Неразобранный адрес показывается как есть: спрятать ссылку хуже, чем показать её адресом.
+ *
+ * Имя приносит каталог — поле `docs_label` («внутренний портал» макета). Ревизия 1.14 писала, что
+ * такого поля нет и выдумывать название нельзя; поле появилось, и теперь оно и есть источник.
+ * Не прислали — прежнее поведение: имя узла, то же данное, прочитанное так, как его читает
+ * человек. Неразобранный адрес показывается как есть: спрятать ссылку хуже, чем показать её
+ * адресом.
  */
-export function docsLabel(url: string): string {
+export function docsLabel(url: string, label?: string): string {
+  const named = label?.trim()
+  if (named) return named
   try {
     return new URL(url).host.replace(/^www\./, "")
   } catch {
@@ -332,6 +355,29 @@ export async function writeClipboard(value: string): Promise<boolean> {
 
 /** Сколько плиток инструментов показывается до нажатия «Показать все» (S-D11, ревизия 1.14). */
 export const TOOLS_PREVIEW = 18
+
+/**
+ * Место кликабельной части внутри фразы «и ещё 59 — раскрывается по «Показать все»» (макет
+ * заказчика, экран 2).
+ *
+ * Подставляется вместо `{{action}}` перед разрезанием и в готовый текст не попадает никогда:
+ * `U+0000` не набирается на клавиатуре и не встречается ни в одном словаре, поэтому спутать его с
+ * содержимым фразы нельзя.
+ */
+export const TOOLS_ACTION_MARK = "\u0000"
+
+/**
+ * Разрез фразы «и ещё N — …» на две части вокруг кликабельного «Показать все».
+ *
+ * Возвращается пара «до» и «после»; порядок слов и знаки препинания остаются такими, какими их
+ * задал словарь. Метки в строке нет (перевод сделан без `{{action}}`) — вся фраза уходит в «до», и
+ * кнопка встаёт после неё: экран остаётся рабочим, хоть и не дословно по макету.
+ */
+export function toolsRestSplit(text: string): [string, string] {
+  const at = text.indexOf(TOOLS_ACTION_MARK)
+  if (at < 0) return [text, ""]
+  return [text.slice(0, at), text.slice(at + TOOLS_ACTION_MARK.length)]
+}
 
 /**
  * Список инструментов коннектора для блока «Инструменты» (S-D11, S-V20 версии 2).
@@ -1635,6 +1681,14 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
     })
   }
 
+  /**
+   * Фраза «и ещё 59 — раскрывается по «Показать все»» с меткой на месте кликабельной части
+   * (макет заказчика от 30.08, экран 2). Резать её на куски — дело `toolsRestSplit`.
+   */
+  function toolsRest(rest: number): string {
+    return language.t("corp.connector.toolsRest", { rest, action: TOOLS_ACTION_MARK })
+  }
+
   /** Части строки «учётная запись · способ · когда проверено» — только известные (экран 3). */
   function identity(entry: CorpCatalogCard): string[] {
     return identityParts(entry, connectionMethodTitle(entry), verified(entry))
@@ -1769,17 +1823,26 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                         {language.t("corp.connectors.facadeNeedsHub")}
                       </span>
                     </Show>
-                    {/* S-V25 п.7: в прямом режиме предлагаемое действие — «Ввести токен заново»:
-                        оно открывает ту же форму ниже, а не браузерный шаг, которого здесь не
-                        было. Роут `connect` при этом не зовётся: alias с действующими прямыми
-                        учётными данными фасадом не подключается (S-V29 п.1). */}
+                    {/* S-V25 п.7: в прямом режиме предлагаемое действие открывает ту же форму ниже,
+                        а не браузерный шаг, которого здесь не было. Роут `connect` при этом не
+                        зовётся: alias с действующими прямыми учётными данными фасадом не
+                        подключается (S-V29 п.1).
+
+                        ПОДПИСЬ зависит от ВИДА страницы, а не от набора действий сервера (решение
+                        заказчика от 31.08). Вид «catalog» — коннектор человеку ещё не принадлежит:
+                        сохранённых учётных данных нет, заменять нечего, и в макете (экран 2) на
+                        этом месте стоит ровно одно слово — «Подключить». «Заменить токен» живёт
+                        только в виде «account», где токен и правда есть. Прежде подпись бралась
+                        одна на оба вида, и карточка с действием `reconnect` от сервера (была
+                        подключена когда-то, данных не осталось) предлагала заменить то, чего у
+                        неё нет. */}
                     <Show when={entry().connect_mode === "direct"}>
                       <Button
                         size="small"
                         data-action="corp-connect-focus"
                         onClick={() => document.getElementById(`corp-connect-${entry().alias}`)?.focus()}
                       >
-                        {language.t("corp.connect.replace")}
+                        {language.t(view() === "catalog" ? "corp.connectors.connect" : "corp.connect.replace")}
                       </Button>
                     </Show>
                     <Show when={entry().actions.includes("connect") || entry().actions.includes("reconnect")}>
@@ -1808,10 +1871,13 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                             })
                           }}
                         >
-                          {/* S-V16: подпись действия в состоянии 3 — «Повторить»: попытка уже была,
-                              и честнее это назвать; в состояниях 1 и 2 — «Подключить». */}
+                          {/* S-V16 давал состоянию 3 подпись «Повторить»: попытка уже была, и
+                              честнее это назвать. Решением заказчика от 31.08 подпись в виде
+                              «catalog» — всегда «Подключить», как в макете (экран 2): у карточки
+                              без сохранённых данных человек начинает подключение с нуля, каким бы
+                              ни был её прошлый опыт. В виде «account» прежнее правило в силе. */}
                           {language.t(
-                            entry().actions.includes("reconnect")
+                            view() !== "catalog" && entry().actions.includes("reconnect")
                               ? "corp.connectors.retry"
                               : "corp.connectors.connect",
                           )}
@@ -1882,14 +1948,21 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
               {/* 2. Статус: подпись состояния тем же тоном и тем же значком, что в колонке витрины
                   (S-V18), и объяснение ошибки подключения по её классу (S-V19). Причины, по которым
                   действие недоступно, живут не здесь, а в ряду действий шапки — рядом с самим
-                  действием либо на его месте (S-V28 п.4). */}
+                  действием либо на его месте (S-V28 п.4).
+
+                  Строка состояния есть только там, где ей есть что СКАЗАТЬ (решение заказчика от
+                  31.08). Два тона из четырёх её не получают, потому что в макете их нет и потому
+                  что оба дублируют соседа: «Подключено» уже стоит бейджем рядом с именем (экран 3),
+                  а «Не подключено» на экране 2 не написано вовсе — про неподключённый коннектор это
+                  говорит вся страница целиком, от кнопки «Подключить» до формы ввода токена.
+                  Ошибочные состояния (`warning`, `danger`) показываются как прежде: честность
+                  ошибок этим решением не трогается (S-V19), и объяснение под строкой — тоже. */}
               <div class="flex flex-col gap-2">
-                <span data-slot="corp-status-line" data-tone={statusTone(entry())}>
-                  <Show when={entry().state === "connected"}>
-                    <Icon name="check-small" size="small" />
-                  </Show>
-                  <span class="text-14-regular">{language.t(statusKey(entry()))}</span>
-                </span>
+                <Show when={statusVisible(entry())}>
+                  <span data-slot="corp-status-line" data-tone={statusTone(entry())}>
+                    <span class="text-14-regular">{language.t(statusKey(entry()))}</span>
+                  </span>
+                </Show>
                 <Show when={explain(entry())}>
                   {(value) => (
                     <span
@@ -1934,7 +2007,7 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                   отвечает на вопрос «что именно я подключаю» до нажатия кнопки, а данные для него
                   в карточке есть (`auth_methods`). Документация показывается ИМЕНЕМ места, а не
                   адресом целиком: адрес со схемой и путём человеку читать незачем. */}
-              <Show when={entry().owner || connectionMethodTitle(entry()) || entry().docs_url || props.alias}>
+              <Show when={entry().owner || connectionMethodTitle(entry()) || entry().docs_url}>
                 <div class="text-12-regular text-text-weak" data-slot="corp-connector-properties">
                   <Show when={entry().owner}>
                     {(value) => (
@@ -1968,27 +2041,16 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                           rel="noreferrer"
                           title={value()}
                         >
-                          {docsLabel(value())}
+                          {docsLabel(value(), entry().docs_label)}
                         </a>
                       </span>
                     )}
                   </Show>
-                  <Show when={(entry().owner || connectionMethodTitle(entry()) || entry().docs_url) && props.alias}>
-                    <span aria-hidden="true"> &middot; </span>
-                  </Show>
-                  {/* Техническое имя. Из шапки оно ушло — там теперь суть коннектора (макет
-                      заказчика от 30.08, экран 2), а в самом макете технического имени нет вовсе.
-                      Но терять его нельзя: этим именем коннектор зовётся в конфиге, в логах и в
-                      разговоре с поддержкой, поэтому оно встало сюда — свойством среди свойств,
-                      последним, чтобы порядок макета (владелец, подключение, документация) остался
-                      нетронутым. */}
-                  <Show when={props.alias}>
-                    {(value) => (
-                      <span data-slot="corp-connector-property" data-property="alias">
-                        {language.t("corp.connector.alias")} &mdash; {value()}
-                      </span>
-                    )}
-                  </Show>
+                  {/* Технического имени в строке свойств больше нет (решение заказчика от 31.08):
+                      в макете «Техническое имя — tag» не написано нигде, и ревизия 1.14 поставила
+                      его сюда своим решением, а не по макету. Само имя не потеряно — коннектор
+                      зовётся им в конфиге, в логах и в разговоре с поддержкой, и там оно и
+                      остаётся; на витрине товара ему места нет. */}
                 </div>
               </Show>
 
@@ -2027,26 +2089,46 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                       )}
                     </For>
                   </div>
-                  {/* «Показать все» появляется, только когда есть что показывать сверх видимого, и
-                      называет число: «и ещё 59» — это факт, а не намёк. */}
+                  {/* Подпись под плитками — ОДНА ФРАЗА макета (экран 2): «и ещё 59 — раскрывается
+                      по «Показать все»», где «Показать все» — кликабельная часть той же фразы, а не
+                      кнопка рядом с ней. Прежде здесь стояли кнопка и отдельная приписка «и ещё 59»,
+                      и заказчик 31.08 назвал это расхождением с макетом.
+
+                      Фраза приходит из словаря целиком, вместе с кавычками и тире: разрезать её в
+                      коде на «до» и «после» значило бы задать порядок слов за переводчика. Место
+                      кликабельной части названо в самой строке подстановкой `{{action}}` — по ней
+                      строка и делится на два куска, между которыми встаёт кнопка. Число настоящее:
+                      сколько инструментов не поместилось, столько и сказано.
+
+                      После раскрытия фразы нет: там «Свернуть», как было. */}
                   <Show when={connectorTools(entry()).length > TOOLS_PREVIEW}>
-                    <div class="flex items-center gap-2">
-                      <Button
-                        size="small"
-                        variant="ghost"
-                        data-action="corp-tools-toggle"
-                        onClick={() => setAllTools((value) => !value)}
-                      >
-                        {language.t(allTools() ? "corp.connector.toolsLess" : "corp.connector.toolsAll")}
-                      </Button>
-                      <Show when={!allTools()}>
-                        <span class="text-12-regular text-text-weak">
-                          {language.t("corp.connector.toolsRest", {
-                            rest: connectorTools(entry()).length - TOOLS_PREVIEW,
-                          })}
-                        </span>
-                      </Show>
-                    </div>
+                    <Show
+                      when={!allTools()}
+                      fallback={
+                        <div class="flex items-center gap-2">
+                          <Button
+                            size="small"
+                            variant="ghost"
+                            data-action="corp-tools-toggle"
+                            onClick={() => setAllTools(false)}
+                          >
+                            {language.t("corp.connector.toolsLess")}
+                          </Button>
+                        </div>
+                      }
+                    >
+                      <p class="text-12-regular text-text-weak" data-slot="corp-tools-rest">
+                        {toolsRestSplit(toolsRest(connectorTools(entry()).length - TOOLS_PREVIEW))[0]}
+                        <button
+                          type="button"
+                          data-action="corp-tools-toggle"
+                          onClick={() => setAllTools(true)}
+                        >
+                          {language.t("corp.connector.toolsAll")}
+                        </button>
+                        {toolsRestSplit(toolsRest(connectorTools(entry()).length - TOOLS_PREVIEW))[1]}
+                      </p>
+                    </Show>
                   </Show>
                 </div>
               </Show>

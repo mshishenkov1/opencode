@@ -1311,7 +1311,10 @@ export const dict = {
   "corp.connector.tools": "Инструменты",
   "corp.connector.toolsAll": "Показать все",
   "corp.connector.toolsLess": "Свернуть",
-  "corp.connector.toolsRest": "и ещё {{rest}}",
+  // Дословно фраза макета (экран 2): «и ещё 59 — раскрывается по «Показать все»». `{{action}}` —
+  // место кликабельной части внутри фразы; текст самой части берётся из `corp.connector.toolsAll`,
+  // чтобы подпись кнопки и подпись в фразе не разъехались.
+  "corp.connector.toolsRest": "и ещё {{rest}} — раскрывается по «{{action}}»",
   "corp.connector.menu": "Ещё действия",
 
   // corp: экран разрешений вида permission_groups (S-V9, S-V20, S-V23, S-I1)

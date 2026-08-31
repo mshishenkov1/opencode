@@ -746,6 +746,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           ...(server.owner === undefined ? {} : { owner: server.owner }),
           ...(server.contact === undefined ? {} : { contact: server.contact }),
           ...(server.docs_url === undefined ? {} : { docs_url: server.docs_url }),
+          // Подпись ссылки на документацию («внутренний портал» макета) — данные каталога: без неё
+          // оболочка подписывает ссылку именем узла, а своего названия портала не выдумывает.
+          ...(server.docs_label === undefined ? {} : { docs_label: server.docs_label }),
           ...(server.status === undefined ? {} : { server_status: server.status }),
           // S-V22: значение колонки «Тип» — данные каталога; деградацию `type` → `owner` → пусто
           // делает оболочка, у которой есть оба поля.

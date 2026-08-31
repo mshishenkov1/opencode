@@ -22839,6 +22839,9 @@
           "docs_url": {
             "type": "string"
           },
+          "docs_label": {
+            "type": "string"
+          },
           "server_status": {
             "type": "string",
             "enum": ["beta", "ga", "deprecated"]

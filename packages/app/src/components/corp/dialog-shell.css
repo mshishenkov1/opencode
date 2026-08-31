@@ -390,6 +390,25 @@
   white-space: nowrap;
 }
 
+/*
+ * Подпись под плитками (макет заказчика от 30.08, экран 2): «и ещё 59 — раскрывается по «Показать
+ * все»» — одна фраза, внутри которой кликабельны два слова. Кнопка внутри фразы обязана читаться
+ * как её часть, а не как элемент управления рядом: шрифт, размер и высота строки — от абзаца,
+ * отличают её подчёркивание и цвет текста, тот же, каким в приложении помечены ссылки.
+ */
+[data-slot="corp-tools-rest"] > button {
+  display: inline;
+  font: inherit;
+  color: var(--text-base);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+[data-slot="corp-tools-rest"] > button:hover {
+  color: var(--text-strong);
+}
+
 /* Техническое имя в строке разрешений — тем же моноширинным и по той же причине (макет, экран 3). */
 [data-slot="corp-tool-row"] [data-slot="corp-tool-name"] {
   font-family: var(--font-family-mono);

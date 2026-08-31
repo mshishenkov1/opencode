@@ -2374,6 +2374,7 @@ export type CorpCatalogCard = {
   owner?: string
   contact?: string
   docs_url?: string
+  docs_label?: string
   server_status?: "beta" | "ga" | "deprecated"
   mode?: "native" | "facade"
   mcp_url?: string

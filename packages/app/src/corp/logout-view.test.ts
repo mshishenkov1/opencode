@@ -437,8 +437,14 @@ describe("витрина — имя коннектора один раз, alias 
     expect(nameCell).not.toContain("{card.alias}")
   })
 
-  test("AC-299: alias остаётся полем поиска (matchesQuery) и виден на странице коннектора", () => {
+  test("AC-299: alias остаётся полем поиска (matchesQuery) и запасным именем страницы", () => {
     expect(source).toContain("card.title, card.alias, card.description, card.owner, card.type")
-    expect(connectorPageSource).toContain("{props.alias}")
+    // ПЕРЕНАЦЕЛЕН решением заказчика от 31.08: свойства «Техническое имя — tag» на странице больше
+    // нет — в макете его нет нигде, и ревизия 1.14 поставила его в строку свойств своим решением, а
+    // не по макету. Alias при этом не потерян: он остаётся запасным именем и в хлебной крошке, и в
+    // строке под именем, когда каталог не назвал ни заголовка, ни сути.
+    expect(connectorPageSource).not.toContain('data-property="alias"')
+    expect(connectorPageSource).toContain("{card()?.title ?? props.alias}")
+    expect(connectorPageSource).toContain("(entry().summary ?? props.alias)")
   })
 })

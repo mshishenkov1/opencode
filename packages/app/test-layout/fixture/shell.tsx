@@ -3,9 +3,11 @@ import { For, Show, createSignal, type JSXElement } from "solid-js"
 import { render } from "solid-js/web"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { Dialog as DialogV2 } from "@opencode-ai/ui/v2/dialog-v2"
+import { Icon } from "@opencode-ai/ui/icon"
 import { List } from "@opencode-ai/ui/list"
 import { Tag } from "@opencode-ai/ui/tag"
 import { TabsV2 } from "@opencode-ai/ui/v2/tabs-v2"
+import { ConnectorIcon } from "@/components/corp/connector-icon"
 import "@/index.css"
 import "@/components/corp/dialog-shell.css"
 
@@ -27,6 +29,10 @@ export interface Card {
   alias: string
   title: string
   type?: string
+  /** Картинка каталога; без неё значок рисует монограмму — обе ветки в наборе есть (S-V22). */
+  icon?: string
+  /** Способ подключения: бейдж рядом с типом, своя ширина в колонке (S-V22). */
+  mode: "facade" | "native" | "local"
   connected: boolean
 }
 
@@ -44,11 +50,19 @@ export interface ShellOptions {
   table?: boolean
 }
 
+/** Прозрачный пиксель: значок с картинкой рисуется без сети и без гонки с измерением. */
+const PIXEL = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+
+const MODES = ["facade", "native", "local"] as const
+
 const catalog = (count: number): Card[] =>
   Array.from({ length: count }, (_, at) => ({
     alias: `connector-${at}`,
     title: `Коннектор номер ${at}`,
     type: at % 3 === 0 ? "Мессенджер" : at % 3 === 1 ? "Трекер задач" : undefined,
+    // Часть карточек с картинкой, часть — с монограммой: обе ветки значка попадают в измерение.
+    icon: at % 3 === 0 ? PIXEL : undefined,
+    mode: MODES[at % MODES.length]!,
     connected: at % 2 === 0,
   }))
 
@@ -58,30 +72,33 @@ const catalog = (count: number): Card[] =>
  * Ревизия 1.12: имя показывается **один раз** (см. guard-тест «фикстура повторяет разметку витрины»
  * ниже) — подпись `alias` второй строкой убрана в настоящем компоненте, и повторение её здесь молча
  * измеряло бы высоту строки, которой у приложения больше нет (см. отчёт по разбору фикстуры).
+ *
+ * Ревизия 1.14 (S-V22): слева от имени — настоящий `ConnectorIcon` (30×30 со своим `flex: none`),
+ * в колонке «Тип» рядом со значением стоит бейдж способа подключения, а состояние показано
+ * галочкой и тоном САМОЙ ячейки, а не точкой-буллитом. Точка `corp-status-dot` из витрины ушла, и
+ * фикстура, продолжавшая её рисовать, мерила колонку, которой у приложения нет.
  */
 function Row(props: { card: Card }) {
   return (
     <div data-slot="corp-connectors-row" class="w-full">
-      <div class="flex items-center gap-2 min-w-0">
+      <div class="flex items-center gap-3 min-w-0">
+        <ConnectorIcon title={props.card.title} icon={props.card.icon} />
         <span class="text-14-regular text-text-strong truncate">{props.card.title}</span>
         <Show when={props.card.alias.endsWith("0")}>
           <Tag>устаревший</Tag>
         </Show>
       </div>
-      <span class="text-12-regular text-text-weak truncate">{props.card.type ?? ""}</span>
-      <span data-slot="corp-status-cell">
-        <span data-slot="corp-status-dot" data-tone={props.card.connected ? "success" : "weak"} aria-hidden="true">
-          &bull;
-        </span>
-        <span
-          class={
-            props.card.connected
-              ? "text-12-regular text-text-strong truncate"
-              : "text-12-regular text-text-weak truncate"
-          }
-        >
-          {props.card.connected ? "Подключено" : "Не подключён"}
-        </span>
+      <span data-slot="corp-type-cell">
+        <span class="text-12-regular text-text-weak truncate">{props.card.type ?? "MCP"}</span>
+        <Tag data-slot="corp-connect-mode">
+          {props.card.mode === "facade" ? "Через Hub" : props.card.mode === "native" ? "Напрямую" : "Локальный"}
+        </Tag>
+      </span>
+      <span data-slot="corp-status-cell" data-tone={props.card.connected ? "success" : "weak"}>
+        <Show when={props.card.connected}>
+          <Icon name="check-small" size="small" data-slot="corp-status-check" />
+        </Show>
+        <span class="text-12-regular truncate">{props.card.connected ? "Подключено" : "Не подключён"}</span>
       </span>
     </div>
   )

@@ -364,14 +364,22 @@ test.describe("витрина коннекторов — измеренная р
       "corp-connectors-banner",
       "corp-connectors-partial",
       "corp-connectors-empty",
+      // Ревизия 1.14 (S-V22): бейдж способа подключения в колонке «Тип» и галочка в колонке
+      // состояния. Точка `corp-status-dot` из витрины ушла — тон несёт сама ячейка, — и перечень
+      // назван по СЕГОДНЯШНЕЙ витрине: слот, которого у неё нет, остался бы здесь вечно красным.
+      "corp-type-cell",
+      "corp-connect-mode",
       "corp-status-cell",
-      "corp-status-dot",
+      "corp-status-check",
     ]) {
       expect(view, `витрина не содержит слот ${slot}`).toContain(slot)
       expect(fixture, `фикстура не содержит слот ${slot}`).toContain(slot)
     }
     // Класс контейнера, вкладки и их вариант — тоже одни и те же.
-    for (const marker of ['class="corp-connectors"', '<TabsV2', 'variant="pill"', "<List"]) {
+    // Значок строки (S-V22) собственного слота ни в витрине, ни в фикстуре не пишет: слот
+    // `corp-connector-icon` принадлежит общему компоненту `ConnectorIcon`. Поэтому сверяется сам
+    // компонент — фикстура обязана монтировать тот же, а не рисовать похожий квадрат своими руками.
+    for (const marker of ['class="corp-connectors"', "<TabsV2", 'variant="pill"', "<List", "<ConnectorIcon"]) {
       expect(view, `витрина не содержит ${marker}`).toContain(marker)
       expect(fixture, `фикстура не содержит ${marker}`).toContain(marker)
     }

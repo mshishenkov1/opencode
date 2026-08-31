@@ -537,21 +537,17 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
       (isEmpty, wasEmpty) => {
         // only trigger when we transition into an empty-provider state
         if (!isEmpty || wasEmpty) return
-        // corp: при включённых корп-функциях и отсутствии ключа magnit_prod открываем корп-экран
-        // входа вместо upstream-списка провайдеров (S-T3, S-A7). Иначе — прежнее поведение.
+        // corp: САМ вход здесь больше не открывается (решение заказчика от 31.08). S-T3 требовал
+        // подменять upstream-список провайдеров корп-экраном входа, когда ключа нет; заказчик
+        // отменил всякое автооткрытие авторизации при старте. Признак наличия ключа по-прежнему
+        // читается — им подсвечивается команда входа в палитре (S-T2, S-A11), — но открывается
+        // ровно то, что открыл бы ванильный OpenCode: список провайдеров. Войти по-прежнему можно
+        // командой `corp login` и с витрины коннекторов.
         if (corpEnabled()) {
           void sdk.client.corp
             .status()
-            .then((result) => {
-              setCorpKey(result.data?.authenticated === true)
-              if (result.data?.enabled && !result.data.authenticated) {
-                dialog.replace(() => <DialogCorpLogin />)
-                return
-              }
-              dialog.replace(() => <DialogProviderList />)
-            })
-            .catch(() => dialog.replace(() => <DialogProviderList />))
-          return
+            .then((result) => setCorpKey(result.data?.authenticated === true))
+            .catch(() => {})
         }
         dialog.replace(() => <DialogProviderList />)
       },

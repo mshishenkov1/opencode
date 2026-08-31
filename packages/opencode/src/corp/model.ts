@@ -25,6 +25,8 @@ import * as CorpDiagnostics from "./diagnostics"
 /** Отображаемое имя корпоративной модели в текстах для человека (S-C4b, S-C9). */
 export const CORP_MODEL_NAME = "Magnit Copilot"
 
+export { CORP_PROVIDER_ID }
+
 /** Тексты, которые видит пользователь при обращении к модели (S-C4b п. 1 и 3, S-C9 п. 3). */
 export const MESSAGES = {
   /** Причина: записи `magnit_prod` в auth-store нет. */
@@ -55,11 +57,40 @@ export const ProviderDisabledError = NamedError.create("CorpProviderDisabledErro
 })
 
 /**
+ * Показывается ли корпоративный провайдер в списках моделей и провайдеров (решение заказчика
+ * от 31.08).
+ *
+ * Провайдер `magnit_prod` приходит из корп-СЛОЯ КОНФИГА, а не из auth-store, поэтому в списках он
+ * стоял всегда — и оставался там после выхода, предлагая выбрать модель, обратиться к которой
+ * нечем. Заказчик назвал это расхождением с обещанием выхода: «выход убирает и ключ, и модель».
+ *
+ * Признак — ровно тот же, каким `guard` отличает «вошёл» от «не вошёл»: непустой ключ `api` в
+ * auth-store. Ничего не удаляется и не правится: провайдер исчезает из ВЫДАЧИ, а его описание в
+ * корп-слое остаётся на месте, и при следующем входе он возвращается сам, без перезапуска —
+ * состояние провайдеров после смены ключа и так инвалидируется (S-A3, S-A14 п.4).
+ *
+ * В ванильной сборке (S-C6) правило молчит: корп-провайдера там нет вовсе.
+ */
+export function hiddenWithoutKey(input: { providerID: string; authenticated: boolean }): boolean {
+  if (input.providerID !== CORP_PROVIDER_ID) return false
+  if (!corpEnabled()) return false
+  return !input.authenticated
+}
+
+/** Есть ли в auth-store пригодный ключ корпоративного провайдера (S-C4b): непустой ключ вида `api`. */
+export function hasKey(record: { type: string; key?: string } | undefined): boolean {
+  return record?.type === "api" && record.key !== undefined && record.key !== ""
+}
+
+/**
  * Проверка перед выдачей модели вызывающему (S-C4b, S-C9). Ничего не делает для чужих провайдеров и
  * в ванильной сборке (S-C6): корп-текстов там нет.
  *
- * `present` — есть ли провайдер в списке действующих: при `disabled_providers` upstream удаляет его
- * целиком, поэтому отсутствие провайдера и есть признак выключения личным конфигом.
+ * `present` — есть ли провайдер в списке действующих. Причин его отсутствия теперь ДВЕ, и путать их
+ * нельзя: выключен личным конфигом (`disabled_providers`) — тогда называется файл; ключа нет
+ * (`hiddenWithoutKey`) — тогда говорится «вход не выполнен». Порядок сохранён с прежней редакции:
+ * сперва спрашивается конфиг, потому что там пользователь выключил провайдера сам и сознательно.
+ * Отсутствие по иной, неизвестной причине остаётся зоной upstream — его ошибка, его текст.
  */
 export const guard = Effect.fnUntraced(function* (input: {
   providerID: string
@@ -72,18 +103,20 @@ export const guard = Effect.fnUntraced(function* (input: {
 
   if (!input.present) {
     const cfg = yield* input.config.get()
-    if (!(cfg.disabled_providers ?? []).includes(CORP_PROVIDER_ID)) return
-    const directory = yield* InstanceState.directory
-    const report = yield* Effect.promise(() =>
-      CorpDiagnostics.inspect({ directory }).catch(() => CorpDiagnostics.EMPTY),
-    )
-    const file = report.providerDisabled?.file ?? directory
-    return yield* Effect.die(new ProviderDisabledError({ message: MESSAGES.providerDisabled(file), file }))
+    if ((cfg.disabled_providers ?? []).includes(CORP_PROVIDER_ID)) {
+      const directory = yield* InstanceState.directory
+      const report = yield* Effect.promise(() =>
+        CorpDiagnostics.inspect({ directory }).catch(() => CorpDiagnostics.EMPTY),
+      )
+      const file = report.providerDisabled?.file ?? directory
+      return yield* Effect.die(new ProviderDisabledError({ message: MESSAGES.providerDisabled(file), file }))
+    }
   }
 
   const record = yield* input.auth.get(CORP_PROVIDER_ID).pipe(Effect.orElseSucceed(() => undefined))
-  if (record?.type === "api" && record.key !== "") return
-
+  if (hasKey(record)) return
+  // Ключа нет. Провайдера в списках тоже нет — его убрало `hiddenWithoutKey`, — и назвать причину
+  // обязано именно это место: «модель не найдена» от upstream сказало бы неправду про сборку.
   return yield* Effect.die(
     new LoginRequiredError({
       message: MESSAGES.noKey,

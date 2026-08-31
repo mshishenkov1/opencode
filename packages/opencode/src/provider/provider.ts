@@ -1559,9 +1559,18 @@ export const layer = Layer.effect(
           })
         }
 
+        // corp: без ключа `magnit_prod` корп-провайдера в списках моделей и провайдеров нет
+        // (решение заказчика от 31.08). Признак берётся из уже прочитанного auth-store — второго
+        // обращения к нему правило не заводит; само правило живёт в `corp/model.ts`.
+        const corpAuthenticated = CorpModel.hasKey(auths[CorpModel.CORP_PROVIDER_ID])
+
         for (const [id, provider] of Object.entries(providers)) {
           const providerID = ProviderV2.ID.make(id)
           if (!isProviderAllowed(providerID)) {
+            delete providers[providerID]
+            continue
+          }
+          if (CorpModel.hiddenWithoutKey({ providerID, authenticated: corpAuthenticated })) {
             delete providers[providerID]
             continue
           }

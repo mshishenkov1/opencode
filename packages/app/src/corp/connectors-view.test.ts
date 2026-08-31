@@ -48,9 +48,17 @@ const CORP_COMPONENTS = fs
  * `packages/tui/src/corp/dialog-actions.test.ts`): копии правила в тесте нет.
  */
 function viewFunction<T extends (...args: never[]) => unknown>(marker: string, ...args: string[]): T {
-  const source = SOURCE.connectors
+  return viewFunctionOf<T>(SOURCE.connectors, marker, ...args)
+}
+
+/** То же, но из любого корп-исходника: страница коннектора объявляет свои правила у себя. */
+function viewFunctionOf<T extends (...args: never[]) => unknown>(
+  source: string,
+  marker: string,
+  ...args: string[]
+): T {
   const at = source.indexOf(marker)
-  expect(at, `не найдено объявление ${marker} в витрине`).toBeGreaterThan(-1)
+  expect(at, `не найдено объявление ${marker}`).toBeGreaterThan(-1)
   const open = source.indexOf("{", source.indexOf(")", at))
   let depth = 0
   for (let index = open; index < source.length; index++) {
@@ -782,6 +790,86 @@ describe("страница коннектора — стек диалогов и
     expect(body).not.toContain("setQuery(")
     // Прокрутка принадлежит `List`, и он тоже не пересоздаётся: страница — отдельный диалог.
     expect(source).not.toContain("dialog.replace")
+  })
+
+  /**
+   * Правило вида страницы (AC-229 в переформулировке решения заказчика от 31.08) — исполняется из
+   * самого исходника, копии в тесте нет.
+   */
+  const pageView = viewFunctionOf(page, "export function pageView(", "card") as (card: {
+    state?: string
+    has_credentials?: boolean
+  }) => "catalog" | "account"
+
+  /** Тело `<Show>`, открывающегося подстрокой `marker`, — от его тега до ПАРНОГО `</Show>`. */
+  function showBody(source: string, marker: string) {
+    const at = source.indexOf(marker)
+    expect(at, `охранник ${marker} не найден`).toBeGreaterThan(-1)
+    let depth = 1
+    for (let index = at + marker.length; depth > 0; ) {
+      const open = source.indexOf("<Show", index)
+      const shut = source.indexOf("</Show>", index)
+      expect(shut, `${marker}: Show не закрыт`).toBeGreaterThan(-1)
+      if (open !== -1 && open < shut) {
+        depth += 1
+        index = open + "<Show".length
+      } else {
+        depth -= 1
+        if (depth === 0) return { from: at, to: shut, text: source.slice(at, shut) }
+        index = shut + "</Show>".length
+      }
+    }
+    throw new Error(`${marker}: Show не закрыт`)
+  }
+
+  test("AC-229: вид страницы решает состояние — подключён или есть сохранённые данные", () => {
+    // Решение заказчика от 31.08: в макете экраны 2 и 3 отличаются СОСТАВОМ, и вид выбирается по
+    // состоянию карточки. Правило одно на всю страницу и живёт одной функцией.
+    expect(pageView({ state: "connected" })).toBe("account")
+    expect(pageView({ state: "connected", has_credentials: false })).toBe("account")
+    expect(pageView({ state: "disconnected" })).toBe("catalog")
+    expect(pageView({ state: "failed" })).toBe("catalog")
+    // Промежуточные состояния делит наличие сохранённых учётных данных: с ними — пульт («account»),
+    // без них — витрина («catalog»).
+    for (const state of ["lost", "failed", "disconnected"]) {
+      expect(pageView({ state, has_credentials: true }), `${state} с данными`).toBe("account")
+      expect(pageView({ state, has_credentials: false }), `${state} без данных`).toBe("catalog")
+    }
+    // Строка «учётная запись · способ · когда проверено» ведёт себя по тому же правилу, а не по
+    // своему: у неё нет собственной копии условия — она зовёт `pageView`.
+    const identity = page.slice(page.indexOf("export function identityParts("))
+    expect(identity.slice(0, identity.indexOf("\n}"))).toContain('pageView(card) !== "account"')
+  })
+
+  test("AC-229: в виде «account» нет ни описания, ни строки свойств, ни плиток инструментов", () => {
+    const composition = page.slice(page.indexOf("export const DialogConnector: Component"))
+    const guarded = showBody(composition, '<Show when={view() === "catalog"}>')
+    // Все три блока витрины товара — ВНУТРИ охранника вида, и охранник у них один на троих: три
+    // отдельных условия разошлись бы при первой же правке одного из них.
+    for (const marker of [
+      "descriptionParagraphs(entry().description)",
+      'data-slot="corp-connector-properties"',
+      'data-slot="corp-connector-tools"',
+    ])
+      expect(guarded.text, `${marker} вне охранника вида`).toContain(marker)
+    expect(composition.split('<Show when={view() === "catalog"}>').length - 1, "охранников вида больше одного").toBe(1)
+
+    // А то, что есть в ОБОИХ видах, под ним не лежит: строка состояния с объяснением ошибки (S-V19)
+    // и блок «Разрешения» видны и подключённому, и неподключённому.
+    for (const marker of [
+      'data-slot="corp-status-line"',
+      "explain(entry())",
+      'language.t("corp.permissions.title")',
+      'data-slot="corp-connector-hero"',
+    ])
+      expect(guarded.text, `${marker} спрятан за охранником вида`).not.toContain(marker)
+
+    // «Скопировать ссылку» — только в виде «catalog» (в макете его на экране 3 нет).
+    const copy = page.indexOf('data-action="corp-connector-copy-link"')
+    expect(copy, "«Скопировать ссылку» не найдено").toBeGreaterThan(-1)
+    expect(page.lastIndexOf('<Show when={view() === "catalog" ? card()?.docs_url : undefined}>', copy)).toBeGreaterThan(
+      -1,
+    )
   })
 
   test("AC-229: состав страницы — статус, описание, свойства, «Инструменты» и «Разрешения» в этом порядке", () => {

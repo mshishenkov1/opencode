@@ -91,32 +91,102 @@ const connectUnavailableKey = new Function("card", block("export function connec
   connect_mode_unavailable_code?: string | null
 }) => string | undefined
 
-describe("dialog-connector — методChoice: три случая S-V28 п.4 (AC-312)", () => {
-  test("AC-312: доступных нет ни одного → \"none\" (случай 3: формы нет)", () => {
+/**
+ * AC-312 в переформулировке решения заказчика от 31.08 (макет, экран 4).
+ *
+ * Что изменилось: критерий выбора идёт по числу ДОСТУПНЫХ способов, а не по общему их числу, и
+ * недоступный способ переехал из ряда выбора под форму. Прежняя мера закрепляла обратное — «два
+ * способа в любом сочетании доступности дают список», то есть у карточки ТЭГ, где OAuth закрыт
+ * администратором, над формой висел выбор из одного нажимаемого элемента и одного серого.
+ *
+ * Что НЕ ослаблено: требование S-V28 п.4 «недоступный способ не прячется» проверяется здесь же и
+ * строже прежнего — мера смотрит не только на то, что он отрисован, но и на то, что рядом с ним
+ * названа причина, и что поля ввода у него по-прежнему нет.
+ */
+describe("dialog-connector — методChoice: четыре случая S-V28 п.4 (AC-312)", () => {
+  test("AC-312: доступных нет ни одного → \"none\" (случай 4: формы нет)", () => {
     const methods: AuthMethodView[] = [
       { id: "a", title: "A", type: "oauth2", available: false, unavailable_code: "oauth_disabled" },
     ]
     expect(methodChoice(methods)).toBe("none")
   })
 
-  test("AC-312: доступен ровно один способ, недоступных нет → \"single\" (случай 1: выбора нет, сразу форма)", () => {
-    const methods: AuthMethodView[] = [
+  test("AC-312: доступен ровно один способ → \"single\" (случаи 1 и 2: выбора нет, сразу форма)", () => {
+    const only: AuthMethodView[] = [
       { id: "a", title: "A", type: "user_token", available: true, unavailable_code: null },
     ]
-    expect(methodChoice(methods)).toBe("single")
-  })
-
-  test("AC-312: способов больше одного, в любом сочетании доступности → \"list\" (случай 2: список всех)", () => {
-    const bothAvailable: AuthMethodView[] = [
-      { id: "a", title: "A", type: "user_token", available: true, unavailable_code: null },
-      { id: "b", title: "B", type: "user_token", available: true, unavailable_code: null },
-    ]
+    // Случай 2: рядом лежит недоступный способ. Выбор из одного — не выбор, и пилюль над формой нет
+    // (решение заказчика от 31.08); сам недоступный способ при этом никуда не делся — он назван под
+    // формой, что проверяется мерой разметки ниже.
     const oneUnavailable: AuthMethodView[] = [
       { id: "a", title: "A", type: "oauth2", available: false, unavailable_code: "oauth_disabled" },
       { id: "b", title: "B", type: "user_token", available: true, unavailable_code: null },
     ]
+    expect(methodChoice(only)).toBe("single")
+    expect(methodChoice(oneUnavailable)).toBe("single")
+  })
+
+  test("AC-312: доступных больше одного → \"list\" (случай 3: компактный ряд выбора над формой)", () => {
+    const bothAvailable: AuthMethodView[] = [
+      { id: "a", title: "A", type: "user_token", available: true, unavailable_code: null },
+      { id: "b", title: "B", type: "user_token", available: true, unavailable_code: null },
+    ]
+    const twoOfThree: AuthMethodView[] = [
+      { id: "a", title: "A", type: "oauth2", available: false, unavailable_code: "oauth_disabled" },
+      { id: "b", title: "B", type: "user_token", available: true, unavailable_code: null },
+      { id: "c", title: "C", type: "user_token", available: true, unavailable_code: null },
+    ]
     expect(methodChoice(bothAvailable)).toBe("list")
-    expect(methodChoice(oneUnavailable)).toBe("list")
+    expect(methodChoice(twoOfThree)).toBe("list")
+  })
+
+  test("AC-312: ряд выбора рисуется только в случае \"list\" и только из ДОСТУПНЫХ способов", () => {
+    const at = source.indexOf('data-slot="corp-connect-methods"')
+    expect(at, "ряд выбора способа не найден").toBeGreaterThan(-1)
+    // Охранник ряда — по случаю "list", а не «не single»: при одном доступном способе ряда нет.
+    expect(source.lastIndexOf('<Show when={choice() === "list"}>', at)).toBeGreaterThan(-1)
+    const row = source.slice(at, source.indexOf("</Show>", at))
+    // Перебираются доступные способы, а не все: недоступному в ряду выбора места нет.
+    expect(row).toContain("<For each={available()}>")
+    expect(row).not.toContain("<For each={methods()}>")
+    // И потому `disabled` в ряду не нужен: нерабочих элементов выбора в нём не бывает.
+    expect(row).not.toContain("disabled=")
+  })
+
+  test("AC-312, S-V28 п.4: недоступный способ НЕ спрятан — он назван под формой вместе с причиной", () => {
+    const at = source.indexOf('data-slot="corp-connect-methods-unavailable"')
+    expect(at, "блок недоступных способов под формой не найден").toBeGreaterThan(-1)
+    // Блок рисуется тогда и только тогда, когда недоступные способы есть, — пустого места не остаётся.
+    expect(source.lastIndexOf("<Show when={unavailable().length > 0}>", at)).toBeGreaterThan(-1)
+    const block = source.slice(at, source.indexOf("</Show>", at))
+    expect(block).toContain("<For each={unavailable()}>")
+    // Названо и то, ЧТО за способ, и ПОЧЕМУ им сейчас нельзя: одного названия без причины мало.
+    expect(block).toContain("{method.title}")
+    expect(block).toContain("method.unavailable_reason ?? language.t(methodUnavailableKey(method.unavailable_code))")
+    expect(block).toContain('data-slot="corp-connect-method-reason"')
+    // Поля ввода у недоступного способа нет: оно рисуется под `Show when={selected()}`, а `selected`
+    // выбирается ИЗ ДОСТУПНЫХ — недоступный способ в него не попадает по построению.
+    expect(block).not.toContain('data-slot="corp-connect-token"')
+    // Искать от объявления САМОЙ формы: имя `selected` встречается и у прежнего экрана пресетов выше.
+    const formAt = source.indexOf("const ConnectorConnect: Component<")
+    expect(formAt, "компонент формы подключения не найден").toBeGreaterThan(-1)
+    const selectedAt = source.indexOf("const selected = createMemo(", formAt)
+    expect(selectedAt, "выбранный способ не найден").toBeGreaterThan(-1)
+    const selected = source.slice(selectedAt, source.indexOf("\n  })", selectedAt))
+    expect(selected).toContain("available().find(")
+    expect(selected).toContain("available()[0]")
+    expect(selected).not.toContain("methods()[")
+  })
+
+  test("AC-312: шапка формы называет способ, когда выбирать не из чего (макет, экран 4)", () => {
+    const at = source.indexOf('data-slot="corp-connect-head"')
+    expect(at, "шапка формы не найдена").toBeGreaterThan(-1)
+    const head = source.slice(at, source.indexOf("</div>", at))
+    // Заголовок — «Подключение <имя>»: имя коннектора подставляется, а не приписывается словарём.
+    expect(head).toContain('language.t("corp.connect.title", { title: entry().title })')
+    // Подзаголовок — название способа, и только в случае "single": при выборе его несут пилюли.
+    expect(head).toContain('choice() === "single" ? selected() : undefined')
+    expect(head).toContain("{method().title}")
   })
 })
 

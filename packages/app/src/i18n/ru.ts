@@ -1142,7 +1142,7 @@ export const dict = {
   "corp.permissions.allow": "Разрешить",
   "corp.permissions.ask": "Спрашивать",
   "corp.permissions.deny": "Запретить",
-  "corp.permissions.allowAll": "Разрешить всё",
+  "corp.permissions.allowAll": "Всегда разрешать",
   "corp.permissions.denyAll": "Запретить всё",
   "corp.permissions.mixed": "Смешанно",
   "corp.permissions.restTitle": "Остальные возможности",

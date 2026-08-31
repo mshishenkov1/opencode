@@ -1226,7 +1226,7 @@ export const dict = {
   "corp.permissions.allow": "Allow",
   "corp.permissions.ask": "Ask",
   "corp.permissions.deny": "Deny",
-  "corp.permissions.allowAll": "Allow everything",
+  "corp.permissions.allowAll": "Always allow",
   "corp.permissions.denyAll": "Deny everything",
   "corp.permissions.mixed": "Mixed",
   "corp.permissions.restTitle": "Other capabilities",

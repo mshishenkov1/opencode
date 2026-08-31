@@ -22824,6 +22824,9 @@
           "title": {
             "type": "string"
           },
+          "summary": {
+            "type": "string"
+          },
           "description": {
             "type": "string"
           },
@@ -22921,6 +22924,12 @@
           },
           "has_credentials": {
             "type": "boolean"
+          },
+          "account": {
+            "type": "string"
+          },
+          "verified_at": {
+            "type": "string"
           },
           "error": {
             "type": "string"

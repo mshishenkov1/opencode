@@ -2369,6 +2369,7 @@ export type CorpAuthMethodView = {
 export type CorpCatalogCard = {
   alias: string
   title: string
+  summary?: string
   description?: string
   owner?: string
   contact?: string
@@ -2397,6 +2398,8 @@ export type CorpCatalogCard = {
   connect_mode_unavailable_code?: "oauth_disabled" | "facade_needs_hub" | "no_method"
   auth_methods?: Array<CorpAuthMethodView>
   has_credentials?: boolean
+  account?: string
+  verified_at?: string
   error?: string
   error_class?:
     | "token_rejected"

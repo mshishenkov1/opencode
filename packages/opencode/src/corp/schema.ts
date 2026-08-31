@@ -254,6 +254,16 @@ export type Connection = Schema.Schema.Type<typeof Connection>
 export const CatalogServer = Schema.Struct({
   alias: Schema.String,
   title: Schema.String,
+  /**
+   * Короткая суть коннектора одной строкой (макет заказчика от 30.08, экран 2): «Каналы, треды,
+   * поиск и опросы корпоративного мессенджера». Стоит под именем и отвечает на вопрос «что это»
+   * раньше, чем человек дочитает описание.
+   *
+   * Поле необязательно и разбирается тем же терпимым правилом, что `description`: `null` живого
+   * каталога означает «сути нет», а не испорченную карточку. Своей сути форк не выдумывает и из
+   * описания не выкраивает — источник один, каталог.
+   */
+  summary: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
   owner: Schema.optional(Schema.String),
   contact: Schema.optional(Schema.String),
@@ -863,6 +873,7 @@ export function parseCatalogServer(value: unknown): ServerResult {
   if (mode === undefined) return { ok: false, alias, reason: "mode" }
   if (mcpUrl === undefined) return { ok: false, alias, reason: "mcp_url" }
 
+  const summary = optionalString(raw["summary"])
   const description = optionalString(raw["description"])
   const owner = optionalString(raw["owner"])
   const contact = optionalString(raw["contact"])
@@ -882,6 +893,7 @@ export function parseCatalogServer(value: unknown): ServerResult {
       title,
       mode,
       mcp_url: mcpUrl,
+      ...(summary === undefined ? {} : { summary }),
       ...(description === undefined ? {} : { description }),
       ...(owner === undefined ? {} : { owner }),
       ...(contact === undefined ? {} : { contact }),
@@ -1258,6 +1270,8 @@ export type ProviderEnableResult = Schema.Schema.Type<typeof ProviderEnableResul
 export const CatalogCard = Schema.Struct({
   alias: Schema.String,
   title: Schema.String,
+  /** Короткая суть коннектора одной строкой (макет заказчика от 30.08, экран 2): стоит под именем. */
+  summary: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
   owner: Schema.optional(Schema.String),
   contact: Schema.optional(Schema.String),
@@ -1329,6 +1343,20 @@ export const CatalogCard = Schema.Struct({
    * видно снаружи: ни значения токена, ни его длины, ни производных наружу не уходит.
    */
   has_credentials: Schema.optional(Schema.Boolean),
+  /**
+   * Учётная запись, которой это подключение живёт (S-V26 п.6, макет заказчика от 30.08, экран 3):
+   * её называет **целевая система** при проверке токена (`account_field` блока `verify`), и она
+   * сохраняется рядом с учётными данными. Система имени не назвала — поля нет, и строка под именем
+   * коннектора собирается без него. Значения токена и его производных наружу по-прежнему не уходит.
+   */
+  account: Schema.optional(Schema.String),
+  /**
+   * Когда токен этого подключения в последний раз был проверен целевой системой (макет заказчика
+   * от 30.08, экран 3). Записывается **в момент успешной проверки** и хранится рядом с учётными
+   * данными; формат — ISO-8601. Записи, сохранённой прежней версией приложения, поля нет — и
+   * «проверен …» тогда не показывается, а не выдумывается из времени сохранения.
+   */
+  verified_at: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
   /** Класс ошибки состояний 2 и 3 таблицы S-V16 (S-V19): по нему карточка выбирает объяснение. */
   error_class: Schema.optional(ConnectErrorClass),

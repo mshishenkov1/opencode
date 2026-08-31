@@ -739,6 +739,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         return {
           alias: server.alias,
           title: server.title,
+          // Короткая суть под именем коннектора (макет заказчика от 30.08, экран 2) — данные
+          // каталога, оболочка их не переводит и не выкраивает из описания.
+          ...(server.summary === undefined ? {} : { summary: server.summary }),
           ...(server.description === undefined ? {} : { description: server.description }),
           ...(server.owner === undefined ? {} : { owner: server.owner }),
           ...(server.contact === undefined ? {} : { contact: server.contact }),
@@ -779,9 +782,20 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
           // (`facade_needs_hub`), а не по одному лишь `connect_mode`.
           ...(connectModeCode === null ? {} : { connect_mode_unavailable_code: connectModeCode }),
           auth_methods: CorpStatus.authMethodViews(connect),
-          // S-V26 п.6: наружу о хранилище видно ровно это — булев признак и, если целевая система
-          // его назвала, `account`. Ни значения токена, ни его длины, ни производных.
+          // S-V26 п.6: наружу о хранилище видно ровно это — булев признак, имя учётной записи,
+          // если целевая система его назвала, и момент последней успешной проверки токена. Ни
+          // значения токена, ни его длины, ни производных.
+          //
+          // Учётная запись и время проверки уходят наружу **только** у применимой записи (тот же
+          // признак, что `has_credentials`): запись, переставшая относиться к действующему адресу
+          // карточки (S-V26 п.3), рассказывала бы про подключение, которого уже нет.
           has_credentials: CorpCredentials.applicable(stored, upstreamOf?.url),
+          ...(CorpCredentials.applicable(stored, upstreamOf?.url) && stored?.account !== undefined
+            ? { account: stored.account }
+            : {}),
+          ...(CorpCredentials.applicable(stored, upstreamOf?.url) && stored?.verified_at !== undefined
+            ? { verified_at: stored.verified_at }
+            : {}),
           status: card.status,
           actions: card.actions,
           state: card.state,
@@ -1161,6 +1175,11 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         }
       }
 
+      // Момент успешной проверки — засекается ЗДЕСЬ, сразу после ответа целевой системы, а не в
+      // момент записи файла: между ними лежит обмен токена, у которого свой сетевой запрос
+      // (макет заказчика от 30.08, экран 3 — «проверен сегодня в 21:40»).
+      const verifiedAt = new Date().toISOString()
+
       // Обмен — не более одного запроса, и он не отменяет подключение (S-V25 п.5). Способ без
       // блока `exchange` даёт `null`: отсутствие обмена — не исход и не предупреждение.
       const exchanged =
@@ -1177,6 +1196,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         ...(issued && exchanged!.token_id !== undefined ? { token_id: exchanged!.token_id } : {}),
         issued,
         ...(verified.account === undefined ? {} : { account: verified.account }),
+        verified_at: verifiedAt,
         saved_at: new Date().toISOString(),
         credential_headers: upstream.credential_headers,
         ...(upstream.static_headers === undefined ? {} : { static_headers: upstream.static_headers }),

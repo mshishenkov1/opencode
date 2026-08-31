@@ -47,6 +47,13 @@ export interface Record_ {
   token_id?: string
   issued: boolean
   account?: string
+  /**
+   * Момент **успешной проверки** токена целевой системой, ISO-8601 (макет заказчика от 30.08,
+   * экран 3). Отдельно от `saved_at`: сохранение — про файл, проверка — про то, что система
+   * подтвердила токен, и именно это показывается человеку строкой «проверен …». Записи прежних
+   * версий поля не имеют, и подменять его временем сохранения запрещено — это была бы догадка.
+   */
+  verified_at?: string
   saved_at: string
   credential_headers?: Record<string, string>
   static_headers?: Record<string, string>
@@ -89,6 +96,7 @@ function parse(value: unknown): Store | undefined {
     if (typeof token !== "string" || token === "") continue
     const tokenId = entry["token_id"]
     const account = entry["account"]
+    const verifiedAt = entry["verified_at"]
     const credentialHeaders = isRecord(entry["credential_headers"])
       ? headerMapOf(entry["credential_headers"])
       : undefined
@@ -100,6 +108,7 @@ function parse(value: unknown): Store | undefined {
       ...(typeof tokenId === "string" && tokenId !== "" ? { token_id: tokenId } : {}),
       issued: entry["issued"] === true,
       ...(typeof account === "string" && account !== "" ? { account } : {}),
+      ...(typeof verifiedAt === "string" && verifiedAt !== "" ? { verified_at: verifiedAt } : {}),
       saved_at: typeof savedAt === "string" ? savedAt : "",
       ...(credentialHeaders === undefined ? {} : { credential_headers: credentialHeaders }),
       ...(staticHeaders === undefined ? {} : { static_headers: staticHeaders }),

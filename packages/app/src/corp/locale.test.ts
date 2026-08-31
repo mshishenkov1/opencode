@@ -99,12 +99,17 @@ describe("app/corp — язык по умолчанию (AC-94, AC-95, AC-123)",
     expect(await detectedLocale({ corp: false, languages: ["sw-KE"] })).toBe("en")
   }, 60_000)
 
-  test("AC-123: поддерживаемая локаль браузера приоритетнее корп-умолчания ru", async () => {
-    expect(await detectedLocale({ corp: true, languages: ["fr-FR"] })).toBe("fr")
+  // Решение заказчика от 31.08: в корпоративной сборке язык по умолчанию — русский независимо от
+  // языка системы. Прежняя редакция S-I2 ставила совпадение с navigator.languages выше
+  // корп-умолчания, и английская система давала английский интерфейс поверх русских данных.
+  test("AC-123: язык системы не отменяет корп-умолчание ru", async () => {
+    expect(await detectedLocale({ corp: true, languages: ["en-US"] })).toBe("ru")
+    expect(await detectedLocale({ corp: true, languages: ["fr-FR"] })).toBe("ru")
+    expect(await detectedLocale({ corp: true, languages: ["ru-RU"] })).toBe("ru")
   }, 60_000)
 
-  test("AC-123: корп-умолчание не подменяет и совпавший ru", async () => {
-    expect(await detectedLocale({ corp: true, languages: ["ru-RU"] })).toBe("ru")
+  test("AC-123: в ванильной сборке определение по navigator.languages сохранено", async () => {
+    expect(await detectedLocale({ corp: false, languages: ["fr-FR"] })).toBe("fr")
   }, 60_000)
 
   test("AC-94: неизвестное сохранённое значение локали сводится к ru (корп) и к en (ваниль)", async () => {

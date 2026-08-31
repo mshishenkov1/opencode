@@ -99,7 +99,10 @@ describe("corp/connectors — «Убрать из списка» (AC-175)", () =
 describe("corp/connectors — «Права» (AC-64, AC-65)", () => {
   test("AC-64: facade — патч обновляет только oauth.scope", () => {
     expect(
-      CorpConnectors.permissionsPatch(facade, "readwrite", { directConnected: false, current: undefined }) as unknown,
+      CorpConnectors.permissionsPatch(facade, "readwrite", {
+        directConnected: false,
+        current: { type: "remote", url: facade.mcp_url, enabled: true },
+      }) as unknown,
     ).toEqual({
       mcp: { gitlab: { oauth: { scope: "gitlab:readwrite" } } },
     } as unknown)
@@ -107,7 +110,22 @@ describe("corp/connectors — «Права» (AC-64, AC-65)", () => {
 
   test("AC-65: native — локального патча нет", () => {
     expect(
-      CorpConnectors.permissionsPatch(native, "readwrite", { directConnected: false, current: undefined }),
+      CorpConnectors.permissionsPatch(native, "readwrite", {
+        directConnected: false,
+        current: { type: "remote", url: native.mcp_url, enabled: true },
+      }),
+    ).toBeUndefined()
+  })
+
+  /**
+   * DISPUTE-I13-02-01 (резолюция §13 п. 11): патч прав не вправе заводить запись `mcp.<alias>` у
+   * alias, которого в правимом слое (эффективный конфиг) нет вовсе — `current: undefined`. Отсечка
+   * продублирована в самой функции (не только в вызывающем роуте `handlers/corp.ts`), поэтому
+   * проверяется здесь юнитом, а не только сборкой роута.
+   */
+  test("AC-354: current:undefined — патч не заводит обрывок, возвращает undefined", () => {
+    expect(
+      CorpConnectors.permissionsPatch(facade, "readwrite", { directConnected: false, current: undefined }),
     ).toBeUndefined()
   })
 
@@ -418,7 +436,10 @@ describe("corp/connectors — scope facade-карточки с моделью to
     })
     expect(CorpConnectors.connectPatch(liveTag, "readwrite").mcp["tag"]!.oauth).toEqual({ scope: "tag:readwrite" })
     expect(
-      CorpConnectors.permissionsPatch(liveTag, "readwrite", { directConnected: false, current: undefined }) as unknown,
+      CorpConnectors.permissionsPatch(liveTag, "readwrite", {
+        directConnected: false,
+        current: { type: "remote", url: liveTag.mcp_url, enabled: true },
+      }) as unknown,
     ).toEqual({
       mcp: { tag: { oauth: { scope: "tag:readwrite" } } },
     } as unknown)
@@ -432,7 +453,10 @@ describe("corp/connectors — scope facade-карточки с моделью to
     expect(CorpSchema.parsePermissionModel(server.permission_model)?.kind).toBe("tool_filter")
     expect(CorpConnectors.connectPatch(server).mcp["tag"]!.oauth).toBeUndefined()
     expect(
-      CorpConnectors.permissionsPatch(server, "readwrite", { directConnected: false, current: undefined }),
+      CorpConnectors.permissionsPatch(server, "readwrite", {
+        directConnected: false,
+        current: { type: "remote", url: server.mcp_url, enabled: true },
+      }),
     ).toBeUndefined()
   })
 })

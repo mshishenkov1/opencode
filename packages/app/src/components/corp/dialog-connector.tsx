@@ -22,6 +22,7 @@ import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
 import { SettingsListV2 } from "@/components/settings-v2/parts/list"
 import { SettingsRowV2 } from "@/components/settings-v2/parts/row"
 import {
+  actionFailureText,
   connectErrorKey,
   connectFailureKey,
   connectTokenFailure,
@@ -547,6 +548,121 @@ export const DialogForgetConnector: Component<{ card: CorpCatalogCard }> = (prop
 }
 
 /**
+ * Одна правка разрешений: режимы СТРОК по их ключу (имя инструмента) и, отдельно, режим wildcard,
+ * когда его двигает эта же правка.
+ */
+interface PermissionEdit {
+  rows: Record<string, CorpPermissionMode>
+  rest?: CorpPermissionMode
+}
+
+/**
+ * Очередь записи разрешений с ВРЕМЕННЫМ ВИДОМ выбора (ревизия 1.14, дефект «экран запирается»).
+ *
+ * До неё занятость экрана бралась из `action.isPending` одной мутации на весь блок, и один
+ * переключённый инструмент гасил все 77 строк и все селекторы секций разом. Наблюдение на стенде:
+ * после одного нажатия недоступны 231 сегмент из 231, и держится это столько, сколько идёт запрос
+ * с последующим перечитыванием витрины (на замедленном моке — девять секунд); при недоступном Hub
+ * — до конца жизни экрана. Занятость обязана жить на строке, которую меняют.
+ *
+ * **Почему очередь, а не «кто успел» и не отмена предыдущего запроса.** Запись перезаписывает блок
+ * alias ЦЕЛИКОМ (S-V21): в теле идут режимы всех групп и всех показанных инструментов. Поэтому две
+ * записи, ушедшие одновременно, не складываются — тело второй собрано из состояния ДО первой и
+ * молча отменяет её (наблюдено зондом на настоящем роуте: три одновременные записи трёх разных
+ * секций оставили в конфиге правку только последней). Отмена предыдущего запроса
+ * (`AbortController`) не годится по другой причине: роут пишет конфиг двумя вызовами
+ * `updateGlobal`, и оборванный HTTP-запрос запись не отменяет — оборвана была бы только доставка
+ * ответа, а экран разошёлся бы с файлом. Остаётся очередь.
+ *
+ * Подряд идущие правки при этом СЛИВАЮТСЯ: пока летит запись, они копятся в накопителе, и после
+ * ответа уходит один запрос с их итогом. Отсюда сразу два требуемых свойства — ни одна правка не
+ * теряется, а «туда-обратно» по одной строке кончается последним нажатием, а не гонкой.
+ *
+ * **Временный вид и S-V23.** Действующий режим по-прежнему считает сервер и присылает в
+ * `permission_state`/`permission_tool_state`; клиент его не пересчитывает и из режима группы не
+ * выводит. Временный вид — не вычисление, а показ собственного нажатия человека, и живёт он ровно
+ * до ответа: сервер его подтверждает (тогда он снимается — то же значение уже пришло сверху) или
+ * отменяет (тогда строка возвращается к серверному режиму и получает знак отказа). Строка, у
+ * которой есть временный вид, и есть ЗАНЯТАЯ строка — отдельного признака занятости не заводится,
+ * иначе их стало бы два и они разошлись бы.
+ *
+ * Очередь заведена для экрана ревизии 1.14, о котором и говорит дефект. Прежний экран по группам
+ * (`ConnectorPermissionGroups`, деградация для словаря версии 1) остаётся на прежнем поведении:
+ * его вид закреплён мерами AC-205 и AC-212 в форме прежней реализации, и перевод его на очередь —
+ * отдельное изменение вместе с этими мерами.
+ */
+function createPermissionWriter(send: (edit: PermissionEdit) => Promise<void>) {
+  const [preview, setPreview] = createSignal<PermissionEdit>({ rows: {} })
+  /** Строки, чью правку сервер не принял: ключ строки → техническая подробность для подсказки. */
+  const [rejected, setRejected] = createSignal<Record<string, string>>({})
+
+  /** Накопитель: правки, ждущие своей очереди. `undefined` — ждать нечему. */
+  let waiting: PermissionEdit | undefined
+  let running = false
+
+  const forget = (keys: string[]) =>
+    setRejected((current) => {
+      const next = { ...current }
+      for (const key of keys) delete next[key]
+      return next
+    })
+
+  /** Снять временный вид отработавшей правки — но не у строк, изменённых ещё раз, пока она летела. */
+  const settle = (edit: PermissionEdit) =>
+    setPreview((current) => {
+      const rows = { ...current.rows }
+      for (const key of Object.keys(edit.rows)) if (!waiting || !(key in waiting.rows)) delete rows[key]
+      const next: PermissionEdit = { rows }
+      const keepRest = edit.rest === undefined || waiting?.rest !== undefined
+      if (keepRest && current.rest !== undefined) next.rest = current.rest
+      return next
+    })
+
+  async function drain() {
+    running = true
+    try {
+      while (waiting) {
+        const edit = waiting
+        waiting = undefined
+        try {
+          await send(edit)
+          forget(Object.keys(edit.rows))
+        } catch (error) {
+          // Молчаливой неудачи не бывает: тост про сорванный запрос показывает `useConnectorAction`,
+          // а здесь отказ получает адрес — те самые строки, чей режим не сохранился.
+          const detail = actionFailureText(error) ?? ""
+          setRejected((current) => {
+            const next = { ...current }
+            for (const key of Object.keys(edit.rows)) next[key] = detail
+            return next
+          })
+        }
+        settle(edit)
+      }
+    } finally {
+      running = false
+    }
+  }
+
+  /** Поставить правку в очередь и сразу показать её временным видом. */
+  function push(edit: PermissionEdit) {
+    const merge = (base: PermissionEdit | undefined): PermissionEdit => {
+      const next: PermissionEdit = { rows: { ...base?.rows, ...edit.rows } }
+      const rest = edit.rest ?? base?.rest
+      if (rest !== undefined) next.rest = rest
+      return next
+    }
+    waiting = merge(waiting)
+    setPreview(merge)
+    // Новое нажатие по строке снимает с неё прежний знак отказа: человек уже ответил на него.
+    forget(Object.keys(edit.rows))
+    if (!running) void drain()
+  }
+
+  return { preview, rejected, push }
+}
+
+/**
  * Блок «Разрешения» вида `permission_groups` (S-V9, S-V20, S-V21, S-V23).
  *
  * Групповой селектор ставит режим **всем** группам сразу, включая «Остальное»; сегментированный
@@ -720,7 +836,45 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
     return language.t(CLASS_HINT_KEY[id])
   }
 
-  const modeOf = (name: string) => toolState()?.[name]
+  /**
+   * Запись: полное тело блока (S-V21).
+   *
+   * `modes` — режимы всех групп, как их посчитал сервер; группа в состоянии `mixed` в набор не
+   * попадает намеренно (для неё запись возьмёт `default` каталога), но её инструменты названы
+   * поимённо в `tools` и потому своих значений не теряют.
+   *
+   * Тело собирается из `modeOf`/`restMode`, то есть с учётом ВРЕМЕННОГО ВИДА: в нём и правка,
+   * которую сейчас отправляют, и все прежние, которых сервер ещё не подтвердил. Собирать тело из
+   * одного лишь серверного состояния значило бы отправить его без собственной правки.
+   */
+  const writer = createPermissionWriter(async () => {
+    const tools: Record<string, CorpPermissionMode> = {}
+    for (const section of sections())
+      for (const row of section.tools) {
+        const mode = modeOf(row.name)
+        if (mode) tools[row.name] = mode
+      }
+    const modes: Record<string, CorpPermissionMode> = {}
+    for (const [id, value] of Object.entries(groupState() ?? {}))
+      if (value === "allow" || value === "ask" || value === "deny") modes[id] = value
+    const wildcard = restMode()
+    if (wildcard) modes[REST_GROUP_ID] = wildcard
+    // Режим wildcard обязан быть в теле явно: без него запись возьмёт `default` каталога и молча
+    // отменит прежнее решение пользователя про инструменты вне словаря (S-V21).
+    if (!(REST_GROUP_ID in modes)) modes[REST_GROUP_ID] = rest()?.default ?? DEFAULT_MODE
+    const result = await action.mutateAsync({ kind: "permissionTools", alias: props.card.alias, modes, tools })
+    if (result && "permission_state" in result)
+      setApplied({
+        ...(result.permission_state === undefined ? {} : { groups: result.permission_state }),
+        ...(result.permission_tool_state === undefined ? {} : { tools: result.permission_tool_state }),
+      })
+  })
+
+  /** Режим строки: временный вид, пока сервер не ответил, иначе — посчитанный сервером (S-V23). */
+  const modeOf = (name: string): CorpPermissionMode | undefined => writer.preview().rows[name] ?? toolState()?.[name]
+  /** Занята та строка, чью правку сервер ещё не подтвердил и не отменил. */
+  const busy = (name: string) => name in writer.preview().rows
+  const rejectedOf = (name: string) => writer.rejected()[name]
 
   /**
    * Значение группового селектора секции (S-V23): одинаковый режим у всех её строк — этот режим,
@@ -733,51 +887,47 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
     return aggregateMode(modes)
   }
 
+  const sectionBusy = (section: ToolSection) =>
+    section.tools.some((tool) => busy(tool.name)) ||
+    (section.id === REST_GROUP_ID && writer.preview().rest !== undefined)
+
   const restMode = () => {
+    const shown = writer.preview().rest
+    if (shown !== undefined) return shown
     const value = groupState()?.[REST_GROUP_ID]
     return value === "allow" || value === "ask" || value === "deny" ? value : undefined
   }
 
   /**
-   * Запись: полное тело блока (S-V21).
-   *
-   * `modes` — режимы всех групп, как их посчитал сервер; группа в состоянии `mixed` в набор не
-   * попадает намеренно (для неё запись возьмёт `default` каталога), но её инструменты названы
-   * поимённо в `tools` и потому своих значений не теряют. `overrideRest` двигает wildcard —
-   * только селектор секции «Остальные» его и трогает.
+   * `blocked` — единственное, что имеет право погасить экран целиком (S-V28): карточка закрыта по
+   * существу, и трогать на ней нечего. «Идёт запрос» с этим не смешивается: занятость живёт на
+   * строке, а не на экране.
    */
-  async function apply(overrides: Record<string, CorpPermissionMode>, overrideRest?: CorpPermissionMode) {
-    const tools: Record<string, CorpPermissionMode> = {}
-    for (const section of sections())
-      for (const row of section.tools) {
-        const mode = overrides[row.name] ?? modeOf(row.name)
-        if (mode) tools[row.name] = mode
-      }
-    const modes: Record<string, CorpPermissionMode> = {}
-    for (const [id, value] of Object.entries(groupState() ?? {}))
-      if (value === "allow" || value === "ask" || value === "deny") modes[id] = value
-    if (overrideRest) modes[REST_GROUP_ID] = overrideRest
-    // Режим wildcard обязан быть в теле явно: без него запись возьмёт `default` каталога и молча
-    // отменит прежнее решение пользователя про инструменты вне словаря (S-V21).
-    if (!(REST_GROUP_ID in modes)) modes[REST_GROUP_ID] = rest()?.default ?? DEFAULT_MODE
-    try {
-      const result = await action.mutateAsync({ kind: "permissionTools", alias: props.card.alias, modes, tools })
-      if (result && "permission_state" in result)
-        setApplied({
-          ...(result.permission_state === undefined ? {} : { groups: result.permission_state }),
-          ...(result.permission_tool_state === undefined ? {} : { tools: result.permission_tool_state }),
-        })
-    } catch {
-      // Отказ роута уже объяснён тостом `onError` мутации: молчаливой неудачи здесь не бывает.
-    }
-  }
+  const disabled = () => props.card.blocked
 
-  const disabled = () => action.isPending || props.card.blocked
+  /**
+   * Варианты группового селектора: объекты создаются ОДИН раз на язык и переиспользуются.
+   *
+   * Это не оптимизация, а исправление второго дефекта того же экрана. `SelectV2` — управляемый
+   * компонент Kobalte: выбранное значение он сравнивает по ссылке. Прежде и `options`, и `current`
+   * собирались новыми объектами на КАЖДОЙ отрисовке, поэтому после записи Kobalte видел «значение
+   * сменилось» и звал `onSelect` снова — тот писал, отрисовка повторялась, и цикл замыкался.
+   * Наблюдение на стенде до правки: одно изменение режима секции у карточки Jira отправило 1723
+   * одинаковых запроса записи за четыре секунды и кончилось тремя тостами «Запрос не выполнен».
+   * Стабильная ссылка разрывает цикл на входе, а проверка «выбран тот же режим» ниже — на выходе,
+   * и вторая нужна независимо от первой: выбор того же режима писать нечего в любом случае.
+   */
+  const bulkOption = createMemo(() => {
+    const map: Record<string, { value: string; label: string }> = {}
+    for (const mode of MODES) map[mode] = { value: mode, label: language.t(BULK_KEY[mode]) }
+    map["mixed"] = { value: "mixed", label: language.t("corp.permissions.mixed") }
+    return map
+  })
 
   function bulkOptions(section: ToolSection) {
-    const options = MODES.map((mode) => ({ value: mode as string, label: language.t(BULK_KEY[mode]) }))
+    const options = MODES.map((mode) => bulkOption()[mode])
     // «Смешанно» показывается, только пока режимы расходятся, и выбрать его нельзя (S-V23).
-    if (sectionMode(section) === "mixed") options.push({ value: "mixed", label: language.t("corp.permissions.mixed") })
+    if (sectionMode(section) === "mixed") options.push(bulkOption()["mixed"])
     return options
   }
 
@@ -805,6 +955,10 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
                 <Tag>{section.tools.length}</Tag>
               </button>
               <span class="flex-1" />
+              {/* Секция занята, пока сервер не ответил хотя бы по одной её строке. */}
+              <Show when={sectionBusy(section)}>
+                <span data-slot="corp-permission-busy" title={language.t("corp.permissions.saving")} />
+              </Show>
               <SelectV2
                 appearance="inline"
                 data-action="corp-permissions-bulk"
@@ -813,28 +967,63 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
                 placement="bottom-end"
                 gutter={6}
                 disabled={disabled()}
-                current={bulkOptions(section).find((option) => option.value === sectionMode(section))}
+                current={bulkOption()[sectionMode(section) ?? ""]}
                 value={(option) => option.value}
                 label={(option) => option.label}
                 onSelect={(option) => {
                   if (!option || option.value === "mixed") return
+                  // Выбран тот же режим, что и действует, — писать нечего. Проверка обязательна:
+                  // без неё повторный `onSelect` управляемого селектора замыкает цикл записи.
+                  if (option.value === sectionMode(section)) return
                   const mode = option.value as CorpPermissionMode
-                  void apply(
-                    Object.fromEntries(section.tools.map((tool) => [tool.name, mode])),
-                    section.id === REST_GROUP_ID ? mode : undefined,
-                  )
+                  const edit: PermissionEdit = {
+                    rows: Object.fromEntries(section.tools.map((tool) => [tool.name, mode])),
+                  }
+                  // Wildcard двигает только селектор секции «Остальные» — он и никто больше.
+                  if (section.id === REST_GROUP_ID) edit.rest = mode
+                  writer.push(edit)
                 }}
               />
             </div>
             <Show when={!folded()[section.id]}>
               <For each={section.tools}>
                 {(tool) => (
-                  <div data-slot="corp-tool-row" data-tool={tool.name}>
+                  <div
+                    data-slot="corp-tool-row"
+                    data-tool={tool.name}
+                    // Занятость и отказ — признаки СТРОКИ, а не экрана: по ним же их и видно.
+                    data-busy={busy(tool.name) ? "" : undefined}
+                    data-rejected={rejectedOf(tool.name) === undefined ? undefined : ""}
+                  >
                     <span class="flex flex-col min-w-0">
                       <span class="text-14-regular text-text-strong truncate">{tool.title}</span>
                       <span class="text-12-regular text-text-weak truncate">{tool.name}</span>
                     </span>
                     <span class="flex-1" />
+                    {/*
+                      Отказ записи не молчит: строка говорит, что режим не сохранился, теми же
+                      человеческими словами, что и прочие отказы ревизии 1.14. Техническая
+                      подробность — в подсказке при наведении, а не в тексте: в тексте отказа
+                      место объяснению и следующему шагу.
+                    */}
+                    <Show when={rejectedOf(tool.name)}>
+                      {(detail) => (
+                        <span
+                          data-slot="corp-tool-rejected"
+                          title={
+                            detail().length > 0
+                              ? `${language.t("corp.permissions.notSaved")}. ${language.t("corp.error.connect.details", { code: detail() })}`
+                              : language.t("corp.permissions.notSaved")
+                          }
+                        >
+                          <Icon name="warning" size="small" />
+                          <span class="text-12-regular">{language.t("corp.permissions.notSaved")}</span>
+                        </span>
+                      )}
+                    </Show>
+                    <Show when={busy(tool.name)}>
+                      <span data-slot="corp-permission-busy" title={language.t("corp.permissions.saving")} />
+                    </Show>
                     {/* Тристейт: подложка под активной иконкой ПЕРЕЕЗЖАЕТ между позициями, а не
                         перекрашивается (`thumb` компонента `SegmentedControlV2`). Тон подложки
                         задаётся классом активного режима на самом контроле. */}
@@ -848,7 +1037,9 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
                       disabled={disabled()}
                       onChange={(value) => {
                         if (!value) return
-                        void apply({ [tool.name]: value as CorpPermissionMode })
+                        // Занятая строка остаётся рабочей: правки сливаются очередью, и «туда-обратно»
+                        // кончается последним нажатием, а не потерянным.
+                        writer.push({ rows: { [tool.name]: value as CorpPermissionMode } })
                       }}
                     >
                       <For each={MODES}>

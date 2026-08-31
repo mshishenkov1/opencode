@@ -449,6 +449,48 @@
   border-top: 1px solid var(--border-base);
 }
 
+/*
+ * Занятость строки (ревизия 1.14, дефект «экран запирается»). Прежде запись гасила ВЕСЬ экран, и
+ * человек не видел ни того, что происходит, ни того, где именно. Теперь занят тот, кого меняют:
+ * кружок крутится в его строке (и в шапке секции, когда меняют секцию), а прочие строки остаются
+ * рабочими. Отдельного значка в наборе под это нет и заводить его не за чем — кольцо рисуется
+ * каймой, теми же токенами, что и остальная строка.
+ */
+[data-slot="corp-permission-busy"] {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-base);
+  border-top-color: var(--text-base);
+  animation: corp-permission-busy-spin 0.7s linear infinite;
+}
+
+@keyframes corp-permission-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="corp-permission-busy"] {
+    animation-duration: 2.4s;
+  }
+}
+
+/*
+ * Отказ записи не молчит: строка называет, что режим не сохранился. Техническая подробность — в
+ * подсказке `title`, а не в тексте (то же правило, что у прочих отказов ревизии 1.14).
+ */
+[data-slot="corp-tool-rejected"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  color: var(--v2-state-fg-danger);
+  cursor: help;
+}
+
 /* Дорожка тристейта: фона у неё нет — видна только едущая подложка (макет заказчика). */
 [data-slot="segmented-control-v2"].corp-tristate {
   width: auto;

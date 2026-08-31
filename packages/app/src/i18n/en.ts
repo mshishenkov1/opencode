@@ -1244,6 +1244,11 @@ export const dict = {
   "corp.permissions.allowHint": "Allow without asking",
   "corp.permissions.askHint": "Ask every time",
   "corp.permissions.denyHint": "Deny",
+  // Занятость и отказ ЖИВУТ НА СТРОКЕ, а не на экране (ревизия 1.14, дефект «экран
+  // запирается»): пока сервер не ответил, строка помечена «сохраняем», а если он не принял
+  // правку — «не сохранилось» с технической подробностью в подсказке.
+  "corp.permissions.saving": "Saving the mode…",
+  "corp.permissions.notSaved": "The mode was not saved — try again",
 
   "corp.empty.unparsed": "Catalog could not be parsed: every card was dropped ({{dropped}})",
   "corp.empty.tabConnected": "Nothing connected yet",

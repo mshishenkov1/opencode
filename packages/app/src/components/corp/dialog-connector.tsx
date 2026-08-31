@@ -31,6 +31,7 @@ import {
   useCorpCatalog,
 } from "@/context/corp"
 import { useLanguage } from "@/context/language"
+import { showToast } from "@/utils/toast"
 import { ConnectorIcon } from "./connector-icon"
 import { statusKey, statusTone } from "./dialog-connectors"
 import { CorpDialog } from "./dialog-shell"
@@ -203,6 +204,91 @@ export function docsLabel(url: string): string {
   } catch {
     return url
   }
+}
+
+/**
+ * Когда токен подключения в последний раз проверен целевой системой — **вид** подписи, без языка
+ * (макет заказчика от 30.08, экран 3: «проверен сегодня в 21:40»).
+ *
+ * Считается разница КАЛЕНДАРНЫХ дней, а не часов: проверка вчера в 23:50 и сейчас 00:10 — это
+ * «вчера», а не «сегодня», сколько бы минут между ними ни прошло. Время из будущего (часы машины
+ * ушли назад) — «сегодня»: врать про завтра хуже, чем округлить к сегодняшнему дню.
+ *
+ * `undefined` — поля нет или оно нечитаемо: подпись тогда не рисуется вовсе, а не подменяется
+ * временем сохранения записи или сегодняшним днём.
+ */
+export type VerifiedShape = { kind: "today" | "yesterday" | "date"; at: Date }
+
+export function verifiedShape(verifiedAt: string | undefined, now: Date): VerifiedShape | undefined {
+  if (!verifiedAt) return undefined
+  const at = new Date(verifiedAt)
+  if (Number.isNaN(at.getTime())) return undefined
+  const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime()
+  const days = Math.round((startOfDay(now) - startOfDay(at)) / 86_400_000)
+  if (days <= 0) return { kind: "today", at }
+  if (days === 1) return { kind: "yesterday", at }
+  return { kind: "date", at }
+}
+
+/**
+ * Строка под именем подключённого коннектора: «учётная запись · способ · когда проверено»
+ * (макет заказчика от 30.08, экран 3).
+ *
+ * Строка есть у коннектора, подключение к которому **состоялось**: либо связь держится сейчас
+ * (`state: "connected"`, случай макета), либо для него сохранены учётные данные, которыми он
+ * подключался (`has_credentials`) — у такого коннектора «кем» и «когда проверено» правда, даже
+ * когда связь потеряна, и строка об этом говорит, пока строка состояния говорит об обрыве.
+ * У коннектора, которого не подключали, строки нет вовсе: способ подключения — свойство каталога,
+ * оно живёт в строке свойств и в одиночку под именем не встаёт.
+ *
+ * Собирается **только из того, что известно**. Учётную запись называет целевая система при
+ * проверке токена, время проверки записывается в тот же момент — ни того, ни другого у карточки
+ * может не быть, и тогда часть просто не рисуется. Разделители стоят между существующими частями:
+ * из одной известной части выходит строка из одной части, а не строка с висящими точками.
+ */
+export function identityParts(
+  card: CorpCatalogCard,
+  method: string | undefined,
+  verified: string | undefined,
+): string[] {
+  if (card.state !== "connected" && card.has_credentials !== true) return []
+  return [card.account, method, verified].filter((part): part is string => Boolean(part))
+}
+
+/**
+ * Запись в буфер обмена — та же последовательность, какой копирует остальное приложение
+ * (`pages/session/use-session-commands.tsx`, `ui/components/message-part.tsx`): сперва скрытая
+ * `textarea` с `document.execCommand("copy")`, и только потом асинхронный `navigator.clipboard`.
+ *
+ * Порядок именно такой, потому что асинхронному буферу браузер отказывает там, где обычному
+ * копированию не отказывает: в неактивной вкладке, без выданного разрешения, в невнимательном к
+ * жесту окружении. Возвращается **исход**, а не `void`: сказать «скопировано» о том, чего не
+ * произошло, приложение не вправе.
+ *
+ * Копия, а не общий помощник: своего помощника в `packages/app/src/utils` форк не заводит — там
+ * начинается зона upstream, и правка её ради корп-экрана дороже, чем эти двадцать строк (S-B6).
+ */
+export async function writeClipboard(value: string): Promise<boolean> {
+  const body = typeof document === "undefined" ? undefined : document.body
+  if (body && typeof document.execCommand === "function") {
+    const textarea = document.createElement("textarea")
+    textarea.value = value
+    textarea.setAttribute("readonly", "")
+    textarea.style.position = "fixed"
+    textarea.style.opacity = "0"
+    textarea.style.pointerEvents = "none"
+    body.appendChild(textarea)
+    textarea.select()
+    const copied = document.execCommand("copy")
+    body.removeChild(textarea)
+    if (copied) return true
+  }
+  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard
+  if (!clipboard?.writeText) return false
+  return clipboard.writeText(value).then(
+    () => true,
+    () => false,
+  )
 }
 
 /** Сколько плиток инструментов показывается до нажатия «Показать все» (S-D11, ревизия 1.14). */
@@ -1248,6 +1334,49 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
     return language.t("corp.error.connect.details", { code })
   }
 
+  /**
+   * «когда проверено» человеческим языком (макет заказчика от 30.08, экран 3). Время и дата
+   * форматируются локалью приложения, а не выкладываются вручную: «21:40» и «28 августа» — это
+   * `Intl` того же языка, каким говорит остальное окно.
+   */
+  function verified(entry: CorpCatalogCard): string | undefined {
+    const shape = verifiedShape(entry.verified_at, new Date())
+    if (!shape) return undefined
+    if (shape.kind === "today")
+      return language.t("corp.connector.verifiedToday", {
+        time: new Intl.DateTimeFormat(language.intl(), { timeStyle: "short" }).format(shape.at),
+      })
+    if (shape.kind === "yesterday") return language.t("corp.connector.verifiedYesterday")
+    return language.t("corp.connector.verifiedOn", {
+      date: new Intl.DateTimeFormat(language.intl(), { day: "numeric", month: "long" }).format(shape.at),
+    })
+  }
+
+  /** Части строки «учётная запись · способ · когда проверено» — только известные (экран 3). */
+  function identity(entry: CorpCatalogCard): string[] {
+    return identityParts(entry, connectionMethodTitle(entry), verified(entry))
+  }
+
+  /**
+   * «Скопировать ссылку» (макет заказчика от 30.08, экран 2) — копируется адрес ДОКУМЕНТАЦИИ.
+   *
+   * Своей страницы у коннектора в вебе нет, копировать её адрес нечего; адрес документации —
+   * честный аналог: человек получает ссылку, которой можно поделиться. Действие есть тогда и
+   * только тогда, когда документация у карточки есть (`docs_url`).
+   *
+   * Подтверждение — тот же `showToast`, которым приложение подтверждает прочие копирования.
+   * Копирование не состоялось (буфера нет, доступ запрещён) — об этом говорится тем же способом:
+   * сказать «скопировано» о том, чего не произошло, приложение не вправе.
+   */
+  async function copyLink(url: string) {
+    const copied = await writeClipboard(url)
+    showToast(
+      copied
+        ? { variant: "success", title: language.t("corp.connector.linkCopied") }
+        : { variant: "error", title: language.t("corp.connector.linkCopyFailed") },
+    )
+  }
+
   return (
     // Заголовок окна — настоящая хлебная крошка «‹ Коннекторы / <имя>» (макет заказчика от 30.08,
     // экраны 2 и 3): она называет и место, откуда пришёл человек, и место, где он сейчас. Первая
@@ -1271,9 +1400,25 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
         </span>
       }
       action={
-        <Button size="small" variant="ghost" onClick={() => dialog.close()}>
-          {language.t("corp.connector.back")}
-        </Button>
+        // Строка с хлебной крошкой макета несёт справа «Скопировать ссылку» (экран 2) — оно и
+        // стоит крайним справа, как в макете; «Назад» осталось в том же ряду, левее.
+        <div class="flex items-center gap-2">
+          <Button size="small" variant="ghost" onClick={() => dialog.close()}>
+            {language.t("corp.connector.back")}
+          </Button>
+          <Show when={card()?.docs_url}>
+            {(value) => (
+              <Button
+                size="small"
+                variant="ghost"
+                data-action="corp-connector-copy-link"
+                onClick={() => void copyLink(value())}
+              >
+                {language.t("corp.connector.copyLink")}
+              </Button>
+            )}
+          </Show>
+        </div>
       }
     >
       {/* Прокручивается содержимое страницы внутри окна; окно целиком не прокручивается и высоту
@@ -1304,9 +1449,20 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                       <Tag>{language.t("corp.connectors.deprecated")}</Tag>
                     </Show>
                   </span>
-                  {/* `alias` ушёл со строки витрины (S-D6, ревизия 1.12) и показывается здесь: он
-                      не лишние данные, а данные не для сканирования таблицы (D-53). */}
-                  <span class="text-12-regular text-text-weak truncate">{props.alias}</span>
+                  {/* Строка под именем (макет заказчика от 30.08). У подключённого коннектора это
+                      «учётная запись · способ · когда проверено» (экран 3) — ровно те части, что
+                      известны; у остальных — короткая суть коннектора из каталога (экран 2):
+                      «Каналы, треды, поиск и опросы корпоративного мессенджера».
+
+                      Сути в карточке может не быть — тогда строка деградирует на техническое имя,
+                      как было до ревизии 1.14: пусто под именем не остаётся и выдуманного там не
+                      появляется. Само техническое имя из шапки ушло, но не пропало — оно стоит
+                      свойством в строке ниже. */}
+                  <span class="text-12-regular text-text-weak truncate" data-slot="corp-connector-subtitle">
+                    {identity(entry()).length > 0
+                      ? identity(entry()).join(" · ")
+                      : (entry().summary ?? props.alias)}
+                  </span>
                 </div>
                 <span class="flex-1" />
                 {/* Предлагаемое действие показывается тем же элементом, которым выполняется
@@ -1476,7 +1632,7 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                   отвечает на вопрос «что именно я подключаю» до нажатия кнопки, а данные для него
                   в карточке есть (`auth_methods`). Документация показывается ИМЕНЕМ места, а не
                   адресом целиком: адрес со схемой и путём человеку читать незачем. */}
-              <Show when={entry().owner || connectionMethodTitle(entry()) || entry().docs_url}>
+              <Show when={entry().owner || connectionMethodTitle(entry()) || entry().docs_url || props.alias}>
                 <div class="text-12-regular text-text-weak" data-slot="corp-connector-properties">
                   <Show when={entry().owner}>
                     {(value) => (
@@ -1512,6 +1668,22 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                         >
                           {docsLabel(value())}
                         </a>
+                      </span>
+                    )}
+                  </Show>
+                  <Show when={(entry().owner || connectionMethodTitle(entry()) || entry().docs_url) && props.alias}>
+                    <span aria-hidden="true"> &middot; </span>
+                  </Show>
+                  {/* Техническое имя. Из шапки оно ушло — там теперь суть коннектора (макет
+                      заказчика от 30.08, экран 2), а в самом макете технического имени нет вовсе.
+                      Но терять его нельзя: этим именем коннектор зовётся в конфиге, в логах и в
+                      разговоре с поддержкой, поэтому оно встало сюда — свойством среди свойств,
+                      последним, чтобы порядок макета (владелец, подключение, документация) остался
+                      нетронутым. */}
+                  <Show when={props.alias}>
+                    {(value) => (
+                      <span data-slot="corp-connector-property" data-property="alias">
+                        {language.t("corp.connector.alias")} &mdash; {value()}
                       </span>
                     )}
                   </Show>

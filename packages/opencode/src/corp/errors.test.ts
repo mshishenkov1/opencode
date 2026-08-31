@@ -126,6 +126,44 @@ describe("corp/errors — классы ошибок подключения (S-V1
     expect(CorpErrors.connectErrorClass({ message: "504 gateway time-out" })).toBe("upstream_unavailable")
   })
 
+  test("AC-365: признак „система ответила отказом“ проверяется РАНЬШЕ признака „не ответил“ — на всех формах 5xx, где порядок решает", () => {
+    // ГРАНИЦА меры: она проверяет порядок ДВУХ ветвей разбора текста — «ответил отказом» (5xx) и
+    // «не ответил» (сеть). Про порядок ветвей ВЫШЕ (способ подключения, отвергнутый токен) и про
+    // ветку `needs_reauth` НИЖЕ она не говорит ничего.
+    //
+    // Каждое сообщение перебора содержит И признак 5xx, И сетевое слово — только на таких порядок
+    // и решает. Строки `504 gateway time-out` здесь нет намеренно: сетевые шаблоны её не матчат
+    // вовсе (`timeout` ≠ `time-out`), поэтому перестановка ветвей её ответ не меняет, и мера,
+    // стоящая на ней одной, перестановку пропускает (находка ревью MAJ-A). Написание с дефисом
+    // проверяется отдельным случаем — соседним, про сам шаблон.
+    const ordered = [
+      "504 gateway timeout",
+      "502 Bad Gateway: request timed out",
+      "503 service unavailable, connection timeout",
+      "HTTP 500 internal server error after timeout",
+    ]
+    for (const message of ordered)
+      expect(CorpErrors.connectErrorClass({ message, mode: "native", hubConfigured: false }), message).toBe(
+        "upstream_unavailable",
+      )
+    // Якорь-противовес: сетевая ветка на настоящем молчании по-прежнему срабатывает. Без него меру
+    // можно удовлетворить, просто удалив сетевую ветку целиком.
+    for (const message of [
+      "fetch failed",
+      "connect ECONNREFUSED 10.0.0.1:443",
+      "getaddrinfo ENOTFOUND hub.corp",
+      "socket hang up",
+    ])
+      expect(CorpErrors.connectErrorClass({ message, mode: "native", hubConfigured: false }), message).toBe(
+        "network_unreachable",
+      )
+    // Те же четыре отказа у карточки через фасад при заданном адресе Hub: отказал сам Hub.
+    for (const message of ordered)
+      expect(CorpErrors.connectErrorClass({ message, mode: "facade", hubConfigured: true }), message).toBe(
+        "hub_unreachable",
+      )
+  })
+
   test("AC-182: коды S-A5 про недоступный Hub дают hub_unreachable — идентификатор класса не изменён", () => {
     for (const code of ["hub_unavailable", "hub_invalid_response", "rate_limited"] as const)
       expect(CorpErrors.connectErrorClass({ code }), code).toBe("hub_unreachable")

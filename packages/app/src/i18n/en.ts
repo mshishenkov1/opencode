@@ -1168,6 +1168,10 @@ export const dict = {
   "corp.connect.chooseMethod": "Connection method",
   "corp.connect.docs": "Where to get the token",
   "corp.connect.submit": "Connect",
+  "corp.connect.cancel": "Cancel",
+  // См. комментарий в ru.ts: слово «Hub» в этом тексте не используется (D-43, AC-275).
+  "corp.connect.storage":
+    "The token is kept on this machine in a file with 0600 permissions and goes only to the system itself",
   "corp.connect.replace": "Replace token",
   "corp.connect.tooShort": "The token is shorter than {{n}} characters",
   "corp.connect.tooLong": "The token is longer than {{n}} characters",

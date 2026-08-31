@@ -823,6 +823,21 @@ export function lengthError(value: string, field: CorpAuthMethodField | undefine
   return undefined
 }
 
+/**
+ * Подпись поля ввода (S-D13 п.8, S-I6) — или её отсутствие.
+ *
+ * Название способа стоит над формой всегда: в шапке формы, когда выбирать не из чего, и в элементе
+ * выбора, когда способов несколько. Каталог вправе назвать поле так же, как назван сам способ, — и
+ * тогда одно и то же название печатается дважды подряд, что человек читает как дефект данных.
+ * Совпадающая подпись не рисуется; отличающаяся (например, «Токен» при способе «Токен сессии ТЭГ»)
+ * рисуется как прежде. Подпись, которой в каталоге нет, пустой строки не оставляет.
+ */
+export function fieldLabel(method: CorpAuthMethodView): string | undefined {
+  const label = method.field?.label?.trim()
+  if (!label) return undefined
+  return label === method.title.trim() ? undefined : method.field?.label
+}
+
 /** Граница длины поля: нечисловое значение границей не является и ничего не ограничивает (S-V24 п.2). */
 function bound(value: number | string | undefined): number | undefined {
   const parsed = typeof value === "string" ? Number(value) : value
@@ -839,6 +854,24 @@ export function verifyKey(result: string, account: string | undefined) {
   if (result === "token_rejected") return "corp.connect.verify.tokenRejected"
   if (result === "verify_failed") return "corp.connect.verify.verifyFailed"
   return "corp.connect.verify.unreachable"
+}
+
+/**
+ * Тон исхода проверки (макет заказчика, экран 4, блок «Что человек видит, когда не получилось»).
+ *
+ * Три класса отказа макета ложатся на три исхода правила один к одному: отказ токена — красный,
+ * отсутствие связи — жёлтый, недоступность сервиса — нейтральный. Тон меняет **подачу**, а не
+ * текст: фраза у каждого исхода своя и остаётся прежней (S-V25 п.3), и она же — носитель смысла:
+ * цвет ничего не сообщает сверх неё и в чёрно-белой печати ничего не теряется.
+ *
+ * `account_missing` идёт с отказом токена намеренно: система запрос приняла, но пользователя не
+ * назвала — токен не подтверждён, и это про токен, а не про сервис.
+ */
+export function verifyTone(result: string): "success" | "danger" | "warning" | "neutral" {
+  if (result === "verified") return "success"
+  if (result === "token_rejected" || result === "account_missing") return "danger"
+  if (result === "verify_failed") return "neutral"
+  return "warning"
 }
 
 /**
@@ -920,6 +953,20 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
   const connected = createMemo(() => result()?.verify_result === "verified")
   const length = createMemo(() => lengthError(token(), selected()?.field))
 
+  /** Есть ли что отменять: введённое значение или показанный исход прошлой попытки. */
+  const dirty = createMemo(() => token() !== "" || result() !== undefined || failure() !== undefined)
+
+  /**
+   * «Отмена» (макет заказчика, экран 4): возвращает форму в исходное состояние — пустое поле и
+   * ни одного исхода на экране. Со страницы она не уводит и ничего сохранённого не трогает:
+   * отменяется начатый ввод, а не подключение (для него есть «Отключить» в шапке страницы).
+   */
+  function reset() {
+    setToken("")
+    setShowResult(false)
+    connect.reset()
+  }
+
   function submit() {
     // Пустое поле и непройденная проверка длины запроса не создают; повторное нажатие во время
     // запроса второго запроса не создаёт (S-D13 п.4, п.5).
@@ -935,25 +982,48 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
 
   return (
     <div class="flex flex-col gap-3" data-slot="corp-connect">
-      <span class="text-12-regular text-text-weak">{language.t("corp.connect.title")}</span>
+      {/* Шапка формы (макет заказчика, экран 4): значок и подпись способа. Приглушённый заголовок
+          «Подключение» больше не висит голой строкой над пустым местом — он стоит в шапке рядом со
+          значком, а под ним названо то, чем именно подключаются. */}
+      <div data-slot="corp-connect-head">
+        <Icon name="shield" size="small" />
+        <span>
+          <span class="text-14-regular text-text-strong">{language.t("corp.connect.title")}</span>
+          {/* Название способа печатается ЗДЕСЬ ровно тогда, когда выбирать не из чего: при выборе
+              его несут сами элементы выбора, и второй раз оно не повторяется. Подпись способа —
+              данные каталога, клиент их не переводит (S-I6). */}
+          <Show when={choice() === "single" ? selected() : undefined}>
+            {(method) => <span class="text-12-regular text-text-weak">{method().title}</span>}
+          </Show>
+        </span>
+      </div>
 
       <Show when={!connected()}>
         {/* Случай 2 и 3 таблицы S-V28 п.4: список ВСЕХ способов. Недоступный отрисован элементом
             выбора с атрибутом `disabled` и текстом причины в том же блоке — рядом с ним, а не в
-            другой части экрана. Поля ввода токена у недоступного способа в дереве нет. */}
+            другой части экрана. Поля ввода токена у недоступного способа в дереве нет.
+
+            Заголовок «Способ подключения» ушёл из отрисовки в `aria-label` группы: голой строкой
+            над списком названий он читался как сырая подпись поля данных, а не как выбор. Для
+            скринридера группа названа по-прежнему, и текст ключа не тронут. */}
         <Show when={choice() !== "single"}>
-          <div class="flex flex-col gap-2" data-slot="corp-connect-methods">
-            <span class="text-12-regular text-text-weak">{language.t("corp.connect.chooseMethod")}</span>
+          <div
+            data-slot="corp-connect-methods"
+            role="radiogroup"
+            aria-label={language.t("corp.connect.chooseMethod")}
+          >
             <For each={methods()}>
               {(method) => (
-                <div class="flex flex-col gap-1">
+                <div data-slot="corp-connect-method-option">
                   <button
                     type="button"
+                    role="radio"
+                    aria-checked={method.available && selected()?.id === method.id ? "true" : "false"}
                     data-action="corp-connect-method"
                     data-method={method.id}
                     data-selected={method.available && selected()?.id === method.id ? "true" : undefined}
                     disabled={!method.available}
-                    class="text-14-regular text-text-strong text-left disabled:text-text-weak"
+                    class="text-14-regular"
                     onClick={() => method.available && setChosen(method.id)}
                   >
                     {/* Подпись способа — данные каталога, клиент их не переводит (S-I6). */}
@@ -975,14 +1045,25 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
         <Show when={selected()}>
           {(method) => (
             <div class="flex flex-col gap-2">
-              <label class="text-12-regular text-text-weak" for={`corp-connect-${props.card.alias}`}>
-                {/* Подпись поля — из каталога (S-I6, S-D13 п.8). */}
-                {method().field?.label}
-              </label>
+              {/* Подпись поля — из каталога (S-I6, S-D13 п.8). Она не печатается, когда дословно
+                  повторяет название способа, уже стоящее выше: одно и то же слово дважды подряд
+                  человек читает как дефект, а не как подпись. */}
+              <Show when={fieldLabel(method())}>
+                {(label) => (
+                  <label class="text-12-regular text-text-weak" for={`corp-connect-${props.card.alias}`}>
+                    {label()}
+                  </label>
+                )}
+              </Show>
+              {/*
+                Видимое поле ввода (макет заказчика, экран 4). Оформление — правилом
+                `[data-slot="corp-connect-token"]` в `dialog-shell.css`: класс
+                `bg-background-element` просил токен, которого нет ни в одной теме приложения, и
+                поле оставалось совершенно прозрачным — человек не видел, куда печатать.
+              */}
               <input
                 id={`corp-connect-${props.card.alias}`}
                 data-slot="corp-connect-token"
-                class="text-14-regular text-text-strong bg-background-element rounded px-2 py-1"
                 type={method().field?.secret === false ? "text" : "password"}
                 autocomplete="off"
                 placeholder={method().field?.placeholder ?? ""}
@@ -1001,6 +1082,12 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
                   </span>
                 )}
               </Show>
+              {/* Где живёт введённое значение (макет заказчика, экран 4). Утверждение проверяемое:
+                  токен кладётся в `connector-credentials.json` с правами `0o600` (S-V26 п.1), а в
+                  прямом режиме уходит только в саму целевую систему. */}
+              <span class="text-12-regular text-text-weak" data-slot="corp-connect-storage">
+                {language.t("corp.connect.storage")}
+              </span>
               <Show when={method().field?.docs_url}>
                 {(docs) => (
                   <a
@@ -1021,14 +1108,26 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
                   </span>
                 )}
               </Show>
-              <div class="flex items-center gap-2">
+              {/* Ряд кнопок макета: «Подключить» первичная, «Отмена» прозрачная. «Отмена»
+                  неактивна, пока отменять нечего, — кнопка, которая ничего не делает, лжёт. */}
+              <div data-slot="corp-connect-actions">
                 <Button
                   size="small"
+                  variant="primary"
                   data-action="corp-connect-submit"
                   disabled={connect.isPending || token() === "" || length() !== undefined}
                   onClick={() => submit()}
                 >
                   {language.t("corp.connect.submit")}
+                </Button>
+                <Button
+                  size="small"
+                  variant="ghost"
+                  data-action="corp-connect-cancel"
+                  disabled={connect.isPending || !dirty()}
+                  onClick={() => reset()}
+                >
+                  {language.t("corp.connect.cancel")}
                 </Button>
                 <Show when={connect.isPending}>
                   <span class="text-12-regular text-text-weak" data-slot="corp-connect-pending" aria-busy="true">
@@ -1069,11 +1168,18 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
           исходы обмена — как ПРЕДУПРЕЖДЕНИЕ; различие в разметке, а не в тексте. */}
       <Show when={connected() ? undefined : result()}>
         {(outcome) => (
-          <span class="text-12-regular text-text-error" data-slot="corp-connect-verify" role="alert">
-            {language.t(verifyKey(outcome().verify_result, undefined), {
-              status: outcome().verify_status ?? "",
-            })}
-          </span>
+          <div
+            data-slot="corp-connect-outcome"
+            data-tone={verifyTone(outcome().verify_result)}
+            role="alert"
+          >
+            <Icon name="warning" size="small" />
+            <span class="text-12-regular" data-slot="corp-connect-verify">
+              {language.t(verifyKey(outcome().verify_result, undefined), {
+                status: outcome().verify_status ?? "",
+              })}
+            </span>
+          </div>
         )}
       </Show>
       <Show when={exchangeKey(result()?.exchange_result)}>
@@ -1085,9 +1191,12 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
       </Show>
       <Show when={connectFailureKey(failure())}>
         {(key) => (
-          <span class="text-12-regular text-text-error" data-slot="corp-connect-failure" role="alert">
-            {language.t(key())}
-          </span>
+          <div data-slot="corp-connect-outcome" data-tone="danger" role="alert">
+            <Icon name="warning" size="small" />
+            <span class="text-12-regular" data-slot="corp-connect-failure">
+              {language.t(key())}
+            </span>
+          </div>
         )}
       </Show>
     </div>

@@ -558,3 +558,187 @@
 [data-slot="corp-connector-property"] {
   white-space: nowrap;
 }
+
+/*
+ * Форма подключения (S-D13, макет заказчика «Подключение и ошибки простыми словами», экран 4).
+ *
+ * Поле ввода токена до этой правки просило tailwind-класс `bg-background-element`, а токена
+ * `--background-element` не объявляет ни одна тема приложения: поле оставалось совершенно
+ * прозрачным (`background: rgba(0,0,0,0)`, `border: 0px`) при живых 768×33 и `disabled: false`.
+ * Человек видел подпись «Токен», под ней пустоту, ниже кнопку — и справедливо говорил «не
+ * работает». Правило поля здесь — первое и главное; остальное — раскладка формы по макету.
+ *
+ * Цвета взяты **токенами темы**, а не литералами макета: макет нарисован под тёмную тему, а
+ * приложение живёт в обеих. Пара «фон `--background-bg-base` + кайма `--border-border-strong`» —
+ * ровно та, которой рисуется подложка активного сегмента у `SegmentedControlV2` и подложка
+ * нейтрального состояния тристейта выше: она уже проверена на читаемость в обеих темах, и нового
+ * (девятого) алиаса не заводит. Разрешимость обоих в светлой и тёмной теме держит `tokens.test.ts`.
+ */
+[data-slot="corp-connect"] {
+  /* Форма — не во всю ширину окна (в макете ~520px): длинная строка ввода не читается, а
+     заставляет бегать глазами от подписи к полю. Ограничение живёт на блоке, а не на поле, чтобы
+     подпись, подсказка, строка про хранение и ряд кнопок стояли по одной левой границе. */
+  max-width: 520px;
+}
+
+/*
+ * Шапка формы (макет, экран 4): значок и подпись способа вместо приглушённого заголовка
+ * «Подключение», висевшего голой строкой над пустотой. Подпись способа — данные каталога.
+ */
+[data-slot="corp-connect-head"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-slot="corp-connect-head"] [data-component="icon"] {
+  flex: none;
+  color: var(--text-weak);
+}
+
+[data-slot="corp-connect-head"] > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+/*
+ * Видимое поле ввода: свой фон, кайма 1px, радиус 8, моноширинный шрифт (макет). Моноширинный —
+ * не украшение: токен читают глазами при сверке с личным кабинетом, и пропорциональный шрифт
+ * делает `l`, `1` и `I` неразличимыми.
+ */
+[data-slot="corp-connect-token"] {
+  width: 100%;
+  background: var(--background-bg-base);
+  border: 1px solid var(--border-border-strong);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--text-strong);
+  font-family: var(--font-family-mono);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+/* Плейсхолдер — подсказка, а не значение: он приглушён, чтобы не читаться как введённый токен. */
+[data-slot="corp-connect-token"]::placeholder {
+  color: var(--text-weak);
+}
+
+[data-slot="corp-connect-token"]:focus-visible {
+  outline: none;
+  border-color: var(--border-border-focus);
+}
+
+/* Поле на время запроса неактивно (S-D13 п.5) — и это видно, а не только запрещено кликом. */
+[data-slot="corp-connect-token"]:disabled {
+  color: var(--text-base);
+  cursor: not-allowed;
+}
+
+/* Ряд кнопок формы: «Подключить» и «Отмена» рядом, как в макете. */
+[data-slot="corp-connect-actions"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/*
+ * Выбор способа: элементы выбора, а не список текста под голым заголовком «Способ подключения».
+ * Название способа печатается здесь ровно один раз — подпись поля его не повторяет (см. разметку).
+ * Недоступный способ остаётся на месте с причиной под ним (S-V28 п.4) и форму доступного не ломает.
+ */
+[data-slot="corp-connect-methods"] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Способ и причина его недоступности — одним столбцом: причина стоит под своим способом. */
+[data-slot="corp-connect-method-option"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+/*
+ * Элемент выбора — таблетка по ширине названия, а НЕ во всю строку: во всю строку и с той же
+ * заливкой, что у поля ввода, он читался бы как ещё одно поле, куда надо печатать.
+ */
+[data-slot="corp-connect-methods"] button[data-action="corp-connect-method"] {
+  max-width: 100%;
+  text-align: left;
+  background: var(--surface-weak);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: var(--text-base);
+  cursor: pointer;
+}
+
+[data-slot="corp-connect-methods"] button[data-action="corp-connect-method"][data-selected="true"] {
+  border-color: var(--border-border-strong);
+  color: var(--text-strong);
+}
+
+/* Недоступный способ остаётся элементом выбора — видно, что он есть и что им сейчас нельзя. */
+[data-slot="corp-connect-methods"] button[data-action="corp-connect-method"]:disabled {
+  cursor: not-allowed;
+  color: var(--text-weak);
+  background: none;
+  border-color: var(--border-border-base);
+}
+
+/*
+ * Исход попытки (макет, блок «Что человек видит, когда не получилось»): значок и цветная подложка
+ * вместо голой цветной строки. Тексты не тронуты — меняется только подача.
+ *
+ * Тон несут **подложка и значок**, а сама фраза остаётся обычным текстом темы — как в макете, где
+ * цветом выделено только начало фразы. Это не украшение: пара «жёлтый текст на жёлтой подложке»
+ * (`--v2-state-fg-warning` на `--v2-state-bg-warning`) в СВЕТЛОЙ теме даёт контраст около 2.5:1 и
+ * читается плохо, а `--text-text-base` читается на всех трёх подложках в обеих темах. Носителем
+ * состояния цвет при этом не является: фраза говорит то же самое словами и остаётся понятной в
+ * чёрно-белой печати и при дальтонизме — то же правило, что у колонки «Статус» выше.
+ */
+[data-slot="corp-connect-outcome"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 9px 11px;
+  background: var(--surface-weak);
+  color: var(--text-text-base);
+}
+
+[data-slot="corp-connect-outcome"] [data-component="icon"] {
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-base);
+}
+
+[data-slot="corp-connect-outcome"][data-tone="danger"] {
+  background: var(--v2-state-bg-danger);
+}
+
+[data-slot="corp-connect-outcome"][data-tone="danger"] [data-component="icon"] {
+  color: var(--v2-state-fg-danger);
+}
+
+[data-slot="corp-connect-outcome"][data-tone="warning"] {
+  background: var(--v2-state-bg-warning);
+}
+
+[data-slot="corp-connect-outcome"][data-tone="warning"] [data-component="icon"] {
+  color: var(--v2-state-fg-warning);
+}
+
+[data-slot="corp-connect-outcome"][data-tone="success"] {
+  background: var(--v2-state-bg-success);
+}
+
+[data-slot="corp-connect-outcome"][data-tone="success"] [data-component="icon"] {
+  color: var(--v2-state-fg-success);
+}

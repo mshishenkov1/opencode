@@ -281,7 +281,7 @@ describe("applyDirectoryEvent", () => {
         push() {},
         directory: "/tmp",
         loadLsp() {},
-      loadMcp() {},
+        loadMcp() {},
       })
 
       expect(store.session.find((x) => x.id === item.info.id)).toBeUndefined()
@@ -597,6 +597,7 @@ describe("applyDirectoryEvent", () => {
       loadLsp() {
         lspLoads += 1
       },
+      loadMcp() {},
     })
 
     applyDirectoryEvent({
@@ -610,6 +611,7 @@ describe("applyDirectoryEvent", () => {
       loadLsp() {
         lspLoads += 1
       },
+      loadMcp() {},
     })
 
     expect(pushes).toEqual(["/tmp"])

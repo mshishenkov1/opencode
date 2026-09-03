@@ -5,7 +5,7 @@ import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { List } from "@opencode-ai/ui/list"
-import { corpErrorKey, useCorpInvalidate } from "@/context/corp"
+import { corpErrorKey, useCorpInvalidate, useCorpPrefetchCatalog } from "@/context/corp"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { showToast } from "@/utils/toast"
@@ -34,13 +34,14 @@ type Step =
    */
   | { kind: "no_hub" }
 
-export const DialogCorpLogin: Component = () => {
+export const DialogCorpLogin: Component<{ onSuccess?: () => void }> = (props) => {
   // Экран открывается из `Layout` — директорного SDK-контекста там нет, корп-роуты его и не требуют
   // (BUG-I4-002).
   const sdk = useServerSDK()
   const dialog = useDialog()
   const language = useLanguage()
   const invalidate = useCorpInvalidate()
+  const prefetchCatalog = useCorpPrefetchCatalog()
 
   const [step, setStep] = createSignal<Step>({ kind: "starting" })
   const [hub, setHub] = createSignal<string>()
@@ -68,23 +69,23 @@ export const DialogCorpLogin: Component = () => {
   // S-A13: подстановка в `corp.login.success` — email, а при неизвестном email — `user_id` (AC-129).
   async function finish(user: CorpHubUser) {
     stopped = true
-    // Сессия уже освобождена сервером при `ready` (S-A3) — отменять нечего.
     pending = undefined
     showToast({ variant: "success", title: language.t("corp.login.success", { email: corpUserLabel(user) }) })
-    // S-C11 п.2: пользователь только что сделал то, после чего модель обязана заработать. Если она
-    // не заработает, сказать об этом нужно здесь, а не ждать, пока он напишет первое сообщение и
-    // получит отказ. Действие «Включить» ждёт его в заголовке витрины — там состояние и держится.
-    const status = await sdk()
-      .client.corp.status()
-      .catch(() => undefined)
-    const disabled = status?.data?.provider_disabled
-    if (disabled)
-      showToast({
-        variant: "default",
-        title: language.t("corp.provider.disabledTitle", { file: disabled.file }),
-      })
-    await invalidate()
+    void invalidate()
+    void prefetchCatalog()
     dialog.close()
+    props.onSuccess?.()
+    void (async () => {
+      const status = await sdk()
+        .client.corp.status()
+        .catch(() => undefined)
+      const disabled = status?.data?.provider_disabled
+      if (disabled)
+        showToast({
+          variant: "default",
+          title: language.t("corp.provider.disabledTitle", { file: disabled.file }),
+        })
+    })()
   }
 
   async function poll(loginID: string) {

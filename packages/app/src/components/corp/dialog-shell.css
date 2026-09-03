@@ -682,14 +682,16 @@
  */
 [data-slot="corp-connect-token"] {
   width: 100%;
-  background: var(--background-bg-base);
+  background: var(--surface-weak);
   border: 1px solid var(--border-border-strong);
   border-radius: 8px;
-  padding: 7px 10px;
+  padding: 10px 12px;
   color: var(--text-strong);
   font-family: var(--font-family-mono);
   font-size: 13px;
   line-height: 1.35;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 /* Плейсхолдер — подсказка, а не значение: он приглушён, чтобы не читаться как введённый токен. */
@@ -700,6 +702,7 @@
 [data-slot="corp-connect-token"]:focus-visible {
   outline: none;
   border-color: var(--border-border-focus);
+  box-shadow: 0 0 0 1px var(--border-border-focus);
 }
 
 /* Поле на время запроса неактивно (S-D13 п.5) — и это видно, а не только запрещено кликом. */

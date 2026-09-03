@@ -148,6 +148,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
 
     expect(store.part_text_accum_delta.part).toBe("existing appended")
@@ -169,6 +170,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
       retainedLimit: 3,
     })
 
@@ -190,6 +192,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
 
     expect(store.session.map((x) => x.id)).toEqual(["a", "b"])
@@ -202,6 +205,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
 
     expect(store.sessionTotal).toBe(2)
@@ -230,6 +234,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
 
     expect(store.session.map((x) => x.id)).toEqual(["ses_2"])
@@ -276,6 +281,7 @@ describe("applyDirectoryEvent", () => {
         push() {},
         directory: "/tmp",
         loadLsp() {},
+      loadMcp() {},
       })
 
       expect(store.session.find((x) => x.id === item.info.id)).toBeUndefined()
@@ -316,6 +322,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
       setSessionTodo(sessionID, value) {
         if (value !== undefined) return
         todos.push(sessionID)
@@ -362,6 +369,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
 
     expect(store.message[sessionID]?.map((x) => x.id)).toEqual(["msg_1", "msg_2", "msg_3"])
@@ -381,6 +389,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
 
     expect(store.message[sessionID]?.find((x) => x.id === "msg_2")?.role).toBe("assistant")
@@ -392,6 +401,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
 
     expect(store.message[sessionID]?.map((x) => x.id)).toEqual(["msg_1", "msg_3"])
@@ -414,6 +424,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     expect(store.part[messageID]?.map((x) => x.id)).toEqual(["prt_1", "prt_2", "prt_3"])
 
@@ -432,6 +443,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     const updated = store.part[messageID]?.find((x) => x.id === "prt_2")
     expect(updated?.type).toBe("text")
@@ -444,6 +456,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     applyDirectoryEvent({
       event: { type: "message.part.removed", properties: { messageID, partID: "prt_2" } },
@@ -452,6 +465,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     applyDirectoryEvent({
       event: { type: "message.part.removed", properties: { messageID, partID: "prt_3" } },
@@ -460,6 +474,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
 
     expect(store.part[messageID]).toBeUndefined()
@@ -481,6 +496,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     expect(store.permission[sessionID]?.map((x) => x.id)).toEqual(["perm_1", "perm_2", "perm_3"])
 
@@ -491,6 +507,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     expect(store.permission[sessionID]?.find((x) => x.id === "perm_2")?.permission).toBe("updated")
 
@@ -501,6 +518,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     expect(store.permission[sessionID]?.map((x) => x.id)).toEqual(["perm_1", "perm_3"])
 
@@ -511,6 +529,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     expect(store.question[sessionID]?.map((x) => x.id)).toEqual(["q_1", "q_2", "q_3"])
 
@@ -521,6 +540,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     expect(store.question[sessionID]?.find((x) => x.id === "q_2")?.questions[0]?.header).toBe("updated")
 
@@ -531,6 +551,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
     })
     expect(store.question[sessionID]?.map((x) => x.id)).toEqual(["q_1", "q_3"])
   })
@@ -548,6 +569,7 @@ describe("applyDirectoryEvent", () => {
       push() {},
       directory: "/tmp",
       loadLsp() {},
+      loadMcp() {},
       vcsCache: {
         store: cacheStore,
         setStore: setCacheStore,

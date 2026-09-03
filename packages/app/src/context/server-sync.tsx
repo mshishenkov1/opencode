@@ -409,6 +409,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       loadLsp: () => {
         void queryClient.fetchQuery(queryOptionsApi.lsp(key))
       },
+      loadMcp: () => {
+        void queryClient.refetchQueries(queryOptionsApi.mcp(key))
+      },
     })
   })
 

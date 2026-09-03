@@ -554,8 +554,12 @@ export const layer = Layer.effect(
       const client = s.clients[name]
       delete s.clients[name]
       delete s.defs[name]
+      s.status[name] = { status: "disabled" }
       if (!client) return Effect.void
-      return Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+      return Effect.gen(function* () {
+        yield* events.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)
+        yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+      })
     }
 
     const storeClient = Effect.fnUntraced(function* (
@@ -572,6 +576,7 @@ export const layer = Layer.effect(
       s.defs[name] = listed
       watch(s, name, client, bridge, timeout)
       if (previous) yield* Effect.tryPromise(() => previous.close()).pipe(Effect.ignore)
+      yield* events.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)
       return s.status[name]
     })
 

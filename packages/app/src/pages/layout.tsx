@@ -50,7 +50,7 @@ import {
 import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 // corp: состояние корпоративного режима для команд и блока Getting Started (S-D1, S-D3, S-D4)
-import { useCorpStatus } from "@/context/corp"
+import { useCorpStatus, useCorpPrefetchCatalog } from "@/context/corp"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { retry } from "@opencode-ai/core/util/retry"
 import { playSoundById } from "@/utils/sound"
@@ -135,6 +135,16 @@ export default function Layout(props: ParentProps) {
   const language = useLanguage()
   // corp: включённость корп-режима приходит от сервера — веб-UI не знает build-констант (S-C5)
   const corpStatus = useCorpStatus()
+  const prefetchCatalog = useCorpPrefetchCatalog()
+  // Предзагрузка: модуль витрины и каталог отправляются вхолостую, как только стало
+  // известно, что пользователь вошёл. К моменту, когда он нажмёт «Коннекторы», модуль
+  // уже разобран, а данные лежат в кэше — открытие моментально.
+  createEffect(() => {
+    if (corpStatus.data?.enabled && corpStatus.data.authenticated) {
+      void import("@/components/corp/dialog-connectors")
+      void prefetchCatalog()
+    }
+  })
   const newDesign = createMemo(() => settings.general.newLayoutDesigns())
   createEffect(() => setV2Toast(newDesign()))
   const initialDirectory = decode64(params.dir)

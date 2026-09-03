@@ -900,14 +900,9 @@ describe("оркестрация витрины — классы ошибок п
    * `mcp_url` стоит сам Hub, и класс обязан быть `hub_unreachable`; у прочих способов — свой класс
    * («ответа не было вовсе» либо «система ответила отказом»).
    *
-   * ЭТОТ СЛУЧАЙ КРАСНЫЙ И ОСТАВЛЕН КРАСНЫМ НАМЕРЕННО — воспроизводящий тест BUG-I14-001.
-   * `error_class` ответа `connect` считается без `mode` и без `hubConfigured`
-   * (`handlers/corp.ts`, ветка неудачи `authenticate`), хотя обе величины в той же функции уже
-   * есть: `server` взят строкой выше, `addr.hub` — тоже. Из-за этого один и тот же отказ получает
-   * от роута `connect` класс `network_unreachable`/`upstream_unavailable`, а от карточки каталога
-   * (`cardFor`, тот же alias, та же ошибка) — `hub_unreachable`. Расхождение видно пользователю:
-   * тост Desktop (`context/corp.ts`) и строка TUI (`component/corp/dialog-connectors.tsx`) читают
-   * класс ответа `connect`, а витрина секундой позже показывает другое объяснение той же неудачи.
+   * BUG-I14-001 исправлен: `error_class` ответа `connect` теперь считается с `mode` и
+   * `hubConfigured` (`handlers/corp.ts`, ветка неудачи `authenticate`), и класс сходится с
+   * карточкой каталога. Регрессионный тест остаётся в сьюте.
    */
   it.live("AC-182: у facade-карточки со сборкой С Hub класс — hub_unreachable (BUG-I14-001)", () =>
     Effect.gen(function* () {

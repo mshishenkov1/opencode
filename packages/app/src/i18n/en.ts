@@ -1242,10 +1242,16 @@ export const dict = {
   // См. комментарий в ru.ts: слово «Hub» в этом тексте не используется (D-43, AC-275).
   "corp.connect.storage":
     "The token is kept on this machine in a file with 0600 permissions and goes only to the system itself",
+  // Тот же текст для карточки `mode: "facade"`. См. комментарий в ru.ts.
+  "corp.connect.storageFacade":
+    "The token is kept on this machine in a file with 0600 permissions and goes to the corporate gateway the connector works through",
   "corp.connect.replace": "Replace token",
   "corp.connect.tooShort": "The token is shorter than {{n}} characters",
   "corp.connect.tooLong": "The token is longer than {{n}} characters",
   "corp.connect.noMethod": "There is no way to connect this connector in this build",
+  // Отказ роута `direct_unavailable`. См. комментарий в ru.ts.
+  "corp.connect.directUnavailable":
+    "This token cannot be used to connect: the connector card does not say where to send it. Tell the connector owner",
   "corp.connect.credentialsMissing": "The token has to be entered again",
   "corp.connect.storageUnavailable": "The token could not be saved",
 

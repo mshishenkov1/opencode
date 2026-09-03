@@ -1235,6 +1235,24 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       yield* mcpSvc.add(alias, entry).pipe(Effect.catch(() => Effect.void))
       yield* dropMemo()
 
+      // BUG-I14-002: синхронизация статуса на стороне Hub. Прямое подключение facade-карточки
+      // обходит Hub, но без этого шага Hub не знает о подключении и отдаёт `not_connected` в
+      // `GET /api/catalog` — статус расходится между приложением и Hub. Синхронизация
+      // выполняется после локальных шагов: неудача Hub не отменяет подключение.
+      const hubKey = yield* corpKey()
+      let hubError: CorpErrors.Code | undefined
+      if (hubKey && addr.hub !== undefined) {
+        const hub = CorpHub.make({ hubUrl: addr.hub, key: hubKey })
+        const synced = yield* Effect.promise(() => hub.connectToken(alias, token, chosen!.method.id))
+        if (!synced.ok) {
+          hubError = synced.code
+          yield* Effect.logWarning("corp connect-token: синхронизация с Hub не удалась", {
+            alias,
+            code: synced.code,
+          })
+        }
+      }
+
       return {
         alias,
         status: yield* cardFor(addr, alias),
@@ -1244,6 +1262,7 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
         ...(verified.account === undefined ? {} : { account: verified.account }),
         exchange_result: exchanged?.result ?? null,
         credentials_saved: true,
+        ...(hubError === undefined ? {} : { hub_error: hubError }),
       }
     })
 
@@ -1405,9 +1424,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       let hubError: CorpErrors.Code | undefined
       // S-C10 п.7: при незаданном адресе Hub шаг **пропускается**, а не считается отказом Hub —
       // ни предупреждения, ни поля `hub_error`. «Нечего звать» и «позвали, не ответил» — разное.
-      // S-V27 п.1: у прямо подключённой карточки этого шага **нет вовсе** при любом адресе Hub —
-      // подключение живёт целиком у пользователя, и Hub о нём ничего не знает.
-      if (key && addr.hub !== undefined && !revoked.direct) {
+      // BUG-I14-002: у прямо подключённой карточки шаг обращения к Hub теперь выполняется тоже —
+      // синхронизация connect-token (см. connectToken) требует симметричного шага при отключении.
+      if (key && addr.hub !== undefined) {
         const hub = CorpHub.make({ hubUrl: addr.hub, key })
         const removed = yield* Effect.promise(() => hub.removeConnection(alias))
         // S-V8: отказ Hub не откатывает локальные шаги, но показывается предупреждением.
@@ -1454,9 +1473,9 @@ export const corpHandlers = HttpApiBuilder.group(InstanceHttpApi, "corp", (handl
       // недоступности Hub в сборке, где Hub не настроен, — ложная тревога.
       const key = yield* corpKey()
       let hubError: CorpErrors.Code | undefined
-      // S-V27 п.1: у прямо подключённой карточки шага обращения к Hub нет вовсе (п.4 отсылает к
-      // тем же правилам): подключение живёт целиком у пользователя.
-      if (key && addr.hub !== undefined && !revoked.direct) {
+      // S-V27 п.1: у прямо подключённой карточки шаг обращения к Hub теперь выполняется тоже
+      // (BUG-I14-002: симметрия с connect-token синхронизацией).
+      if (key && addr.hub !== undefined) {
         const hub = CorpHub.make({ hubUrl: addr.hub, key })
         const removed = yield* Effect.promise(() => hub.removeConnection(alias))
         if (!removed.ok) hubError = removed.code

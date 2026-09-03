@@ -223,6 +223,27 @@ export function make(options: Options) {
       return { ok: true, data: parsed.items, dropped: parsed.dropped }
     },
 
+    /**
+     * `POST {hub}/api/me/connections/{alias}/token` — синхронизация подключения на стороне Hub
+     * при прямом подключении facade-карточки (BUG-I14-002).
+     *
+     * Вызывается после успешной локальной проверки токена: Hub повторно проверяет токен против
+     * upstream и сохраняет подключение, поэтому статус в `GET /api/catalog` сходится с локальным.
+     */
+    async connectToken(
+      alias: string,
+      token: string,
+      method?: string,
+      preset?: string,
+    ): Promise<Result<CorpSchema.HubConnectTokenResult>> {
+      return call(CorpSchema.HubConnectTokenResult, {
+        method: "POST",
+        path: `/api/me/connections/${encodeURIComponent(alias)}/token`,
+        body: { token, ...(method === undefined ? {} : { method }), ...(preset === undefined ? {} : { preset }) },
+        statusOverrides: { 404: "not_found" },
+      })
+    },
+
     /** §3.2 `PUT {hub}/api/me/connections/{alias}/permissions` */
     async setPermissions(
       alias: string,

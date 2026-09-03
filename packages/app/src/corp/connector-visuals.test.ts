@@ -452,11 +452,26 @@ const connectModeKey = new Function("card", body(SOURCE.connectors, "export func
   mode?: string
 }) => string
 
-/** Ячейка «Тип» строки витрины — тот кусок разметки, в котором живёт бейдж. */
+/** Ячейка «Тип» строки витрины — тот кусок разметки, в котором жил бейдж. */
 const typeCell = (() => {
   const at = SOURCE.connectors.indexOf('<span data-slot="corp-type-cell">')
   expect(at, "ячейка «Тип» на витрине не найдена").toBeGreaterThan(-1)
-  return SOURCE.connectors.slice(at, SOURCE.connectors.indexOf("</span>", SOURCE.connectors.indexOf("<Tag", at)))
+  // Бейдж убран (решение заказчика от 01.09): в ячейке только тип каталога, без Tag.
+  let depth = 1
+  let close = -1
+  for (let index = at + "<span".length; depth > 0; ) {
+    const open = SOURCE.connectors.indexOf("<span", index)
+    const shut = SOURCE.connectors.indexOf("</span>", index)
+    if (open !== -1 && open < shut) {
+      depth += 1
+      index = open + "<span".length
+    } else {
+      depth -= 1
+      close = shut
+      index = shut + "</span>".length
+    }
+  }
+  return SOURCE.connectors.slice(at, close + "</span>".length)
 })()
 
 describe("бейдж способа подключения (S-V22, ревизия 1.14; AC-359)", () => {
@@ -499,23 +514,23 @@ describe("бейдж способа подключения (S-V22, ревизи�
     expect(connectModeKey({ mode: undefined })).toBe(connectModeKey({ mode: "" }))
   })
 
-  test("AC-359: бейдж стоит рядом с колонкой «Тип» и рисуется всегда, без условий", () => {
+  test("AC-359: бейдж убран — рядом с колонкой «Тип» его нет, тип рисуется всегда", () => {
     expect(typeCell).toContain("connectorType(card)")
-    expect(typeCell).toContain('data-slot="corp-connect-mode"')
-    expect(typeCell).toContain("connectModeKey(card)")
-    // Ни одного условия внутри ячейки: состояние связи бейдж не прячет и не подменяет.
+    // Бейдж способа подключения убран (решение заказчика от 01.09).
+    expect(typeCell).not.toContain('data-slot="corp-connect-mode"')
+    expect(typeCell).not.toContain("connectModeKey(card)")
+    // Ни одного условия внутри ячейки: тип рисуется всегда.
     expect(typeCell).not.toContain("<Show")
     expect(typeCell).not.toContain("card.state")
     expect(typeCell).not.toContain("card.status")
-    // И ни одного условия НАД ячейкой — иначе бейдж пропадал бы в части состояний, а мера,
-    // читающая только саму ячейку, этого не увидела бы.
+    // И ни одного условия НАД ячейкой — иначе тип пропадал бы в части состояний.
     expect(showDepthAt(SOURCE.connectors, 'data-slot="corp-connectors-row"', 'data-slot="corp-type-cell"')).toBe(0)
   })
 
-  test("AC-359: бейдж ничего не разрешает — набор действий его не спрашивает", () => {
-    // Единственное употребление правила — сам бейдж; действия считаются по `connect_mode` (S-V16).
+  test("AC-359: бейдж убран — правило не употребляется в разметке", () => {
+    // Правило осталось в объявлении, но в разметке не употребляется: бейдж убран.
     const uses = SOURCE.connectors.split("connectModeKey(").length - 1
-    expect(uses).toBe(2) // объявление + одно употребление в разметке
+    expect(uses).toBe(1) // только объявление
     expect(SOURCE.connector).not.toContain("connectModeKey")
   })
 })

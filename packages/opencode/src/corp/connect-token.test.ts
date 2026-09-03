@@ -1276,6 +1276,10 @@ describe("connect-token — BLK-3: «Права»/«Отключить»/«Уб�
         process.env["OPENCODE_CORP_HUB_URL"] = target.url
         serveCatalog([directCard(alias, target.url)])
 
+        // BUG-I14-002: connect-token синхронизирует статус с Hub — маршрут должен быть.
+        const tokenSyncPath = `/api/me/connections/${alias}/token`
+        target.routes.set(tokenSyncPath, () => Harness.json({ alias, status: "connected", auth_method: "personal_token" }))
+
         // Предпосылка (S-V25 п.6б): alias подключён ПРЯМЫМ способом через connect-token.
         const connected = yield* Harness.post(Harness.connectTokenRoute(alias), {
           method: "personal_token",
@@ -1320,8 +1324,9 @@ describe("connect-token — BLK-3: «Права»/«Отключить»/«Уб�
         expectOauthStillFalse(yield* Effect.promise(() => Harness.globalConfig()))
         expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
 
-        // --- (3) POST disconnect — действие ОБЯЗАНО работать (200, поля как в AC-62/AC-327). Hub-шага
-        // у прямого подключения нет вовсе (S-V27 п.1): учётные данные ещё есть в этом самом вызове.
+        // --- (3) POST disconnect — действие ОБЯЗАНО работать (200, поля как в AC-62/AC-327).
+        // BUG-I14-002: disconnect теперь синхронизирует статус с Hub — маршрут должен быть.
+        target.routes.set(connectionsPath, () => Harness.json({ alias, status: "not_connected" }))
         const run3 = yield* Harness.post(Harness.disconnectRoute(alias))
         expect(run3.status).toBe(200)
         const result3 = yield* Harness.body<{ status: string; revoke?: string }>(run3)
@@ -1332,7 +1337,8 @@ describe("connect-token — BLK-3: «Права»/«Отключить»/«Уб�
         expect(afterDisconnect.mcp[alias].url).toBe(upstreamUrl)
         const store = yield* Effect.promise(() => Harness.credentialsFileText())
         expect(store === undefined || !store.includes(`"${alias}"`)).toBe(true)
-        expect(target.requests.filter((request) => request.path === connectionsPath)).toEqual([])
+        // BUG-I14-002: теперь один запрос — синхронизация disconnect с Hub.
+        expect(target.requests.filter((request) => request.path === connectionsPath)).toHaveLength(1)
         expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
 
         // --- (4) PUT permissions ПОСЛЕ отключения, снова needs_reauth — ОТДЕЛЬНО от (1): признак
@@ -1367,7 +1373,7 @@ describe("connect-token — BLK-3: «Права»/«Отключить»/«Уб�
         // которые сам прогон и сделал.
         expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
         const oauthRequests = target.requests.filter(
-          (request) => !["/catalog", "/verify", permissionsPath, connectionsPath].includes(request.path),
+          (request) => !["/catalog", "/verify", permissionsPath, connectionsPath, tokenSyncPath].includes(request.path),
         )
         expect(oauthRequests).toEqual([])
       }),
@@ -1524,6 +1530,12 @@ describe(
           process.env["OPENCODE_CORP_HUB_URL"] = target.url
           serveCatalog([directCard(alias, target.url)])
 
+          // BUG-I14-002: connect-token и disconnect синхронизируют статус с Hub.
+          const tokenSyncPath = `/api/me/connections/${alias}/token`
+          const connectionsPath = `/api/me/connections/${alias}`
+          target.routes.set(tokenSyncPath, () => Harness.json({ alias, status: "connected", auth_method: "personal_token" }))
+          target.routes.set(connectionsPath, () => Harness.json({ alias, status: "not_connected" }))
+
           // Шаг 0 — ЯКОРЬ. Материализует снимок конфига инстанса мимо корп-кода, ДО первой записи.
           // Удалять шаг нельзя (см. комментарий над describe): без него прогон не способен упасть
           // на дефекте, ради которого заведён.
@@ -1571,7 +1583,7 @@ describe(
           expect(Harness.state.calls).not.toContain(`authenticate:${alias}`)
           expect(yield* Effect.promise(() => Harness.browserOpenCount())).toBe(0)
           const oauthRequests = target.requests.filter(
-            (request) => !["/catalog", "/verify", permissionsPath].includes(request.path),
+            (request) => !["/catalog", "/verify", permissionsPath, tokenSyncPath, connectionsPath].includes(request.path),
           )
           expect(oauthRequests).toEqual([])
         }),

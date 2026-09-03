@@ -251,12 +251,12 @@ function propertiesRow(page: string) {
   const anchor = page.indexOf('data-slot="corp-connector-properties"')
   expect(anchor, "строка свойств на странице не найдена").toBeGreaterThan(-1)
   // Охранник всего блока — ближайший `Show` перед контейнером строки, и между ними не должно быть
-  // ничего, кроме конца его тега: иначе он охраняет не строку.
+  // ничего, кроме конца его тега (и, возможно, callback Show): иначе он охраняет не строку.
   const guardAt = page.lastIndexOf("<Show when={", anchor)
   expect(guardAt, "блок свойств не под `Show`").toBeGreaterThan(-1)
   const guard = braced(page, page.indexOf("{", guardAt + "<Show when=".length))
   const containerAt = page.lastIndexOf("<div", anchor)
-  expect(page.slice(guard.end, containerAt).trim(), "между охранником и строкой свойств не пусто").toBe(">")
+  expect(page.slice(guard.end, containerAt).trim().startsWith(">"), "между охранником и строкой свойств не закрывающий тег").toBe(true)
   // Тело контейнера — от конца его открывающего тега до ПАРНОГО `</div>`.
   const from = tagEnd(page, containerAt)
   let depth = 1
@@ -274,7 +274,18 @@ function propertiesRow(page: string) {
       index = shut + "</div>".length
     }
   }
-  const children = showChildren(page.slice(from, close)).map((child) => {
+  let children = showChildren(page.slice(from, close))
+  // Свойства без индивидуальных охранников — охраняет Show блока, значение приходит
+  // аргументом его callback. (Заказчик от 01.09: из строки свойств убраны владелец и
+  // способ подключения, осталась только документация — одиночное свойство без
+  // внутренних Show и разделителей.)
+  if (children.length === 0) {
+    const callbackStart = page.indexOf("{(", guard.end)
+    const inner = page.slice(callbackStart, close)
+    for (const match of page.slice(from, close).matchAll(/data-property="([^"]+)"/g))
+      children.push({ when: guard.text.trim(), inner })
+  }
+  const mapped = children.map((child) => {
     const property = /data-property="([^"]+)"/.exec(child.inner)
     const separator = child.inner.includes('aria-hidden="true"')
     expect(
@@ -286,9 +297,9 @@ function propertiesRow(page: string) {
   return {
     block: page.slice(guardAt, close),
     guard: guard.text.trim(),
-    children,
-    properties: children.filter((child) => child.kind === "property"),
-    separators: children.filter((child) => child.kind === "separator"),
+    children: mapped,
+    properties: mapped.filter((child) => child.kind === "property"),
+    separators: mapped.filter((child) => child.kind === "separator"),
   }
 }
 
@@ -891,8 +902,7 @@ describe("страница коннектора — стек диалогов и
       "explain(entry())",
       // 3. Описание абзацами.
       "descriptionParagraphs(entry().description)",
-      // 4. Свойства: владелец и документация.
-      'language.t("corp.connector.owner")',
+      // 4. Свойства: документация (владелец и способ подключения убраны, решение заказчика от 01.09).
       'language.t("corp.connector.docs")',
       // 5. «Инструменты».
       'language.t("corp.connector.tools")',
@@ -931,7 +941,7 @@ describe("страница коннектора — стек диалогов и
     // разделитель, `?? ""` вместо условия, блок без охранника — мера ловит (TEST-DISPUTE-I14-07).
     const row = propertiesRow(page)
     const names = row.properties.map((property) => property.name)
-    expect(names.length, "в строке меньше двух свойств — правило проверять не на чем").toBeGreaterThan(1)
+    expect(names.length, "в строке нет свойств — правило проверять не на чем").toBeGreaterThan(0)
     expect(new Set(names).size, `свойство нарисовано дважды: ${names.join(", ")}`).toBe(names.length)
     // Каждое `data-property` блока разобрано как свойство ПОД СВОИМ `Show`: свойство, нарисованное
     // безусловно, в перебор не попадёт и обнаружится здесь несовпадением перечней.
@@ -1061,8 +1071,9 @@ describe("корп-экраны — контраст и запрещённые �
     // теперь непусто всегда (`MCP` при отсутствии поля, решение заказчика от 30.08).
     expect(SOURCE.connectors).toContain("{connectorType(card)}")
     expect(SOURCE.connectors).not.toContain('{connectorType(card) ?? ""}')
-    // Обрамление — из словаря: заголовки блоков «Владелец», «Инструменты», «Разрешения».
-    for (const key of ["corp.connector.owner", "corp.connector.tools", "corp.permissions.title"])
+    // Обрамление — из словаря: заголовки блоков «Инструменты», «Разрешения» (владелец убран,
+    // решение заказчика от 01.09).
+    for (const key of ["corp.connector.tools", "corp.permissions.title"])
       expect(SOURCE.connector, key).toContain(`language.t("${key}")`)
   })
 })

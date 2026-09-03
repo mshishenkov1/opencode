@@ -165,6 +165,35 @@ export function useProviderEnable() {
   }))
 }
 
+/**
+ * Локальная копия каталога (stale-while-revalidate): persists between dialog opens
+ * so the connectors dialog shows instantly on repeat opens. Only cached when the
+ * response has real servers (not `hub_error: unauthorized`), so a pre-login response
+ * never appears as placeholder after login.
+ */
+const CATALOG_LS_KEY = "corp.catalog.v1"
+
+function readCatalogCache(): CorpCatalogView | undefined {
+  try {
+    const raw = localStorage.getItem(CATALOG_LS_KEY)
+    if (!raw) return undefined
+    const data = JSON.parse(raw) as CorpCatalogView
+    if (data.hub_error || !data.servers || data.servers.length === 0) return undefined
+    return data
+  } catch {
+    return undefined
+  }
+}
+
+function writeCatalogCache(data: CorpCatalogView) {
+  if (data.hub_error || !data.servers || data.servers.length === 0) return
+  try {
+    localStorage.setItem(CATALOG_LS_KEY, JSON.stringify(data))
+  } catch {
+    // localStorage may be full or unavailable — non-fatal, query still works
+  }
+}
+
 export function useCorpCatalog(enabled: () => boolean) {
   const sdk = useServerSDK()
   return useQuery(() => ({
@@ -172,7 +201,11 @@ export function useCorpCatalog(enabled: () => boolean) {
     queryFn: (): Promise<CorpCatalogView> =>
       sdk()
         .client.corp.catalog()
-        .then((response) => required(response.data)),
+        .then((response) => {
+          const data = required(response.data)
+          writeCatalogCache(data)
+          return data
+        }),
     enabled: enabled(),
     /**
      * Витрина открывается заново — каталог перезапрашивается, если ответ устарел (S-V28 п.10ж).
@@ -194,7 +227,39 @@ export function useCorpCatalog(enabled: () => boolean) {
     // Витрина сама показывает «Hub недоступен» по пустым данным — ошибка не должна всплывать
     // в ErrorBoundary приложения (BUG-I4-002).
     throwOnError: false,
+    // Stale-while-revalidate: показываем последнюю успешную копию каталога из localStorage
+    // моментально, пока фоновый запрос обновляет данные. `isLoading` = false при наличии
+    // placeholder, поэтому пустые состояния не мигают.
+    placeholderData: () => readCatalogCache(),
   }))
+}
+
+/**
+ * Prefetch каталога тем же ключом и queryFn, что `useCorpCatalog` (S-D7).
+ *
+ * Запускается из `finish()` экрана входа **до** `dialog.close()`: пока витрины нет,
+ * запрос уходит вхолостую и ложится в кэш. Когда `dialog.close()` монтирует витрину,
+ * `useCorpCatalog` находит свежую запись — `refetchOnMount: true` не перезапрашивает,
+ * потому что ответ моложе `staleTime`. Если prefetch ещё в полёте, TanStack Query
+ * дедуплицирует: `useQuery` присоединяется к тому же запросу, а не запускает второй.
+ */
+export function useCorpPrefetchCatalog() {
+  const sdk = useServerSDK()
+  const client = useQueryClient()
+  return () =>
+    client.prefetchQuery({
+      queryKey: [sdk().scope, "corp.catalog"] as const,
+      queryFn: (): Promise<CorpCatalogView> =>
+        sdk()
+          .client.corp.catalog()
+          .then((response) => {
+            const data = required(response.data)
+            writeCatalogCache(data)
+            return data
+          }),
+      staleTime: 30_000,
+      retry: false,
+    })
 }
 
 /**
@@ -294,6 +359,12 @@ export function connectFailureKey(failure: ConnectTokenFailure | undefined) {
   if (!failure) return undefined
   if (failure.code === "storage_unavailable") return "corp.connect.storageUnavailable" as const
   if (failure.code === "auth_method_unavailable") return methodUnavailableKey(failure.unavailableCode)
+  // Форма ввода токена открывается и у фасадной карточки (решение заказчика от 31.08, вечер), а
+  // роут отвечает `direct_unavailable`, когда в карточке каталога не разобран блок `upstream`: тогда
+  // приложению НЕКУДА отправить токен. Без этой ветви форма молчала бы — человек нажал «Подключить»
+  // и не узнал ничего. Проверка и обмен при этом не тронуты: где им ходить, по-прежнему решает
+  // каталог, а этот ключ только называет пришедший отказ.
+  if (failure.code === "direct_unavailable") return "corp.connect.directUnavailable" as const
   return undefined
 }
 
@@ -327,7 +398,10 @@ export function useConnectToken() {
           alias: input.alias,
           body: { ...(input.method === undefined ? {} : { method: input.method }), token: input.token },
         })
-        .then((response) => required(response.data)),
+        .then((response) => {
+          if (response.error !== undefined) throw response.error
+          return required(response.data)
+        }),
     // Витрина и локальные статусы MCP обновляются после успеха: карточка обязана показать то же
     // состояние, что покажет следующее открытие витрины (S-V15).
     onSuccess: async () => {

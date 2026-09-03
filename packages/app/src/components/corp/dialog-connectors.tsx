@@ -519,12 +519,10 @@ export const DialogConnectors: Component = () => {
                   <Tag>{language.t("corp.connectors.deprecated")}</Tag>
                 </Show>
               </div>
-              {/* S-V22 (решение заказчика от 30.08): в колонке — тип каталога, а без него `MCP`;
-                  деградация на владельца отменена. Рядом бейдж способа подключения: тип у всех
-                  коннекторов один, и различает их именно он. */}
+              {/* S-V22 (решение заказчика от 30.08): в колонке — тип каталога, а без него `MCP`.
+                  Бейдж способа подключения убран (решение заказчика от 01.09). */}
               <span data-slot="corp-type-cell">
                 <span class="text-12-regular text-text-weak truncate">{connectorType(card)}</span>
-                <Tag data-slot="corp-connect-mode">{language.t(connectModeKey(card))}</Tag>
               </span>
               {/* S-V18: у подключённого — галочка и подпись, у остальных состояний подпись без
                   значка. Текст в ячейке есть **всегда**: состояние читается и в чёрно-белой

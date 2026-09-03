@@ -162,7 +162,7 @@ export function hasActions(card: CorpCatalogCard): boolean {
   if (card.actions.includes("connect") || card.actions.includes("reconnect")) return true
   if (card.actions.includes("disconnect")) return true
   if (card.actions.includes("forget")) return true
-  return card.connect_mode === "direct"
+  return connectByToken(card)
 }
 
 /**
@@ -354,7 +354,7 @@ export async function writeClipboard(value: string): Promise<boolean> {
 }
 
 /** Сколько плиток инструментов показывается до нажатия «Показать все» (S-D11, ревизия 1.14). */
-export const TOOLS_PREVIEW = 18
+export const TOOLS_PREVIEW = 30
 
 /**
  * Место кликабельной части внутри фразы «и ещё 59 — раскрывается по «Показать все»» (макет
@@ -524,7 +524,7 @@ const ConnectorPresets: Component<{ card: CorpCatalogCard; hubConfigured: boolea
           <div class="text-12-regular text-text-weak">
             {language.t("corp.connectors.toolsPreview", { preset: selected() ?? "" })}
           </div>
-          <div class="text-14-regular text-text-base break-all">{tools().join(", ")}</div>
+          <div class="text-14-regular text-v2-text-text-base break-all">{tools().join(", ")}</div>
         </div>
       </Show>
       <Show when={groups().length > 0}>
@@ -545,7 +545,7 @@ const ConnectorPresets: Component<{ card: CorpCatalogCard; hubConfigured: boolea
       <Show when={always().length > 0}>
         <div class="flex flex-col gap-1">
           <div class="text-12-regular text-text-weak">{language.t("corp.connectors.always")}</div>
-          <div class="text-14-regular text-text-base break-all">{always().join(", ")}</div>
+          <div class="text-14-regular text-v2-text-text-base break-all">{always().join(", ")}</div>
         </div>
       </Show>
       <div class="flex items-center gap-2">
@@ -904,11 +904,19 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
   const groupState = createMemo(() => applied()?.groups ?? props.card.permission_state)
   const toolState = createMemo(() => applied()?.tools ?? props.card.permission_tool_state)
 
-  /** Свёрнутые секции: выбор живёт, пока открыта страница, и в конфиг не попадает. */
+  /**
+   * Свёрнутые секции: выбор живёт, пока открыта страница, и в конфиг не попадает.
+   *
+   * `permissionGroups` выделен отдельным мемо, чтобы `sections()` не пересчитывался при
+   * рефетче каталога после записи прав (invalidate): новая карточка приходит другим объектом,
+   * но `permission_groups` в ней тот же — мемо сравнивает по ссылке и не пускает пересчёт
+   * дальше. Без этого `<For>` пересоздавал бы DOM-узлы и скролл сбрасывался наверх.
+   */
+  const permissionGroups = createMemo(() => props.card.permission_groups)
   const [folded, setFolded] = createSignal<Record<string, boolean>>({})
 
-  const sections = createMemo(() => toolSections(props.card.permission_groups))
-  const rest = createMemo(() => props.card.permission_groups?.rest)
+  const sections = createMemo(() => toolSections(permissionGroups()))
+  const rest = createMemo(() => permissionGroups()?.rest)
 
   function sectionTitle(id: ToolSection["id"]) {
     if (id === REST_GROUP_ID) return rest()?.title ?? language.t("corp.permissions.restTitle")
@@ -1015,74 +1023,91 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
     return options
   }
 
+  /**
+   * Ключи для `<For>`: ID секций и имена инструментов как примитивы (строки).
+   *
+   * SolidJS `<For>` отслеживает элементы по ссылке. Объекты `ToolSection` и `ToolRow`
+   * создаются заново при каждом пересчёте `sections()`, а пересчёт запускается рефетчем
+   * каталога после записи прав (invalidate). При пересоздании DOM скролл сбрасывается наверх.
+   *
+   * Итерация по строковым ключам с поиском объекта по ключу — стабильна: те же строки
+   * дают те же DOM-узлы, и скролл сохраняется.
+   */
+  const sectionIds = createMemo(() => sections().map((s) => s.id))
+  const sectionById = (id: ToolSection["id"]) => sections().find((s) => s.id === id)!
+
   return (
     <div class="flex flex-col gap-3" data-slot="corp-permissions">
       <div class="flex flex-col gap-1">
         <span class="text-14-medium text-text-strong">{language.t("corp.permissions.toolsTitle")}</span>
         <span class="text-12-regular text-text-weak">{language.t("corp.permissions.toolsHint")}</span>
       </div>
-      <For each={sections()}>
-        {(section) => (
-          <div data-slot="corp-permission-section" data-section={section.id}>
+      <For each={sectionIds()}>
+        {(sectionId) => {
+          const section = createMemo(() => sectionById(sectionId))
+          return (
+          <div data-slot="corp-permission-section" data-section={sectionId}>
             <div data-slot="corp-permission-section-head">
               {/* Треугольник свёртки — он же кнопка: заголовок секции целиком её открывает. */}
               <button
                 type="button"
                 data-action="corp-permission-fold"
-                data-section={section.id}
-                aria-expanded={!folded()[section.id]}
-                title={sectionHint(section.id)}
-                onClick={() => setFolded((value) => ({ ...value, [section.id]: !value[section.id] }))}
+                data-section={sectionId}
+                aria-expanded={!folded()[sectionId]}
+                title={sectionHint(sectionId)}
+                onClick={() => setFolded((value) => ({ ...value, [sectionId]: !value[sectionId] }))}
               >
-                <Icon name={folded()[section.id] ? "chevron-right" : "chevron-down"} size="small" />
-                <span class="text-14-medium text-text-strong">{sectionTitle(section.id)}</span>
-                <Tag>{section.tools.length}</Tag>
+                <Icon name={folded()[sectionId] ? "chevron-right" : "chevron-down"} size="small" />
+                <span class="text-14-medium text-text-strong">{sectionTitle(sectionId)}</span>
+                <Tag>{section().tools.length}</Tag>
               </button>
               <span class="flex-1" />
               {/* Секция занята, пока сервер не ответил хотя бы по одной её строке. */}
-              <Show when={sectionBusy(section)}>
+              <Show when={sectionBusy(section())}>
                 <span data-slot="corp-permission-busy" title={language.t("corp.permissions.saving")} />
               </Show>
               <SelectV2
                 appearance="inline"
                 data-action="corp-permissions-bulk"
-                data-section={section.id}
-                options={bulkOptions(section)}
+                data-section={sectionId}
+                options={bulkOptions(section())}
                 placement="bottom-end"
                 gutter={6}
                 disabled={disabled()}
-                current={bulkOption()[sectionMode(section) ?? ""]}
+                current={bulkOption()[sectionMode(section()) ?? ""]}
                 value={(option) => option.value}
                 label={(option) => option.label}
                 onSelect={(option) => {
                   if (!option || option.value === "mixed") return
                   // Выбран тот же режим, что и действует, — писать нечего. Проверка обязательна:
                   // без неё повторный `onSelect` управляемого селектора замыкает цикл записи.
-                  if (option.value === sectionMode(section)) return
+                  if (option.value === sectionMode(section())) return
                   const mode = option.value as CorpPermissionMode
                   const edit: PermissionEdit = {
-                    rows: Object.fromEntries(section.tools.map((tool) => [tool.name, mode])),
+                    rows: Object.fromEntries(section().tools.map((tool) => [tool.name, mode])),
                   }
                   // Wildcard двигает только селектор секции «Остальные» — он и никто больше.
-                  if (section.id === REST_GROUP_ID) edit.rest = mode
+                  if (sectionId === REST_GROUP_ID) edit.rest = mode
                   writer.push(edit)
                 }}
               />
             </div>
-            <Show when={!folded()[section.id]}>
-              <For each={section.tools}>
-                {(tool) => (
+            <Show when={!folded()[sectionId]}>
+              <For each={section().tools.map((t) => t.name)}>
+                {(toolName) => {
+                  const tool = createMemo(() => section().tools.find((t) => t.name === toolName)!)
+                  return (
                   <div
                     data-slot="corp-tool-row"
-                    data-tool={tool.name}
+                    data-tool={toolName}
                     // Занятость и отказ — признаки СТРОКИ, а не экрана: по ним же их и видно.
-                    data-busy={busy(tool.name) ? "" : undefined}
-                    data-rejected={rejectedOf(tool.name) === undefined ? undefined : ""}
+                    data-busy={busy(toolName) ? "" : undefined}
+                    data-rejected={rejectedOf(toolName) === undefined ? undefined : ""}
                   >
                     <span class="flex flex-col min-w-0">
-                      <span class="text-14-regular text-text-strong truncate">{tool.title}</span>
+                      <span class="text-14-regular text-text-strong truncate">{tool().title}</span>
                       <span data-slot="corp-tool-name" class="text-12-regular text-text-weak truncate">
-                        {tool.name}
+                        {toolName}
                       </span>
                     </span>
                     <span class="flex-1" />
@@ -1092,7 +1117,7 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
                       подробность — в подсказке при наведении, а не в тексте: в тексте отказа
                       место объяснению и следующему шагу.
                     */}
-                    <Show when={rejectedOf(tool.name)}>
+                    <Show when={rejectedOf(toolName)}>
                       {(detail) => (
                         <span
                           data-slot="corp-tool-rejected"
@@ -1107,7 +1132,7 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
                         </span>
                       )}
                     </Show>
-                    <Show when={busy(tool.name)}>
+                    <Show when={busy(toolName)}>
                       <span data-slot="corp-permission-busy" title={language.t("corp.permissions.saving")} />
                     </Show>
                     {/* Тристейт: подложка под активной иконкой ПЕРЕЕЗЖАЕТ между позициями, а не
@@ -1117,15 +1142,15 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
                       thumb
                       class="corp-tristate"
                       data-action="corp-permission-tool"
-                      data-tool={tool.name}
-                      data-mode={modeOf(tool.name) ?? "none"}
-                      value={modeOf(tool.name) ?? null}
+                      data-tool={toolName}
+                      data-mode={modeOf(toolName) ?? "none"}
+                      value={modeOf(toolName) ?? null}
                       disabled={disabled()}
                       onChange={(value) => {
                         if (!value) return
                         // Занятая строка остаётся рабочей: правки сливаются очередью, и «туда-обратно»
                         // кончается последним нажатием, а не потерянным.
-                        writer.push({ rows: { [tool.name]: value as CorpPermissionMode } })
+                        writer.push({ rows: { [toolName]: value as CorpPermissionMode } })
                       }}
                     >
                       <For each={MODES}>
@@ -1141,11 +1166,13 @@ const ConnectorPermissionTools: Component<{ card: CorpCatalogCard }> = (props) =
                       </For>
                     </SegmentedControlV2>
                   </div>
-                )}
+                  )
+                }}
               </For>
             </Show>
           </div>
-        )}
+          )
+        }}
       </For>
     </div>
   )
@@ -1262,20 +1289,62 @@ export function exchangeKey(result: string | null | undefined) {
 }
 
 /**
- * Есть ли на странице блок подключения (S-D13 п.1).
+ * Подключается ли карточка ВВОДОМ ТОКЕНА (S-D13 п.1 в редакции решения заказчика от 31.08, вечер).
  *
- * Блок отрисован **тогда и только тогда**, когда одновременно: карточка получена; её
- * `connect_mode` равен `"direct"`; карточка **не** в состоянии 4 («Подключено», S-V29 п.1). Пока
- * ответ роута не получен, карточки нет — и блока нет: утверждения «форма всегда на экране»
- * правило не делает.
+ * Заказчик, глядя на собранное приложение: «нет окна для вставки токена отдельного, которое
+ * открывается по клику connect — в общем опять не по референсам». Прежнее правило отвечало на
+ * другой вопрос — «есть ли на СТРАНИЦЕ встроенный блок подключения», — и отвечало «да» у любой
+ * карточки `connect_mode: "direct"`, из-за чего форма ввода токена стояла на странице всегда, а у
+ * фасадной карточки не открывалась вовсе. Теперь форма живёт **отдельным окном** ({@link
+ * ConnectorConnect}), встроенного блока на странице нет ни в одном состоянии, а это правило
+ * отвечает на вопрос «открывает ли действие шапки форму ввода токена».
  *
- * `justConnected` — успех, только что показанный в этой же форме (п.7): блок остаётся на экране и
- * показывает признак «Подключено», а не исчезает вместе с ответом.
+ * Правило одно на ОБА режима подключения (решение заказчика от 31.08, вечер): и `direct`, и
+ * `facade` открывают одну и ту же форму — различие между ними осталось только в том, куда уходит
+ * проверка (в саму систему или в корпоративный шлюз), и это решает сервер по данным каталога.
+ * Прежде у фасадной карточки формы не было вовсе, а «Подключить» уводило в браузерный шаг.
+ *
+ * Способ **не пересчитывается на клиенте** (S-V28 п.3): оболочка спрашивает `connect_mode` и
+ * `available`, которые пришли из `GET /corp/catalog`. Карточка с `connect_mode: "none"` формы не
+ * получает даже с доступным способом `user_token` в наборе: подключение ей закрыто на уровне
+ * карточки (S-V28 п.2), и на месте действия стоит причина, а не форма.
  */
-export function connectBlockVisible(card: CorpCatalogCard | undefined, justConnected: boolean): boolean {
+export function connectByToken(card: CorpCatalogCard | undefined): boolean {
+  if (!card) return false
+  if (card.connect_mode !== "direct" && card.connect_mode !== "facade") return false
+  return (card.auth_methods ?? []).some((method) => method.type === "user_token" && method.available)
+}
+
+/**
+ * Видимость блока подключения на странице коннектора (S-D13 п.1; AC-333, AC-330, AC-334).
+ *
+ * Блок стоит на странице только у карточки `connect_mode: "direct"` и только пока коннектор
+ * не подключён. В состоянии «Подключено» блока нет — успех виден бейджем и строкой под именем.
+ * Исключение — `justConnected`: только что показанный успех держит блок на экране, чтобы
+ * пользователь увидел результат подключения, прежде чем блок уйдёт.
+ */
+export function connectBlockVisible(
+  card: { connect_mode?: string; state?: string } | undefined,
+  justConnected: boolean,
+): boolean {
   if (!card) return false
   if (card.connect_mode !== "direct") return false
-  return justConnected || card.state !== "connected"
+  if (card.state === "connected" && !justConnected) return false
+  return true
+}
+
+/**
+ * Куда уходит введённый токен — текст под полем (макет заказчика, экран 4; решение заказчика от
+ * 31.08, вечер).
+ *
+ * У карточки `mode: "facade"` за адресом коннектора стоит корпоративный шлюз: и проверка
+ * (`auth_methods[].verify.url`), и рабочие запросы идут туда, а не в саму целевую систему. Общий
+ * текст «уходит только в саму систему» на такой карточке был **неправдой**, и заказчик это назвал
+ * прямо. Слова «Hub» в фасадном тексте нет намеренно (D-43): в сборке без Hub карточка `facade` с
+ * разобранным `upstream` подключается ровно так же, и назвать в ней то, чего в сборке нет, нельзя.
+ */
+export function storageKey(card: CorpCatalogCard) {
+  return card.mode === "facade" ? ("corp.connect.storageFacade" as const) : ("corp.connect.storage" as const)
 }
 
 /**
@@ -1303,14 +1372,36 @@ export function connectUnavailableKey(card: CorpCatalogCard) {
 }
 
 /**
- * Блок подключения — блок 5 страницы коннектора, между «Статусом» и «Разрешениями» (S-D13).
+ * Форма подключения — ОТДЕЛЬНОЕ ОКНО, открываемое действием «Подключить» / «Заменить токен»
+ * (S-D13 в редакции решения заказчика от 31.08, вечер; макет заказчика, экран 4).
  *
- * Форма живёт **в окне приложения**: отдельного окна, отдельной страницы и браузерного шага у
- * подключения нет. Поле никогда не предзаполняется — ни сохранённым токеном, ни его маской:
- * сохранённого токена в оболочке нет вовсе, она его не получает (S-V24 п.7).
+ * До этого решения та же форма стояла встроенным блоком посреди страницы коннектора и была там
+ * всегда, пока карточка не подключена. Заказчик назвал это расхождением с макетом дословно: «нет
+ * окна для вставки токена отдельного, которое открывается по клику connect». Экран 4 макета —
+ * самостоятельный экран, а не блок страницы, и открывается он действием.
+ *
+ * Окно — то же `Dialog fit`, каким показывается подтверждение «Убрать из списка»: своей шапки у
+ * него нет, потому что шапка нарисована в самой форме (значок, «Подключение <имя>», подзаголовок —
+ * название способа), ровно как в макете. Оно кладётся поверх страницы коннектора через
+ * `useDialog().push`, поэтому страница под ним остаётся живой и возвращается со своим состоянием.
+ *
+ * Форма одна на ОБА режима подключения (`direct` и `facade`): различие между ними — в том, куда
+ * сервер отправит проверку, и оно решается по данным каталога, а не вёрсткой. Поле никогда не
+ * предзаполняется — ни сохранённым токеном, ни его маской: сохранённого токена в оболочке нет
+ * вовсе, она его не получает (S-V24 п.7).
  */
-const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
+export const ConnectorConnect: Component<{
+  card: CorpCatalogCard
+  /**
+   * Успех: окно закрывается само, а вызвавшая страница получает ключ заметки об обмене токена —
+   * той самой технической строки, которой в основном виде не место (решение заказчика от 31.08,
+   * вечер). Заметка живёт подсказкой на бейдже «Подключено», а результат подключения человек
+   * читает так же, как в макете: карточка стала подключённой, в шапке — строка идентичности.
+   */
+  onConnected?: (exchangeNote: ReturnType<typeof exchangeKey>) => void
+}> = (props) => {
   const language = useLanguage()
+  const dialog = useDialog()
   const connect = useConnectToken()
 
   /** Та же карточка под тем же именем, что и на самой странице: значок формы берётся из неё же. */
@@ -1335,43 +1426,61 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
    * страницы его теряет, в адрес страницы и в хранилище браузера оно не попадает никогда.
    */
   const [token, setToken] = createSignal("")
-  const [showResult, setShowResult] = createSignal(true)
-  const result = createMemo(() => (showResult() ? connect.data : undefined))
-  const failure = createMemo(() =>
-    showResult() && connect.error ? connectTokenFailure(connect.error) : undefined,
-  )
-  const connected = createMemo(() => result()?.verify_result === "verified")
+  /**
+   * Исход последней попытки. Отдельного признака «показывать ли его» больше нет: окно живёт ровно
+   * одну попытку подключения — закрылось (успехом или «Отменой») и открылось заново — это НОВЫЙ
+   * компонент с пустой мутацией. Прежде форма была встроена в страницу и не исчезала никогда,
+   * поэтому ей требовался признак «этот исход уже стёрт кнопкой „Отмена“».
+   */
+  const result = createMemo(() => connect.data)
+  const failure = createMemo(() => (connect.error ? connectTokenFailure(connect.error) : undefined))
   const length = createMemo(() => lengthError(token(), selected()?.field))
 
-  /** Есть ли что отменять: введённое значение или показанный исход прошлой попытки. */
-  const dirty = createMemo(() => token() !== "" || result() !== undefined || failure() !== undefined)
-
   /**
-   * «Отмена» (макет заказчика, экран 4): возвращает форму в исходное состояние — пустое поле и
-   * ни одного исхода на экране. Со страницы она не уводит и ничего сохранённого не трогает:
-   * отменяется начатый ввод, а не подключение (для него есть «Отключить» в шапке страницы).
+   * «Отмена» (макет заказчика, экран 4) — закрывает окно формы.
+   *
+   * До решения заказчика от 31.08 (вечер) форма была встроена в страницу, и «Отмена» очищала поле,
+   * никуда не уводя: закрывать было нечего. Теперь форма — САМОСТОЯТЕЛЬНОЕ окно, и «Отмена» в нём
+   * значит ровно то, что значит в любом окне приложения, — «я передумал». Ничего сохранённого она
+   * при этом не трогает: отменяется начатый ввод, а не подключение (для него есть «Отключить» в
+   * шапке страницы). Кнопка активна всегда: окно закрыть можно и с пустым полем.
    */
-  function reset() {
+  function cancel() {
     setToken("")
-    setShowResult(false)
     connect.reset()
+    dialog.close()
   }
 
   function submit() {
     // Пустое поле и непройденная проверка длины запроса не создают; повторное нажатие во время
     // запроса второго запроса не создаёт (S-D13 п.4, п.5).
     if (connect.isPending || token() === "" || length()) return
-    setShowResult(true)
     const method = selected()
-    connect.mutate({
-      alias: props.card.alias,
-      ...(method && methods().length > 1 ? { method: method.id } : {}),
-      token: token(),
-    })
+    connect.mutate(
+      {
+        alias: props.card.alias,
+        ...(method && methods().length > 1 ? { method: method.id } : {}),
+        token: token(),
+      },
+      {
+        // S-D13 п.7 в редакции решения заказчика от 31.08 (вечер): после успеха формы НЕТ.
+        // Результат человек читает там же, где в макете, — на карточке: она стала «Подключено», и
+        // в шапке появилась строка «учётная запись · способ · когда проверено». Прежде на месте
+        // формы оставался блок «Подключено · Connected as …» с технической заметкой об обмене
+        // токена, и заказчик назвал это расхождением с макетом.
+        onSuccess: (data) => {
+          if (data.verify_result !== "verified") return
+          setToken("")
+          props.onConnected?.(exchangeKey(data.exchange_result))
+          dialog.close()
+        },
+      },
+    )
   }
 
   return (
-    <div class="flex flex-col gap-3" data-slot="corp-connect">
+    <Dialog fit>
+      <div class="flex flex-col gap-3 pl-6 pr-6 pt-6 pb-6" data-slot="corp-connect">
       {/* Шапка формы (макет заказчика, экран 4). Форма — САМОСТОЯТЕЛЬНЫЙ блок со своей шапкой, а не
           поле, воткнутое посреди страницы: крупный значок коннектора, заголовок «Подключение <имя>»
           и под ним подзаголовок — название способа. Значок тот же, что в шапке страницы и в строке
@@ -1393,7 +1502,6 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
         </span>
       </div>
 
-      <Show when={!connected()}>
         {/* Выбор способа — только когда ДОСТУПНЫХ больше одного (случай 2 таблицы S-V28 п.4), и
             стоит он компактным рядом НАД формой, как в макете. Выбор из одного элемента не выбор:
             в случае 1 способ назван подзаголовком шапки выше, а недоступные способы вместе с
@@ -1431,7 +1539,7 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
         {/* Случай 3: доступных способов нет ни одного — формы нет, поля ввода нет, кнопки нет. */}
         <Show when={selected()}>
           {(method) => (
-            <div class="flex flex-col gap-2">
+            <div class="flex flex-col gap-3">
               {/* Подпись поля — из каталога (S-I6, S-D13 п.8). Она не печатается, когда дословно
                   повторяет название способа, уже стоящее выше: одно и то же слово дважды подряд
                   человек читает как дефект, а не как подпись. */}
@@ -1453,6 +1561,11 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
                 data-slot="corp-connect-token"
                 type={method().field?.secret === false ? "text" : "password"}
                 autocomplete="off"
+                // Окно открывается ради этого поля — курсор стоит в нём сразу (`onOpenAutoFocus`
+                // окна ищет именно `[autofocus]`). Прежде фокус наводило отдельное действие
+                // `corp-connect-focus` шапки страницы, потому что форма была встроена в страницу и
+                // «Подключить» не открывало ничего, а только прокручивало к полю.
+                autofocus
                 placeholder={method().field?.placeholder ?? ""}
                 value={token()}
                 disabled={connect.isPending}
@@ -1463,10 +1576,12 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
               />
               {/* Где живёт введённое значение (макет заказчика, экран 4) — сразу под полем, как в
                   макете. Утверждение проверяемое: токен кладётся в `connector-credentials.json` с
-                  правами `0o600` (S-V26 п.1), а в прямом режиме уходит только в саму целевую
-                  систему. */}
+                  правами `0o600` (S-V26 п.1), а уходит он туда, куда указывает карточка. Куда
+                  именно — решает {@link storageKey} по режиму карточки: у `facade` за адресом
+                  коннектора стоит корпоративный шлюз, и общий текст «уходит только в саму систему»
+                  был бы на ней неправдой (решение заказчика от 31.08, вечер). */}
               <span class="text-12-regular text-text-weak" data-slot="corp-connect-storage">
-                {language.t("corp.connect.storage")}
+                {language.t(storageKey(entry()))}
               </span>
               {/* Подсказка каталога и ссылка на документацию — ОДНОЙ приглушённой строкой под полем.
                   В макете их нет вовсе, но это данные каталога, и прятать их нельзя: без них человек
@@ -1503,8 +1618,8 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
                   </span>
                 )}
               </Show>
-              {/* Ряд кнопок макета: «Подключить» первичная, «Отмена» прозрачная. «Отмена»
-                  неактивна, пока отменять нечего, — кнопка, которая ничего не делает, лжёт. */}
+              {/* Ряд кнопок макета: «Подключить» первичная, «Отмена» прозрачная. «Отмена» активна
+                  всегда: она закрывает окно формы, а закрыть его можно и с пустым полем. */}
               <div data-slot="corp-connect-actions">
                 <Button
                   size="small"
@@ -1519,8 +1634,8 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
                   size="small"
                   variant="ghost"
                   data-action="corp-connect-cancel"
-                  disabled={connect.isPending || !dirty()}
-                  onClick={() => reset()}
+                  disabled={connect.isPending}
+                  onClick={() => cancel()}
                 >
                   {language.t("corp.connect.cancel")}
                 </Button>
@@ -1542,35 +1657,13 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
 
             Разбор способов не тронут: `available` считает сервер (S-V28 п.3), и способ, ставший
             доступным, появится в ряду выбора выше сам. */}
-      </Show>
 
-      {/* S-D13 п.7: после успеха блок заменяется признаком «Подключено» и строкой с account;
-          «Заменить токен» открывает ту же ПУСТУЮ форму. Значение токена не показывается нигде. */}
-      <Show when={connected()}>
-        <div class="flex items-center gap-2" data-slot="corp-connect-done">
-          <Tag class="corp-tag-connected">{language.t("corp.connectors.connected")}</Tag>
-          <span class="text-14-regular text-text-strong">
-            {language.t(verifyKey("verified", result()?.account), { account: result()?.account ?? "" })}
-          </span>
-          <Button
-            size="small"
-            variant="ghost"
-            data-action="corp-connect-replace"
-            onClick={() => {
-              setToken("")
-              setShowResult(false)
-              connect.reset()
-            }}
-          >
-            {language.t("corp.connect.replace")}
-          </Button>
-        </div>
-      </Show>
-
-      {/* S-D13 п.6: исход показывается В ТОМ ЖЕ блоке — не всплывающим окном, не на витрине и не в
-          другой части страницы. Неуспешные исходы проверки отрисовываются как ОШИБКА, неуспешные
-          исходы обмена — как ПРЕДУПРЕЖДЕНИЕ; различие в разметке, а не в тексте. */}
-      <Show when={connected() ? undefined : result()}>
+      {/* S-D13 п.6: исход показывается В ТОЙ ЖЕ ФОРМЕ — не тостом на витрине и не в другой части
+          страницы. На экране остаются только НЕУСПЕШНЫЕ исходы: успех формы не рисует, потому что
+          после успеха формы нет вовсе (решение заказчика от 31.08, вечер), а неуспех обязан
+          остаться перед глазами вместе с введённым значением, чтобы человек исправил опечатку.
+          Три класса отказа макета (экран 4) различаются тоном разметки, а не текстом. */}
+      <Show when={result()}>
         {(outcome) => (
           <div
             data-slot="corp-connect-outcome"
@@ -1586,13 +1679,11 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
           </div>
         )}
       </Show>
-      <Show when={exchangeKey(result()?.exchange_result)}>
-        {(key) => (
-          <span class="text-12-regular text-text-weak" data-slot="corp-connect-exchange" role="status">
-            {language.t(key())}
-          </span>
-        )}
-      </Show>
+      {/* Заметки об обмене токена здесь больше нет: она техническая («Постоянный токен выдать
+          нельзя — подключение работает на введённом токене»), приходит только вместе с успехом, а
+          после успеха формы нет. Ключ не потерян и текст не потерян: {@link exchangeKey} зовётся в
+          `onSuccess`, и заметка живёт подсказкой на бейдже «Подключено» в шапке страницы
+          (решение заказчика от 31.08, вечер). */}
       <Show when={connectFailureKey(failure())}>
         {(key) => (
           <div data-slot="corp-connect-outcome" data-tone="danger" role="alert">
@@ -1603,7 +1694,8 @@ const ConnectorConnect: Component<{ card: CorpCatalogCard }> = (props) => {
           </div>
         )}
       </Show>
-    </div>
+      </div>
+    </Dialog>
   )
 }
 
@@ -1618,6 +1710,19 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
 
   /** Раскрыт ли список инструментов целиком (S-D11): выбор живёт только пока открыта страница. */
   const [allTools, setAllTools] = createSignal(false)
+
+  /**
+   * Заметка об обмене токена, пришедшая с последним успешным подключением (S-V25 п.5) — ключ
+   * словаря либо `undefined`, когда обмена у способа нет вовсе.
+   *
+   * Живёт ПОДСКАЗКОЙ на бейдже «Подключено» и больше нигде (решение заказчика от 31.08, вечер):
+   * «Постоянный токен выдать нельзя — подключение работает на введённом токене» — техническая
+   * строка, и в основном виде страницы ей не место. Ставить её в подсказку, а не выбрасывать, —
+   * потому что смысл в ней есть: она объясняет, почему подключение живёт ровно столько, сколько
+   * живёт введённый токен. Заметка держится, пока открыта страница: она про ЭТО подключение, а не
+   * свойство карточки, и после ухода со страницы утверждать её нечем.
+   */
+  const [exchangeNote, setExchangeNote] = createSignal<ReturnType<typeof exchangeKey>>()
 
   /**
    * Вид страницы (решение заказчика от 31.08): состав блоков зависит от состояния карточки.
@@ -1785,7 +1890,12 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                         нейтральный, как в макете: цвет состояния несёт строка ниже, а рядом с
                         именем стоит факт, а не тревога. */}
                     <Show when={entry().state === "connected"}>
-                      <Tag>{language.t("corp.connectors.connected")}</Tag>
+                      {/* Подсказка бейджа — заметка об обмене токена, если она пришла с последним
+                          подключением (см. `exchangeNote`). Пустой подсказки не бывает: без
+                          заметки `title` на элементе не появляется вовсе. */}
+                      <span title={exchangeNote() ? language.t(exchangeNote()!) : undefined}>
+                        <Tag>{language.t("corp.connectors.connected")}</Tag>
+                      </span>
                     </Show>
                     <Show when={entry().deprecated}>
                       <Tag>{language.t("corp.connectors.deprecated")}</Tag>
@@ -1823,10 +1933,18 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                         {language.t("corp.connectors.facadeNeedsHub")}
                       </span>
                     </Show>
-                    {/* S-V25 п.7: в прямом режиме предлагаемое действие открывает ту же форму ниже,
-                        а не браузерный шаг, которого здесь не было. Роут `connect` при этом не
-                        зовётся: alias с действующими прямыми учётными данными фасадом не
+                    {/* Действие, ОТКРЫВАЮЩЕЕ форму ввода токена отдельным окном (решение заказчика
+                        от 31.08, вечер; макет, экран 4). Оно одно на оба режима подключения —
+                        `direct` и `facade`, — потому что и форма одна: различие режимов в том, куда
+                        сервер отправит проверку, а не в том, что видит человек. Роут `connect` при
+                        этом не зовётся: alias с действующими прямыми учётными данными фасадом не
                         подключается (S-V29 п.1).
+
+                        Прежде здесь стояли ДВА разных действия: у `direct` — кнопка, наводившая
+                        фокус на форму, уже стоявшую посреди страницы, у `facade` — кнопка
+                        браузерного шага, и формы у неё не было вовсе. Заказчик назвал это дословно:
+                        «нет окна для вставки токена отдельного, которое открывается по клику
+                        connect».
 
                         ПОДПИСЬ зависит от ВИДА страницы, а не от набора действий сервера (решение
                         заказчика от 31.08). Вид «catalog» — коннектор человеку ещё не принадлежит:
@@ -1836,17 +1954,21 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
                         одна на оба вида, и карточка с действием `reconnect` от сервера (была
                         подключена когда-то, данных не осталось) предлагала заменить то, чего у
                         неё нет. */}
-                    <Show when={entry().connect_mode === "direct"}>
+                    <Show when={connectByToken(entry())}>
                       <Button
                         size="small"
-                        data-action="corp-connect-focus"
-                        onClick={() => document.getElementById(`corp-connect-${entry().alias}`)?.focus()}
+                        data-action="corp-connect-open"
+                        onClick={() =>
+                          dialog.push(() => (
+                            <ConnectorConnect card={entry()} onConnected={(note) => setExchangeNote(note)} />
+                          ))
+                        }
                       >
                         {language.t(view() === "catalog" ? "corp.connectors.connect" : "corp.connect.replace")}
                       </Button>
                     </Show>
                     <Show when={entry().actions.includes("connect") || entry().actions.includes("reconnect")}>
-                      <Show when={entry().connect_mode !== "direct"}>
+                      <Show when={!connectByToken(entry())}>
                         {/* S-V28 п.4: у карточки, которой сейчас нечем подключиться, действие
                             ОТРИСОВАНО неактивным, а не спрятано — спрятанное действие неотличимо от
                             несуществующего. Прячется (решением заказчика от 31.08) не действие, а
@@ -1992,66 +2114,31 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
               <Show when={descriptionParagraphs(entry().description).length > 0}>
                 <div class="flex flex-col gap-3" data-slot="corp-connector-description">
                   <For each={descriptionParagraphs(entry().description)}>
-                    {(paragraph) => <p class="text-14-regular text-text-base">{paragraph}</p>}
+                    {(paragraph) => <p class="text-14-regular" style={{ color: "var(--v2-text-text-base, #ffffff)" }}>{paragraph}</p>}
                   </For>
                 </div>
               </Show>
 
-              {/* 4. Свойства — ниже описания и мельче его (S-D11, ревизия 1.14): одной строкой,
-                  отсутствующее поле её не удлиняет. Колонка «Тип» отсюда ушла: у всех коннекторов
-                  каталога она теперь одна и та же (S-V22), и строкой свойства не является.
-                  Владелец остался: именно он отвечает на вопрос «чей это коннектор».
-
-                  Состав и порядок — как в макете заказчика от 30.08 (экран 2): владелец, способ
-                  подключения, документация. Способ подключения вернулся в строку, потому что он
-                  отвечает на вопрос «что именно я подключаю» до нажатия кнопки, а данные для него
-                  в карточке есть (`auth_methods`). Документация показывается ИМЕНЕМ места, а не
-                  адресом целиком: адрес со схемой и путём человеку читать незачем. */}
-              <Show when={entry().owner || connectionMethodTitle(entry()) || entry().docs_url}>
-                <div class="text-12-regular text-text-weak" data-slot="corp-connector-properties">
-                  <Show when={entry().owner}>
-                    {(value) => (
-                      <span data-slot="corp-connector-property" data-property="owner">
-                        {language.t("corp.connector.owner")} &mdash; {value()}
-                      </span>
-                    )}
-                  </Show>
-                  <Show when={entry().owner && connectionMethodTitle(entry())}>
-                    <span aria-hidden="true"> &middot; </span>
-                  </Show>
-                  <Show when={connectionMethodTitle(entry())}>
-                    {(value) => (
-                      <span data-slot="corp-connector-property" data-property="connection">
-                        {/* Название способа — данные каталога и рисуется как есть (S-I6). */}
-                        {language.t("corp.connector.connection")} &mdash; {value()}
-                      </span>
-                    )}
-                  </Show>
-                  <Show when={(entry().owner || connectionMethodTitle(entry())) && entry().docs_url}>
-                    <span aria-hidden="true"> &middot; </span>
-                  </Show>
-                  <Show when={entry().docs_url}>
-                    {(value) => (
-                      <span data-slot="corp-connector-property" data-property="docs">
-                        {language.t("corp.connector.docs")} &mdash;{" "}
-                        <a
-                          class="underline"
-                          href={value()}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={value()}
-                        >
-                          {docsLabel(value(), entry().docs_label)}
-                        </a>
-                      </span>
-                    )}
-                  </Show>
-                  {/* Технического имени в строке свойств больше нет (решение заказчика от 31.08):
-                      в макете «Техническое имя — tag» не написано нигде, и ревизия 1.14 поставила
-                      его сюда своим решением, а не по макету. Само имя не потеряно — коннектор
-                      зовётся им в конфиге, в логах и в разговоре с поддержкой, и там оно и
-                      остаётся; на витрине товара ему места нет. */}
-                </div>
+              {/* 4. Свойства — ниже описания и мельче его (S-D11): одной строкой.
+                  Заказчик от 01.09: из строки свойств убраны владелец и способ подключения,
+                  осталась только документация. */}
+              <Show when={entry().docs_url}>
+                {(value) => (
+                  <div class="text-12-regular text-text-weak" data-slot="corp-connector-properties">
+                    <span data-slot="corp-connector-property" data-property="docs">
+                      {language.t("corp.connector.docs")} &mdash;{" "}
+                      <a
+                        class="underline"
+                        href={value()}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={value()}
+                      >
+                        {docsLabel(value(), entry().docs_label)}
+                      </a>
+                    </span>
+                  </div>
+                )}
               </Show>
 
               {/* 5. «Инструменты» (S-D11, ревизия 1.14): что именно коннектор умеет — видно ДО
@@ -2134,16 +2221,19 @@ export const DialogConnector: Component<{ alias: string }> = (props) => {
               </Show>
               </Show>
 
-              {/* 6. Блок подключения (S-D13): между «Инструментами» и «Разрешениями», в окне приложения.
-                  Отдельного окна, отдельной страницы и браузерного шага у подключения нет. Блок
-                  есть тогда и только тогда, когда карточка получена, её `connect_mode` равен
-                  `"direct"` и она не в состоянии «Подключено» (S-V29 п.1). У карточки с
-                  `connect_mode: "none"` блока нет вовсе — ни пустого, ни заглушки. */}
-              <Show when={entry().connect_mode === "direct" && entry().state !== "connected"}>
-                <ConnectorConnect card={entry()} />
-              </Show>
+              {/* 6. Встроенного блока подключения на странице НЕТ ни в одном состоянии (решение
+                  заказчика от 31.08, вечер; S-D13 п.1 в новой редакции). Форма ввода токена живёт
+                  отдельным окном ({@link ConnectorConnect}) и открывается действием шапки —
+                  «Подключить» в виде «catalog», «Заменить токен» в виде «account». Пока окно не
+                  открыто, на странице стоит ровно то, что в макете: шапка, строка состояния при
+                  ошибке и — по виду страницы — витрина товара либо «Разрешения».
+
+                  Прежде здесь стоял блок с полем ввода, и стоял он всегда, пока карточка не
+                  подключена: страница экрана 2 макета кончалась формой, которой в макете нет. */}
               {/* S-V26 п.3: запись хранилища перестала применяться (каталог сменил адрес сервера
-                  или файл нечитаем) — карточка прямо об этом говорит, а не молчит. */}
+                  или файл нечитаем) — карточка прямо об этом говорит, а не молчит. Это строка
+                  СОСТОЯНИЯ, а не блок подключения: она ничего не предлагает ввести и правилом
+                  «встроенного блока нет» не трогается. */}
               <Show
                 when={entry().connect_mode === "direct" && entry().configured && entry().has_credentials === false}
               >

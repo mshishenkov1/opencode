@@ -1071,6 +1071,20 @@ export const DisconnectResult = Schema.Struct({
   status: ConnectionStatus,
 }).annotate({ identifier: "CorpDisconnectResult" })
 
+/**
+ * Ответ `POST {hub}/api/me/connections/{alias}/token` — синхронизация статуса подключения
+ * на стороне Hub при прямом подключении facade-карточки (BUG-I14-002).
+ */
+export const HubConnectTokenResult = Schema.Struct({
+  alias: Schema.String,
+  status: ConnectionStatus,
+  auth_method: Schema.optional(Schema.String),
+  preset: Schema.optional(Schema.String),
+  account: Schema.optional(Schema.String),
+  updated_at: Schema.optional(Schema.String),
+}).annotate({ identifier: "CorpHubConnectTokenResult" })
+export type HubConnectTokenResult = Schema.Schema.Type<typeof HubConnectTokenResult>
+
 // --- Кэш каталога на диске (S-V3) ---
 
 /**
